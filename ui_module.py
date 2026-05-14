@@ -8,6 +8,7 @@ import spine_module
 import limbs_module
 import reorient_module
 import mirror_module
+import build_module
 
 
 class UI(object):
@@ -34,7 +35,7 @@ class UI(object):
         
         # SECCIÓN DE CONSTRUCCIÓN
         cmds.frameLayout(l="2. Build Rig", marginHeight=5)
-        cmds.button(l="BUILD", c=lambda x: self.character.build(), bgc=(0.3, 0.5, 0.3))      
+        cmds.button(l="BUILD", c=lambda x: self.builder.build(), bgc=(0.3, 0.5, 0.3))      
         cmds.frameLayout(l="3. Data Management", collapsable=True, cl=True)
         cmds.columnLayout(adj=True)
         cmds.button(l="Export Guides")

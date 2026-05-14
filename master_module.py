@@ -17,6 +17,7 @@ import rigRoot_module
 import arm_right_module
 import right_leg_module
 import skinning_module
+import build_module
 
 #import clavicule_module
 
@@ -40,6 +41,7 @@ def run():
     importlib.reload(arm_right_module)
     importlib.reload(right_leg_module)
     importlib.reload(skinning_module)
+    importlib.reload(build_module)
     
     ui = ui_module.UI()
     ui.main_UI()

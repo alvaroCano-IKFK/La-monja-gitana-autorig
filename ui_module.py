@@ -18,6 +18,7 @@ class UI(object):
         self.character = guides_module.CharacterGuides()
         self.reorienter = reorient_module.Reorienter()
         self.mirror_guides = mirror_module.Mirror()
+        self.builder = build_module.BuildRig()
 
     def main_UI(self):
         window_name = self.name

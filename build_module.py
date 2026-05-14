@@ -123,4 +123,4 @@ def build(self):
         )
     skn.build()
                        
-    print("Build completo: Spine, Arm y Leg construidos.")
+    print("Build completo: Spine, Arm y Leg construidos desde build_module.")

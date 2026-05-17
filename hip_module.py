@@ -47,6 +47,12 @@ class HipModule(object):
         hipControl_off = self.group_maker.create_rig_hierarchy(hipControl, self.root_guide)
         cmds.parentConstraint(hipControl, hip_joint)
         
+        # Conectar el hip CTL como World Up End del IK de la espina
+        ik_name = f"{self.rig_name}_spine_IK"
+        if cmds.objExists(ik_name) and cmds.objExists(hipControl):
+            cmds.connectAttr(f"{hipControl}.worldMatrix[0]", f"{ik_name}.dWorldUpMatrixEnd", force=True)
+            print(f"Hip CTL conectado al twist de la espina.")
+                
         # ORGANIZACIÓN FINAL
         rig_grp = (
             f"{self.root_instance.rig_name}_rig_GRP"

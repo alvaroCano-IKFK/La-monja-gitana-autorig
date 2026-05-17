@@ -134,18 +134,6 @@ class SpineModule(object):
         hip_ctl_name = f"{self.rig_name}_localHip_CTL"
         
         
-        # Conexión Inicial (World Up Matrix)
-        if cmds.objExists(chest_ctl_name):
-            # Conectamos la matriz del pecho
-            cmds.connectAttr(f"{chest_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpMatrix", force=True)
-        else:
-            cmds.warning(f"No se encontró el chest CTL: {chest_ctl_name}")
-
-        # Conexión Final (World Up Matrix End)
-        if cmds.objExists(hip_ctl_name):
-            cmds.connectAttr(f"{hip_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpMatrixEnd", force=True)
-        else:
-            cmds.warning(f"No se encontró el hip CTL: {hip_ctl_name}")
 
         
         # --- SECCIÓN DE ORGANIZACIÓN FINAL ---

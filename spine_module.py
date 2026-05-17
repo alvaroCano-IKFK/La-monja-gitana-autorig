@@ -137,12 +137,12 @@ class SpineModule(object):
         # Conexión Inicial (World Up Matrix)
         if cmds.objExists(chest_ctl_name):
             # Conectamos la matriz del pecho
-            cmds.connectAttr(f"{chest_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpMatrix", f=True)
+            cmds.connectAttr(f"{chest_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpObject", f=True)
 
 
         # Conexión Final (World Up Matrix End)
         if cmds.objExists(hip_ctl_name):
-            cmds.connectAttr(f"{hip_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpMatrixEnd", f=True)
+            cmds.connectAttr(f"{hip_ctl_name}.worldMatrix[0]", f"{ik}.dWorldUpObject2", f=True)
 
         
         # --- SECCIÓN DE ORGANIZACIÓN FINAL ---

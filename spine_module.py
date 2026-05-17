@@ -117,6 +117,16 @@ class SpineModule(object):
             pcv=False,
             n=f"{self.rig_name}_spine_IK"
         )
+        cmds.setAttr(f"{ik}.dTwistControlEnable", 1)
+        cmds.setAttr(f"{ik}.dWorldUpType", 4) # Object Up (Start/End)
+        cmds.setAttr(f"{ik}.dForwardAxis", 2) # Y axis
+        cmds.setAttr(f"{ik}.dWorldUpAxis", 6) # Z axis
+
+        # Vectores Up
+        cmds.setAttr(f"{ik}.dWorldUpVectorX", 1)
+        cmds.setAttr(f"{ik}.dWorldUpVectorEndX", 1)
+        cmds.setAttr(f"{ik}.dWorldUpVectorY", 0)
+        cmds.setAttr(f"{ik}.dWorldUpVectorEndY", 0)
 
         cmds.parent(ik, self.spine_grp)
         cmds.parent(self.joints[0], self.spine_grp)

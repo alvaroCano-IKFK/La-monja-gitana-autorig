@@ -5,6 +5,8 @@ import controlsLibrary
 import guides_module
 from groups_module import ControlsGroups
 import rigRoot_module
+import nodeCreator_module
+from nodeCreator_module import NodeCreator
 
 
 class LegModule(object):
@@ -266,7 +268,18 @@ class LegModule(object):
 
         # 7. PAIR BLENDS
         for i in range(3):
-            pbl = cmds.createNode("pairBlend", n=f"{self.bind_chain[i]}_PBL")
+            jnt_name = self.bind_chain[i]  # ej: "Leg_L_L_thigh_bind_JNT"
+            
+            pbl_creator = NodeCreator(
+                side=self.rig_name.split("_")[-1],   # "L" o "R"
+                node_type="pairBlend",
+                base_name=self.rig_name,              # "Leg_L"
+                name=self.names[i],                   # "L_thigh", "L_knee"...
+                tag="blend",
+                parent=None,
+                custom_suffix=None                    # Usará "PBL" del diccionario
+            )
+            pbl = pbl_creator.create()
             cmds.setAttr(f"{pbl}.rotInterpolation", 1)
             cmds.connectAttr(f"{self.ik_chain[i]}.translate", f"{pbl}.inTranslate1")
             cmds.connectAttr(f"{self.ik_chain[i]}.rotate", f"{pbl}.inRotate1")

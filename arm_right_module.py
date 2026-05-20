@@ -191,6 +191,8 @@ class ArmRightModule(object):
         ik_root_gen = cmds.listRelatives(ik_root_ctrl, p=True)[0]
         cmds.parentConstraint(clavicule_ctrl, ik_root_gen, mo=True)
         cmds.parentConstraint(clavicule_ctrl, fk_grp,      mo=True)
+        cmds.parentConstraint(clavicule_ctrl, self.b_cl, mo=True)
+
 
         # 7. POLE VECTOR
         cmds.poleVectorConstraint(pv_ctrl, ik_h)

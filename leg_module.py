@@ -312,3 +312,5 @@ class LegModule(object):
         if local_ctl and cmds.objExists(local_ctl):
             cmds.parent(self.main_grp, local_ctl)
 
+        print("Built with new pairBlends and NodeCreator!")
+

@@ -19,9 +19,14 @@ import right_leg_module
 import skinning_module
         
 ########################################################################
+#SPINE
 ########################################################################
         
 class SpineGuides(object):
+    """
+    Crea les guies de la spine.
+
+    """
     def __init__(self, spine_root, spine_chest, spine_position):
         self.spine_root = spine_root
         self.spine_end = spine_chest
@@ -29,25 +34,33 @@ class SpineGuides(object):
         self.guides_group = None 
 
     def spine_guides(self):
+        #Crea el joint root de les guies de la spine
         root_joint = cmds.joint(p=(0, 0, 0), name=self.spine_root)
         if not root_joint:
             print(f"Error creando la joint: {self.spine_root}")
             return
         
+        #Crea el joint final de les guies de la spine
         end_joint = cmds.joint(p=self.spine_position, name=self.spine_end)
         if not end_joint:
             print(f"Error creando la joint: {self.spine_end}")
             return
 
+        #Crea el grup de les guies de la spine
         cmds.select(root_joint, end_joint, r=True)
         self.guides_group = cmds.group(root_joint, n="spine_guides_GRP")
         if self.guides_group is None:
             print("Error al crear el grupo de guías.")
         
 ########################################################################
+#NECK
 ########################################################################
         
 class NeckGuides(object):
+    """
+    Crea les guies del coll.
+
+    """
     def __init__(self, neck_root, neck_end, root_pos, end_pos):
         self.neck_root = neck_root
         self.neck_end = neck_end
@@ -57,17 +70,21 @@ class NeckGuides(object):
     
     def neck_guides(self):
         cmds.select(clear=True)
+        #Crea el joint d inici de la guia del neck
         neck_root = cmds.joint(p=self.root_pos, n=self.neck_root)
         if not neck_root:
             print(f"Error creando la joint: {self.neck_root}")
             return
         
+        #Crea el joint del final de la guia del neck
         neck_end = cmds.joint(p=self.end_pos, n=self.neck_end)
         if not neck_end:
             print(f"Error creando la joint: {self.neck_end}")
             return
         
         cmds.joint(neck_root, e=True, oj="yzx", sao="zup", ch=True, zso=True)
+
+        #Crea el grup de les guies del coll
         self.guides_group = cmds.group(neck_root, n="neck_guides_GRP")
         if self.guides_group is None:
             print("Error al crear el grupo de guías del cuello.")
@@ -75,10 +92,14 @@ class NeckGuides(object):
         cmds.select(clear = True)
         
 ########################################################################
+#LIMB
 ########################################################################
         
 class LimbGuides(object):
-    """Clase base para extremidades (brazos y piernas)"""
+    """
+    Classe per crear les guies dels bracos i cames.
+
+    """
     def __init__(self, limb_root, limb_mid, limb_end,
                  limb_root_pos, limb_mid_pos, limb_end_pos):
 
@@ -93,11 +114,15 @@ class LimbGuides(object):
         self.guides_group = None
     
     def create_chain(self):
-        """Crea la cadena de joints y la orienta automáticamente"""
+        """
+        Crea la cadena de joints i la orienta automaticament
+
+        """
         cmds.select(clear=True)
         
         hierarchy_root = None
 
+        #Crea tres joints, d inici, mig i final 
         root = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
         mid = cmds.joint(n=self.limb_mid, p=self.limb_mid_pos)
         end = cmds.joint(n=self.limb_end, p=self.limb_end_pos)
@@ -105,21 +130,25 @@ class LimbGuides(object):
         if not hierarchy_root:
             hierarchy_root = root
 
-        # ORIENTACIÓN: Forzamos que el eje X apunte al siguiente joint
-        # Esto soluciona que los joints 'salten' o se desorienten al escalar
+        # Forca a que els joints apuntin sempre en l eix X
         cmds.joint(root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
-        
+
+        #Crea el grup de limb        
         self.guides_group = cmds.group(hierarchy_root, n="limb_guides_GRP")
 
-        # El último joint (muñeca/tobillo) siempre debe tener orientación a cero
+        # L ultim joint s orienta sempre tot a 0
         cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
         
         return self.guides_group
 
 ########################################################################
+#ARM
 ########################################################################
 
 class ArmGuides(LimbGuides):
+    """
+    Hereda de la classe limbs i crea la clavicula, completant el brac
+    """
     def __init__(self, limb_root, limb_mid, limb_end, clavicule_root,
                  limb_root_pos, limb_mid_pos, limb_end_pos, clavicule_root_pos):
 
@@ -136,6 +165,10 @@ class ArmGuides(LimbGuides):
         self.wrist_joint    = self.limb_end
 
     def create_chain(self):
+        """
+        Crea la clavicula 
+
+        """
         super(ArmGuides, self).create_chain()
 
         root = self.limb_root
@@ -143,8 +176,10 @@ class ArmGuides(LimbGuides):
 
         if self.clavicule:
             cmds.select(clear=True)
+            #Crea el joint de la clavicula
             hierarchy_root = cmds.joint(n=self.clavicule, p=self.clavicule_pos)
 
+            #Emparenta la clavicula amb el primer joint del brac
             cmds.parent(root, hierarchy_root)
 
             cmds.joint(hierarchy_root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
@@ -153,16 +188,20 @@ class ArmGuides(LimbGuides):
             cmds.parent(root, world=True)
             cmds.delete(self.guides_group)
 
+            #Crea el grup de guies del brac 
             cmds.parent(root, hierarchy_root)
             self.guides_group = cmds.group(hierarchy_root, n="arm_guides_GRP")
 
         return self.guides_group
 
 ############################################################################
+#LEG
 ############################################################################
 
 class LegGuides(LimbGuides):
-    """Clase base para extremidades (brazos y piernas)"""
+    """
+    Hereda de la classe limbs i fa la cama
+    """
     def __init__(self, limb_root, limb_mid, limb_end,
                  limb_root_pos, limb_mid_pos, limb_end_pos):
         
@@ -174,9 +213,14 @@ class LegGuides(LimbGuides):
 
                                              
 ########################################################################
+#FINGER
 ########################################################################
 
 class FingerGuides(object):
+    """
+    Crea les guies dels dits. 
+
+    """
 
     def __init__(self, parent_joint, name, offsets):
         self.parent_joint = parent_joint
@@ -203,7 +247,7 @@ class FingerGuides(object):
     
             self.joints.append(jnt)
     
-        # Parentar solo el root del dedo al wrist
+        #Emparentar el root del dit amb el canell
         cmds.parent(self.joints[0], self.parent_joint)
 
 ############################################################
@@ -211,6 +255,9 @@ class FingerGuides(object):
 ############################################################
 
 class HandGuides(object):
+    """
+    Crea les guies de la ma.
+    """
 
     def __init__(self, arm_instance):
         self.arm = arm_instance
@@ -239,10 +286,14 @@ class HandGuides(object):
         
         
 ############################################################
-# FOOT
+#FOOT
 ############################################################
 
 class FootGuides(object):
+    """
+    Crea les guies del peu. 
+
+    """
 
     def __init__(self, leg_instance, ball_name, tip_name,heel_name,
                  ball_offset, tip_offset, heel_offset):
@@ -300,6 +351,9 @@ class FootGuides(object):
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
+    """
+    
+    """
     def __init__(self):
         # Añadimos una variable para guardar la instancia del spine
         self.spine_rig = None

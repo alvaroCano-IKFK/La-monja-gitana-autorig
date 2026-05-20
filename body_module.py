@@ -30,3 +30,5 @@ def build(self):
         final_name=name)
     bodyControl_off = self.group_maker.create_rig_hierarchy(bodyControl, self.root_guide)
     cmds.parentConstraint(bodyControl, body_joint)
+
+    print("Body module built successfully.")

@@ -77,59 +77,7 @@ class NeckGuides(object):
 ########################################################################
 ########################################################################
         
-import maya.cmds as cmds
-
-class ArmGuides(object):
-    """Clase base para extremidades (brazos y piernas)"""
-    def __init__(self, limb_root, limb_mid, limb_end, clavicule_root,
-                 limb_root_pos, limb_mid_pos, limb_end_pos, clavicule_root_pos):
-
-        self.limb_root = limb_root
-        self.limb_mid = limb_mid
-        self.limb_end = limb_end
-        self.clavicule = clavicule_root
-        
-        self.limb_root_pos = limb_root_pos
-        self.limb_mid_pos = limb_mid_pos
-        self.limb_end_pos = limb_end_pos
-        self.clavicule_pos = clavicule_root_pos
-        
-        self.guides_group = None
-
-    def create_chain(self):
-        """Crea la cadena de joints y la orienta automáticamente"""
-        cmds.select(clear=True)
-        
-        hierarchy_root = None
-        
-        if self.clavicule:
-            hierarchy_root = cmds.joint(n=self.clavicule, p=self.clavicule_pos)
-
-        root = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
-        mid = cmds.joint(n=self.limb_mid, p=self.limb_mid_pos)
-        end = cmds.joint(n=self.limb_end, p=self.limb_end_pos)
-
-        if not hierarchy_root:
-            hierarchy_root = root
-
-        # ORIENTACIÓN: Forzamos que el eje X apunte al siguiente joint
-        # Esto soluciona que los joints 'salten' o se desorienten al escalar
-        cmds.joint(root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
-        
-        self.guides_group = cmds.group(hierarchy_root, n="arm_guides_GRP")
-
-        # El último joint (muñeca/tobillo) siempre debe tener orientación a cero
-        #cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
-        
-        self.wrist_joint = self.limb_end 
-
-        return self.guides_group
-
-############################################################################
-############################################################################
-import maya.cmds as cmds
-
-class LegGuides(object):
+class LimbGuides(object):
     """Clase base para extremidades (brazos y piernas)"""
     def __init__(self, limb_root, limb_mid, limb_end,
                  limb_root_pos, limb_mid_pos, limb_end_pos):
@@ -143,7 +91,7 @@ class LegGuides(object):
         self.limb_end_pos = limb_end_pos
         
         self.guides_group = None
-
+    
     def create_chain(self):
         """Crea la cadena de joints y la orienta automáticamente"""
         cmds.select(clear=True)
@@ -151,35 +99,79 @@ class LegGuides(object):
         hierarchy_root = None
 
         root = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
-        cmds.select(clear =True)
         mid = cmds.joint(n=self.limb_mid, p=self.limb_mid_pos)
-        cmds.select(clear =True)
         end = cmds.joint(n=self.limb_end, p=self.limb_end_pos)
-        cmds.select(clear =True)
-        
-        cmds.parent(mid,root)
-        cmds.joint(root, edit=True, oj="xyz", sao="ydown", ch=True, zso=True)
-        
-        cmds.parent(end, mid)
 
         if not hierarchy_root:
             hierarchy_root = root
 
         # ORIENTACIÓN: Forzamos que el eje X apunte al siguiente joint
         # Esto soluciona que los joints 'salten' o se desorienten al escalar
-        #cmds.joint(root, edit=True, oj="xyz", sao="ydown", ch=True, zso=True)
+        cmds.joint(root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
         
-        self.guides_group = cmds.group(root, n="leg_guides_GRP")
+        self.guides_group = cmds.group(hierarchy_root, n="limb_guides_GRP")
 
         # El último joint (muñeca/tobillo) siempre debe tener orientación a cero
         cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
         
-        self.ankle_joint = self.limb_end 
+        return self.guides_group
+
+########################################################################
+########################################################################
+
+class ArmGuides(LimbGuides):
+    def __init__(self, limb_root, limb_mid, limb_end, clavicule_root,
+                 limb_root_pos, limb_mid_pos, limb_end_pos, clavicule_root_pos):
+
+        super(ArmGuides, self).__init__(
+            limb_root, limb_mid, limb_end,
+            limb_root_pos, limb_mid_pos, limb_end_pos
+        )
+
+        self.clavicule = clavicule_root
+        self.clavicule_pos = clavicule_root_pos
+        
+        self.shoulder_joint = self.limb_root
+        self.elbow_joint    = self.limb_mid
+        self.wrist_joint    = self.limb_end
+
+    def create_chain(self):
+        super(ArmGuides, self).create_chain()
+
+        root = self.limb_root
+        end  = self.limb_end
+
+        if self.clavicule:
+            cmds.select(clear=True)
+            hierarchy_root = cmds.joint(n=self.clavicule, p=self.clavicule_pos)
+
+            cmds.parent(root, hierarchy_root)
+
+            cmds.joint(hierarchy_root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
+            cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)  
+
+            cmds.parent(root, world=True)
+            cmds.delete(self.guides_group)
+
+            cmds.parent(root, hierarchy_root)
+            self.guides_group = cmds.group(hierarchy_root, n="arm_guides_GRP")
 
         return self.guides_group
-        
 
-       
+############################################################################
+############################################################################
+
+class LegGuides(LimbGuides):
+    """Clase base para extremidades (brazos y piernas)"""
+    def __init__(self, limb_root, limb_mid, limb_end,
+                 limb_root_pos, limb_mid_pos, limb_end_pos):
+        
+        super(LegGuides, self).__init__(limb_root, limb_mid, limb_end, limb_root_pos, limb_mid_pos, limb_end_pos)
+
+        self.group_name = "leg_guides_GRP"
+        self.up_axis = "ydown"
+        self.ankle_joint = self.limb_end
+
                                              
 ########################################################################
 ########################################################################

@@ -303,6 +303,7 @@ class CharacterGuides(object):
     def __init__(self):
         # Añadimos una variable para guardar la instancia del spine
         self.spine_rig = None
+        self.all_guides_grp = None
         
     def create_guides(self):
 
@@ -342,6 +343,29 @@ class CharacterGuides(object):
             (0,-2,-3)
         )
         foot_instance.foot_guides()
+       
+        guide_groups = [
+            spine_instance.guides_group,
+            neck_instance.guides_group,
+            arm_instance.guides_group,
+            leg_instance.guides_group,
+            hand_instance.group,
+         ]
+
+        new_list = []
+        
+        for g in guide_groups:
+            if g and cmds.objExists(g):
+                new_list.append(g)
+        guide_groups = new_list
+
+        if not guide_groups:
+            cmds.warning("No se encontraron grupos de guías para agrupar.")
+            return
+
+        self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
+        
+
         
     def build(self):
         """Este es el método que llama el botón BUILD de la UI"""

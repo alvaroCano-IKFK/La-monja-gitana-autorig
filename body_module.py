@@ -32,4 +32,11 @@ class BodyModule(object):
         bodyControl_off = self.group_maker.create_rig_hierarchy(bodyControl, self.root_guide)
         cmds.parentConstraint(bodyControl, body_joint)
 
+        rig_grp = (
+            f"{self.root_instance.rig_name}_rig_GRP"
+            if self.root_instance else None
+        )
+        if rig_grp:
+            cmds.parent(bodyControl_off, rig_grp)
+            
         print("Body module built successfully.")

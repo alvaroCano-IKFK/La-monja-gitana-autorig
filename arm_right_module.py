@@ -5,6 +5,8 @@ import controlsLibrary
 import groups_module
 import rigRoot_module
 import limbs_module
+import nodeCreator_module
+from nodeCreator_module import NodeCreator
 
 class ArmRightModule(object):
     def __init__(self, shoulder_guide="R_shoulder",
@@ -205,7 +207,16 @@ class ArmRightModule(object):
 
         # 10. PAIR BLENDS
         for i in range(len(self.bind_chain)):
-            pbl = cmds.createNode("pairBlend", n=f"{self.bind_chain[i]}_PBL")
+            pbl_creator = NodeCreator(
+                side=self.rig_name.split("_")[-1],   
+                node_type="pairBlend",
+                base_name=self.rig_name,              
+                name=self.names[i],                   
+                tag="blend",
+                parent=None,
+                custom_suffix=None                    
+            )
+            pbl = pbl_creator.create()
             cmds.setAttr(f"{pbl}.rotInterpolation", 1)
             cmds.connectAttr(f"{self.ik_chain[i]}.translate", f"{pbl}.inTranslate1")
             cmds.connectAttr(f"{self.ik_chain[i]}.rotate",    f"{pbl}.inRotate1")

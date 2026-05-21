@@ -8,10 +8,10 @@ from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
 
-    def __init__(self, shoulder_guide="_shoulder", 
-                 elbow_guide="_elbow", 
-                 wrist_guide="_wrist",
-                 clavicule_guide ="_clavicule",
+    def __init__(self, shoulder_guide="shoulder", 
+                 elbow_guide="elbow", 
+                 wrist_guide="wrist",
+                 clavicule_guide ="clavicule",
                  rig_name="Character",
                  root_instance= None):
                      

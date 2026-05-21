@@ -193,33 +193,7 @@ class LimbModule(object):
         
 
         
-        # 7. BLEND (Pair Blends)
-        for i in range(len(self.bind_chain)):
-            bnd_jnt = self.bind_chain[i]
-            ik_jnt = self.ik_chain[i]
-            fk_jnt = self.fk_chain[i]
-
-            pbl_creator = NodeCreator(
-                side=self.side,   
-                node_type="pairBlend",
-                base_name=self.prefix,              
-                name=self.names[i+1],                   
-                tag="blend",
-                parent=None,
-                custom_suffix=None                    
-            )
-            pbl = pbl_creator.create()
-            
-            cmds.setAttr(f"{pbl}.rotInterpolation", 1) 
-
-            cmds.connectAttr(f"{ik_jnt}.translate", f"{pbl}.inTranslate1")
-            cmds.connectAttr(f"{ik_jnt}.rotate", f"{pbl}.inRotate1")
-            cmds.connectAttr(f"{fk_jnt}.translate", f"{pbl}.inTranslate2")
-            cmds.connectAttr(f"{fk_jnt}.rotate", f"{pbl}.inRotate2")
-            cmds.connectAttr(f"{pbl}.outTranslate", f"{bnd_jnt}.translate")
-            cmds.connectAttr(f"{pbl}.outRotate", f"{bnd_jnt}.rotate")
-            cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
-            
+ 
         # =================================================================
         # 8. ORGANIZACIÓN FINAL — Estructura de Roots y Mirror Behavior
         # =================================================================

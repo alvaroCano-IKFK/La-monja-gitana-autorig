@@ -49,9 +49,9 @@ class LimbModule(object):
     #def define_poleVector(self, shoulder, elbow, wrist, distance=5):
     def define_poleVector(self, limb_root,limb_mid,limb_end, distance=5):
         # 1. Obtener posiciones en World Space
-        sh_p = cmds.xform(self.limb_root, q=True, ws=True, t=True)
-        el_p = cmds.xform(self.limb_mid, q=True, ws=True, t=True)
-        wr_p = cmds.xform(self.limb_end, q=True, ws=True, t=True)
+        sh_p = cmds.xform(limb_root, q=True, ws=True, t=True)
+        el_p = cmds.xform(limb_mid, q=True, ws=True, t=True)
+        wr_p = cmds.xform(limb_end, q=True, ws=True, t=True)
 
         # 2. Crear vectores (Muñeca - Hombro) y (Codo - Hombro)
         sw = [wr_p[0] - sh_p[0], wr_p[1] - sh_p[1], wr_p[2] - sh_p[2]]
@@ -84,14 +84,14 @@ class LimbModule(object):
             el_p[2] + perp[2] * distance
         ]
         
-    def build(self):
+    def build(self,limb_root,limb_mid,limb_end,clavicule):
         
          
         # 1. POSICIONES
-        pos_cl = cmds.xform(self.clavicule, q=True, ws=True, t=True)
-        pos_sh = cmds.xform(self.limb_root, q=True, ws=True, t=True)
-        pos_el = cmds.xform(self.limb_mid, q=True, ws=True, t=True)
-        pos_wr = cmds.xform(self.limb_end, q=True, ws=True, t=True)
+        pos_cl = cmds.xform(clavicule, q=True, ws=True, t=True)
+        pos_sh = cmds.xform(limb_root, q=True, ws=True, t=True)
+        pos_el = cmds.xform(limb_mid, q=True, ws=True, t=True)
+        pos_wr = cmds.xform(limb_end, q=True, ws=True, t=True)
 
 
         # 2. BIND CHAIN (Orientación específica para pierna)

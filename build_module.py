@@ -53,12 +53,12 @@ class BuildRig(object):
         self.arm_rig.build()
             
         # --- BRAZO DERECHO (El nuevo) ---
-        self.right_arm_rig = arm_right_module.ArmRightModule(
-                rig_name="Arm_R", 
-                left_arm_instance=self.arm_rig,
-                root_instance=self.root_rig
-            )
-        self.right_arm_rig.build()
+        #self.right_arm_rig = arm_right_module.ArmRightModule(
+        #        rig_name="Arm_R", 
+        #        left_arm_instance=self.arm_rig,
+        #        root_instance=self.root_rig
+        #    )
+       # self.right_arm_rig.build()
                 
 
 

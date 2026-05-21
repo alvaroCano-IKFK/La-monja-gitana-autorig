@@ -176,7 +176,7 @@ class LimbModule(object):
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
-        cmds.matchTransform(clav_gen, self.clavicule_guide)
+        #cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         cmds.parent(clav_gen, self.controls_grp)
         

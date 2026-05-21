@@ -17,7 +17,7 @@ import mirror_module
 import arm_right_module
 import right_leg_module
 import skinning_module
-from side_manager import SideManager
+from sideManager_module import SideManager
 
 ########################################################################
 # SPINE

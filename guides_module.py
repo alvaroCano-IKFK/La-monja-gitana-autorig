@@ -77,7 +77,6 @@ class NeckGuides(object):
 ########################################################################
 ########################################################################
         
-import maya.cmds as cmds
 
 class ArmGuides(object):
     """Clase base para extremidades (brazos y piernas)"""

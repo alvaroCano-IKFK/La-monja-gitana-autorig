@@ -2,7 +2,7 @@ import ui_module
 import guides_module
 import spine_module
 import importlib
-#import limbs_module
+import limbs_module
 import controls_module
 import fingers_module
 import neck_module
@@ -45,6 +45,7 @@ def run():
     importlib.reload(skinning_module)
     importlib.reload(build_module)
     importlib.reload(body_module)
+    importlib.reload(limbs_module)
     
     ui = ui_module.UI()
     ui.main_UI()

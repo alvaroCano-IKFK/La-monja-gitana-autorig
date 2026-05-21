@@ -4,6 +4,7 @@ import controlsLibrary
 import groups_module 
 import rigRoot_module
 import nodeCreator_module
+import build_module
 from nodeCreator_module import NodeCreator
 
 class LimbModule(object):

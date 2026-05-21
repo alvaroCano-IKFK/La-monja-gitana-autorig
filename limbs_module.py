@@ -163,6 +163,8 @@ class LimbModule(object):
         
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            cmds.setAttr(f"{mirror_behavior_grp}.rotateY", 0)
+            cmds.setAttr(f"{mirror_behavior_grp}.scaleZ", 1)
             cmds.parent(self.main_grp, mirror_behavior_grp)
         else:
             local_ctl = self.root_instance.localCtl

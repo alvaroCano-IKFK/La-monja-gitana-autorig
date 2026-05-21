@@ -44,10 +44,10 @@ class BuildRig(object):
         # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
         # Usamos los nombres que definiste en create_guides: "shoulder", "elbow", "wrist"
         self.arm_rig = limbs_module.LimbModule(
-                shoulder_guide="shoulder",
-                elbow_guide="elbow",
-                wrist_guide="wrist",
-                clavicule_guide="clavicule",
+                shoulder_guide="L_shoulder",
+                elbow_guide="L_elbow",
+                wrist_guide="L_wrist",
+                clavicule_guide="L_clavicule",
                 rig_name="Arm_L",
                 root_instance=self.root_rig
             )

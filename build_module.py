@@ -48,7 +48,7 @@ class BuildRig(object):
                 elbow_guide="L_elbow",
                 wrist_guide="L_wrist",
                 clavicule_guide="L_clavicule",
-                rig_name="Arm_L",
+                rig_name="Arm",
                 root_instance=self.root_rig
             )
         self.arm_rig.build()

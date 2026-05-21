@@ -170,8 +170,8 @@ class LimbModule(object):
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            cmds.setAttr(f"{clav_gen}.scaleZ", 1)
             cmds.parent(clav_gen, mirror_behavior_grp)
+            cmds.setAttr(f"{clav_gen}.scaleZ", 1)
             
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)

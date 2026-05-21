@@ -174,7 +174,7 @@ class LimbModule(object):
             
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
-        cmds.parent(clav_gen, self.controls_grp)
+        #cmds.parent(clav_gen, self.controls_grp)
         
         # IK Root Control
         ik_root_ctrl = controlsLibrary.create_control_from_lib(

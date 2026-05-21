@@ -170,8 +170,9 @@ class LimbModule(object):
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            cmds.setAttr(f"{clav_gen}.scaleZ", 1)
+
             cmds.parent(clav_gen, mirror_behavior_grp)
-            cmds.setAttr(f"{self.prefix}_clav_gen.scaleZ", 1)
             
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
@@ -287,20 +288,9 @@ class LimbModule(object):
         # Local control por defecto (Lado Izquierdo o Centro)
         local_ctl = self.root_instance.localCtl if self.root_instance else None
         
-        if local_ctl and cmds.objExists(local_ctl):
-            # DETECCIÓN DE LADO DERECHO PARA EL GRUPO DE ESCALA NEGATIVA
-            if self.side == "R":
-                mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-                
-                if cmds.objExists(mirror_behavior_grp):
-                    # Emparentamos el grupo principal de controles directamente aquí
-                    cmds.parent(self.main_grp, mirror_behavior_grp)
-                    print(f"Controles de {self.prefix} emparentados en el grupo de escala negativa: {mirror_behavior_grp}")
-                else:
-                    # Fallback seguro por si el grupo no existiera
-                    cmds.parent(self.main_grp, local_ctl)
-            else:
-                # El lado izquierdo va directo al local control de manera normal
-                cmds.parent(self.main_grp, local_ctl)
+
         
         print(f"Build {self.prefix} completo.")
+        
+
+

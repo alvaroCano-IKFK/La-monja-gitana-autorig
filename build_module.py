@@ -49,6 +49,7 @@ class BuildRig(object):
                 wrist_guide="L_wrist",
                 clavicule_guide="L_clavicule",
                 rig_name="Arm",
+                side="L",
                 root_instance=self.root_rig
             )
         self.arm_rig.build()
@@ -59,6 +60,7 @@ class BuildRig(object):
         wrist_guide="R_wrist",
         clavicule_guide="R_clavicule",
         rig_name="Arm",
+        side="R",
         root_instance=self.root_rig
             )
         self.mirror_arm_rig.build()

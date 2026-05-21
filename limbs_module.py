@@ -162,13 +162,16 @@ class LimbModule(object):
         cmds.select(clear=True)
         
 
-            
         # CONTROL CLAVICULE
         clavicule_ctl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["clavicule"], 
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
+        if self.side == "R":
+            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            cmds.parent(clav_gen, mirror_behavior_grp)
+            
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         cmds.parent(clav_gen, self.controls_grp)
@@ -286,7 +289,6 @@ class LimbModule(object):
 
         
         print(f"Build {self.prefix} completo.")
-        print("ns pq se colocan bien los controles")
         
 
 

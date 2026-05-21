@@ -53,15 +53,7 @@ class BuildRig(object):
             )
         self.arm_rig.build()
         
-        self.right_arm_rig = limbs_module.LimbModule(
-                shoulder_guide="R_shoulder",
-                elbow_guide="R_elbow",
-                wrist_guide="R_wrist",
-                clavicule_guide="R_clavicule",
-                rig_name="Arm_R",
-                root_instance=self.root_rig
-            )
-        self.right_arm_rig.build()    
+
         
         # --- BRAZO DERECHO (El nuevo) ---
         #self.right_arm_rig = arm_right_module.ArmRightModule(

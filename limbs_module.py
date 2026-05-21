@@ -116,22 +116,7 @@ class LimbModule(object):
         for jnt in [b_cl, b_sh, b_el, b_wr]:
             cmds.setAttr(f"{jnt}.jointOrient", 0, 0, 0)
 
-        if self.rig_name.endswith("_R"):
-            # Lado R: copiamos jointOrient directamente de las guías R
-            # ya orientadas correctamente por mirrorJoint — no reorientamos
-            guide_map = {
-                b_cl: self.clavicule_guide,
-                b_sh: self.shoulder_guide,
-                b_el: self.elbow_guide,
-                b_wr: self.wrist_guide,
-            }
-            for jnt, guide in guide_map.items():
-                jo = cmds.getAttr(f"{guide}.jointOrient")[0]
-                cmds.setAttr(f"{jnt}.jointOrient", jo[0], jo[1], jo[2])
-        else:
-            # Lado L: orientación automática estándar
-            cmds.joint(b_cl, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
-            cmds.setAttr(f"{b_wr}.jointOrient", 0, 0, 0)
+
         
         self.bind_chain = [b_sh, b_el, b_wr]
         self.b_cl = b_cl  # guardamos para poder emparentarlo al skeleton GRP

@@ -27,7 +27,7 @@ class RigRoot(object):
             cmds.delete(group_name)
             
         self.mirror_grp = cmds.group(em=True, name=group_name)
-        cmds.setAttr(f"{self.mirror_grp}.scaleX", -1)
+        #cmds.setAttr(f"{self.mirror_grp}.scaleX", -1)
         print(f"Grupo {self.mirror_grp} creado")
 
         ###################################################

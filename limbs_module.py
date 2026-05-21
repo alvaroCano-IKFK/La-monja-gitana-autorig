@@ -161,6 +161,12 @@ class LimbModule(object):
         
         cmds.select(clear=True)
         
+        if self.side == "R":
+            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            cmds.setAttr(f"{self.main_rig_grp}.scaleZ", 1)
+            cmds.parent(self.main_rig_grp, mirror_behavior_grp)
+            
+        
 
         # CONTROL CLAVICULE
         clavicule_ctl = controlsLibrary.create_control_from_lib(
@@ -168,11 +174,11 @@ class LimbModule(object):
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
-        if self.side == "R":
-            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            cmds.setAttr(f"{clav_gen[0]}.scaleZ", 1)
+        #if self.side == "R":
+            #mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            #cmds.setAttr(f"{clav_gen}.scaleZ", 1)
 
-            cmds.parent(clav_gen, mirror_behavior_grp)
+            #cmds.parent(clav_gen, mirror_behavior_grp)
             
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)

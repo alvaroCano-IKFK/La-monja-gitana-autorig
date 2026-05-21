@@ -19,6 +19,7 @@ import right_leg_module
 import skinning_module
 import guides_module
 import build_module
+import body_module
 
 class BuildRig(object):
     
@@ -116,7 +117,12 @@ class BuildRig(object):
                 root_instance=self.root_rig
             )
         self.right_leg_rig.build()
-            
+        
+        self.body_rig = body_module.BodyModule(
+                rig_name="Character",
+                root_instance=self.root_rig
+            )    
+        self.body_rig.build()
 
         # Importamos el nuevo módulo y ejecutamos
         skn = skinning_module.SkinningModule(

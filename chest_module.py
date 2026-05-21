@@ -1,11 +1,10 @@
 import maya.cmds as cmds
 
 import guides_module
-#import limbs_module
+import limbs_module
 import spine_module
 import controlsLibrary
-import groups_module 
-import limbModule 
+import groups_module  
 
 class ChestModule(object):
     def __init__(self,chest_guide = "chest", rig_name = "Character",root_instance=None):

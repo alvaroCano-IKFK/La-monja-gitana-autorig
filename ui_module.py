@@ -5,7 +5,7 @@ import math
 import json
 import guides_module
 import spine_module
-import limbModule
+import limbs_module
 import reorient_module
 import mirror_module
 import build_module

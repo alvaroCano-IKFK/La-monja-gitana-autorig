@@ -4,7 +4,7 @@ import re
 import controlsLibrary
 import groups_module
 import rigRoot_module
-import limbModule
+import limbs_module
 import leg_module
 import nodeCreator_module
 from nodeCreator_module import NodeCreator

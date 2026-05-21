@@ -4,7 +4,7 @@ import os
 import math
 import json
 import spine_module
-#import limbs_module
+import limbs_module
 import fingers_module
 import neck_module
 import chest_module
@@ -14,7 +14,7 @@ import foot_module
 import groups_module
 import rigRoot_module
 import mirror_module
-import limbModule
+import arm_right_module
 import right_leg_module
 import skinning_module
         

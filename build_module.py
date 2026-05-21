@@ -4,7 +4,7 @@ import os
 import math
 import json
 import spine_module
-#import limbs_module
+import limbs_module
 import fingers_module
 import neck_module
 import chest_module
@@ -14,13 +14,12 @@ import foot_module
 import groups_module
 import rigRoot_module
 import mirror_module
-#import arm_right_module
+import arm_right_module
 import right_leg_module
 import skinning_module
 import guides_module
 import build_module
 import body_module
-import limbModule
 
 class BuildRig(object):
     
@@ -42,12 +41,27 @@ class BuildRig(object):
             )
         self.spine_rig.build()
             
-        arm_L = limbModule.ArmModule(side="L", root_instance=self.root_rig)
-        arm_L.build()
-        #
-        arm_R = limbModule.ArmModule(side="R", root_instance=self.root_rig, mirror_source=arm_L)
-        arm_R.build()
-        print("Arm L y R construidos desde LimbModule.")
+        # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
+        # Usamos los nombres que definiste en create_guides: "shoulder", "elbow", "wrist"
+        self.arm_rig = limbs_module.LimbModule(
+                shoulder_guide="L_shoulder",
+                elbow_guide="L_elbow",
+                wrist_guide="L_wrist",
+                clavicule_guide="L_clavicule",
+                rig_name="Arm_L",
+                root_instance=self.root_rig
+            )
+        self.arm_rig.build()
+            
+        # --- BRAZO DERECHO (El nuevo) ---
+        self.right_arm_rig = arm_right_module.ArmRightModule(
+                rig_name="Arm_R", 
+                left_arm_instance=self.arm_rig,
+                root_instance=self.root_rig
+            )
+        self.right_arm_rig.build()
+                
+
 
         #4. CONSTRRUIR DEDOS
         self.fingers_rig = fingers_module.FingersModule( wrist_guide="L_wrist", rig_name ="Arm_L",root_instance=self.root_rig)

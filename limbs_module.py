@@ -85,7 +85,10 @@ class LimbModule(object):
         ]
         
     def build(self):
-        
+        # Detectamos el lado según el rig_name (ej: "Arm_L" -> "L", "Arm_R" -> "R")
+        side = "L"
+        if self.rig_name.endswith("_R") or "_R_" in self.rig_name:
+            side = "R"
          
         # 1. POSICIONES
         pos_cl = cmds.xform(self.clavicule_guide, q=True, ws=True, t=True)

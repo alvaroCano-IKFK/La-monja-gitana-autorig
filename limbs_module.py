@@ -5,6 +5,7 @@ import groups_module
 import rigRoot_module
 import nodeCreator_module
 import build_module
+import rigRoot_module
 from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
@@ -264,7 +265,10 @@ class LimbModule(object):
             cmds.connectAttr(f"{pbl}.outRotate", f"{bnd_jnt}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
             
-        # 8. ORGANIZACIÓN FINAL — Estructura de Roots
+        # =================================================================
+        # 8. ORGANIZACIÓN FINAL — Estructura de Roots y Mirror Behavior
+        # =================================================================
+        
         skeleton_grp = f"{self.root_instance.rig_name}_C_skeleton_GRP" if self.root_instance else None
         if skeleton_grp and cmds.objExists(skeleton_grp):
             cmds.parent(self.b_cl, skeleton_grp)
@@ -273,9 +277,25 @@ class LimbModule(object):
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(self.arm_grp, rig_grp)
         
+        # Local control por defecto (Lado Izquierdo o Centro)
         local_ctl = self.root_instance.localCtl if self.root_instance else None
+        
         if local_ctl and cmds.objExists(local_ctl):
-            cmds.parent(self.main_grp, local_ctl)
+            # DETECCIÓN DE LADO DERECHO PARA EL GRUPO DE ESCALA NEGATIVA
+            if self.side == "R":
+                mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+                
+                if cmds.objExists(mirror_behavior_grp):
+                    cmds.parent(self.main_grp, mirror_behavior_grp)
+                    print(f"Controles de {self.prefix} emparentados en el grupo de escala negativa: {mirror_behavior_grp}")
+                else:
+                    # Fallback por si no encuentra el grupo por algún motivo
+                    cmds.parent(self.main_grp, local_ctl)
+            else:
+                # El lado izquierdo va directo al local control de manera normal
+                cmds.parent(self.main_grp, local_ctl)
         
         print(f"Build {self.prefix} completo.")
+        
+
 

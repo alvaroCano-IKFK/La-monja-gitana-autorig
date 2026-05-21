@@ -2,7 +2,7 @@ import ui_module
 import guides_module
 import spine_module
 import importlib
-import limbs_module
+#import limbs_module
 import controls_module
 import fingers_module
 import neck_module
@@ -14,11 +14,12 @@ import groups_module
 import reorient_module
 import controlsLibrary
 import rigRoot_module
-import arm_right_module
+#import arm_right_module
 import right_leg_module
 import skinning_module
 import build_module
 import body_module
+import limbModule
 
 #import clavicule_module
 
@@ -27,7 +28,7 @@ def run():
     importlib.reload(spine_module)
     importlib.reload(guides_module)
     importlib.reload(ui_module)
-    importlib.reload(limbs_module)
+    importlib.reload(limbModule)
     importlib.reload(controls_module)   
     importlib.reload(fingers_module)
     importlib.reload(neck_module)
@@ -39,7 +40,7 @@ def run():
     importlib.reload(reorient_module)
     importlib.reload(controlsLibrary)
     importlib.reload(rigRoot_module)
-    importlib.reload(arm_right_module)
+    #importlib.reload(arm_right_module)
     importlib.reload(right_leg_module)
     importlib.reload(skinning_module)
     importlib.reload(build_module)

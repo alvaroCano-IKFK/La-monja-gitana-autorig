@@ -37,10 +37,12 @@ class LimbModule(object):
         
         self.group_maker = groups_module.ControlsGroups()
         
+        #grupo del root rig
         self.root_instance = root_instance 
                
-        self.ctrl_grp = None
+        self.ctrl_grp =None
         self.arm_grp = None 
+               
         
         self.orient = "xyz" 
         self.secondary_orient = "yup"
@@ -50,70 +52,53 @@ class LimbModule(object):
         self.fk_chain = []
 
 
+    #def define_poleVector(self, shoulder, elbow, wrist, distance=5):
     def define_poleVector(self, shoulder, elbow, wrist, distance=5):
+        # 1. Obtener posiciones en World Space
         sh_p = cmds.xform(shoulder, q=True, ws=True, t=True)
         el_p = cmds.xform(elbow, q=True, ws=True, t=True)
         wr_p = cmds.xform(wrist, q=True, ws=True, t=True)
 
+        # 2. Crear vectores (Muñeca - Hombro) y (Codo - Hombro)
         sw = [wr_p[0] - sh_p[0], wr_p[1] - sh_p[1], wr_p[2] - sh_p[2]]
         se = [el_p[0] - sh_p[0], el_p[1] - sh_p[1], el_p[2] - sh_p[2]]
 
+        # 3. Proyección de 'se' sobre 'sw'
+        # Fórmula: (a · b / |b|^2) * b
         dot = sum(se[i] * sw[i] for i in range(3))
         mag_sq = sum(sw[i] * sw[i] for i in range(3))
 
-        if mag_sq < 0.0001:
+        if mag_sq < 0.0001: # Evitar división por cero
             return el_p
 
         proj = [(dot / mag_sq) * sw[i] for i in range(3)]
+        
+        # 4. Vector perpendicular (desde la proyección hacia el codo)
         perp = [se[i] - proj[i] for i in range(3)]
 
+        # 5. Normalizar el vector perpendicular y aplicar distancia
         length = math.sqrt(sum(v * v for v in perp))
         if length < 0.0001:
-            perp = [0, 0, 1]
+            perp = [0, 0, 1] # Dirección por defecto si el brazo está recto
         else:
             perp = [v / length for v in perp]
 
+        # 6. Posición final
         return [
             el_p[0] + perp[0] * distance,
             el_p[1] + perp[1] * distance,
             el_p[2] + perp[2] * distance
         ]
-
-    def _reparent_into_mirror(self, nodes, mirror_grp):
-        """
-        Mueve una lista de nodos raíz dentro del mirror_grp SIN que Maya
-        recalcule su posición world (absolute=False es el comportamiento por
-        defecto de cmds.parent, que sí mueve el objeto).
         
-        La clave: guardamos la matriz world ANTES de emparentar y la
-        restauramos justo después, de forma que el nodo quede exactamente
-        donde estaba visualmente pero su transform local pase a estar
-        expresado en el espacio del grupo negativo.
-        Esto hace que las shapes — que viven en object space — se lean
-        correctamente a través de la escala -1 del padre, volteándose solas.
-        """
-        for node in nodes:
-            # Capturar la world matrix antes del re-parent
-            world_mtx = cmds.xform(node, q=True, ws=True, matrix=True)
-            cmds.parent(node, mirror_grp)
-            # Restaurar la world matrix: ahora los valores locales se
-            # expresan relativos al padre con scaleX=-1, lo que invierte
-            # automáticamente las CVs de las shapes en pantalla
-            cmds.xform(node, ws=True, matrix=world_mtx)
-
     def build(self):
-        # ----------------------------------------------------------------
-        # 1. CAPTURAR POSICIONES DE GUÍAS (world space, antes de cualquier
-        #    jerarquía que pueda contaminar las lecturas)
-        # ----------------------------------------------------------------
+        # 1. POSICIONES DE LAS GUIAS
         pos_cl = cmds.xform(self.clavicule_guide, q=True, ws=True, t=True)
-        pos_sh = cmds.xform(self.shoulder_guide,  q=True, ws=True, t=True)
-        pos_el = cmds.xform(self.elbow_guide,      q=True, ws=True, t=True)
-        pos_wr = cmds.xform(self.wrist_guide,      q=True, ws=True, t=True)
+        pos_sh = cmds.xform(self.shoulder_guide, q=True, ws=True, t=True)
+        pos_el = cmds.xform(self.elbow_guide, q=True, ws=True, t=True)
+        pos_wr = cmds.xform(self.wrist_guide, q=True, ws=True, t=True)
 
-        # ----------------------------------------------------------------
-        # 2. BIND CHAIN
-        # ----------------------------------------------------------------
+        # 2. BIND CHAIN 
+        # Forzamos que adopten la orientación exacta de las guías (heredando rotaciones si es necesario)
         cmds.select(clear=True)
         b_cl = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_cl)
         cmds.matchTransform(b_cl, self.clavicule_guide, rot=True, pos=False)
@@ -131,20 +116,19 @@ class LimbModule(object):
         cmds.matchTransform(b_wr, self.wrist_guide, rot=True, pos=False)
         
         cmds.select(clear=True)
-        
+       
+        # Emparentar la cadena estructural
         cmds.parent(b_sh, b_cl)
         cmds.parent(b_el, b_sh)
         cmds.parent(b_wr, b_el)
         
+        # Congelar transformaciones de rotación a Joint Orient para que queden limpias en 0
         cmds.makeIdentity(b_cl, apply=True, t=0, r=1, s=0, n=0, pn=1)
 
         self.bind_chain = [b_sh, b_el, b_wr]
-        self.b_cl = b_cl
+        self.b_cl = b_cl 
 
-        # ----------------------------------------------------------------
-        # 3. IK / FK CHAINS (duplicadas del bind, aún fuera de cualquier
-        #    grupo para que las posiciones sean correctas)
-        # ----------------------------------------------------------------
+        # Función interna corregida para duplicar cadenas manteniendo orientaciones intactas
         def duplicate_chain(suffix):
             new_jnts = cmds.duplicate(self.bind_chain[0], rc=True)
             root = cmds.rename(new_jnts[0], f"{self.prefix}_{self.names[1]}_{suffix}_JNT")
@@ -152,103 +136,104 @@ class LimbModule(object):
             children.reverse()
             el = cmds.rename(children[0], f"{self.prefix}_{self.names[2]}_{suffix}_JNT")
             wr = cmds.rename(children[1], f"{self.prefix}_{self.names[3]}_{suffix}_JNT")
+            
             return [root, el, wr]
             
         self.fk_chain = duplicate_chain("fk")
         self.ik_chain = duplicate_chain("ik")
 
-        # ----------------------------------------------------------------
-        # 4. GRUPOS DE RIG  (se crean en world, sin padre todavía)
-        # ----------------------------------------------------------------
-        self.main_rig_grp  = cmds.group(em=True, n=f"{self.prefix}_armControls_GRP")
-        self.main_grp      = self.main_rig_grp
-        self.ik_grp        = cmds.group(em=True, n=f"{self.prefix}_ik_GRP",       p=self.main_rig_grp)
-        self.fk_grp        = cmds.group(em=True, n=f"{self.prefix}_fk_GRP",       p=self.main_rig_grp)
-        self.controls_grp  = cmds.group(em=True, n=f"{self.prefix}_CONTROLS_GRP", p=self.main_rig_grp)
-        self.arm_grp       = cmds.group(em=True, n=f"{self.prefix}_arm_GRP")
-
-        # ----------------------------------------------------------------
-        # 5. IK SETUP
-        # ----------------------------------------------------------------
+        # 3. GRUPOS DE RIG (Usando el prefijo de lado)
+        self.main_rig_grp = cmds.group(em=True, n=f"{self.prefix}_armControls_GRP")
+        self.main_grp = self.main_rig_grp
+        self.ik_grp = cmds.group(em=True, n=f"{self.prefix}_ik_GRP", p=self.main_rig_grp)
+        self.fk_grp = cmds.group(em=True, n=f"{self.prefix}_fk_GRP", p=self.main_rig_grp)
+        self.controls_grp = cmds.group(em=True, n=f"{self.prefix}_CONTROLS_GRP", p=self.main_rig_grp)
+        self.arm_grp = cmds.group(em=True, n=f"{self.prefix}_arm_GRP")
+        
+        # 4. IK SETUP
+        # Prefered angle dinámico según el lado
         pref_rot = 0.1 if self.side == "L" else -0.1
-        cmds.setAttr(f"{self.ik_chain[1]}.rotateY", pref_rot)
-        cmds.joint(self.ik_chain[0], edit=True, ch=True, spa=True)
-        cmds.setAttr(f"{self.ik_chain[1]}.rotateY", 0)
+        cmds.setAttr(f"{self.ik_chain[1]}.rotateY", pref_rot) 
+        cmds.joint(self.ik_chain[0], edit=True, ch=True, spa=True) 
+        cmds.setAttr(f"{self.ik_chain[1]}.rotateY", 0) 
 
-        ik_h, ik_eff = cmds.ikHandle(
-            sj=self.ik_chain[0], ee=self.ik_chain[2],
-            sol="ikRPsolver", n=f"{self.prefix}_IKH"
-        )
+        ik_h, ik_eff = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2], sol="ikRPsolver", n=f"{self.prefix}_IKH")
+        
         cmds.select(clear=True)
-
-        # ----------------------------------------------------------------
-        # 6. CONTROLES — se crean y posicionan FUERA de cualquier jerarquía
-        #    con scaleX negativo para que matchTransform lea world space puro
-        # ----------------------------------------------------------------
-
-        # --- Clavícula ---
+        
+        if self.side == "R":
+            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            cmds.parent(self.main_grp, mirror_behavior_grp)
+        else:
+            local_ctl = self.root_instance.localCtl
+            cmds.parent(self.main_grp, local_ctl)
+            
+        # CONTROL CLAVICULE
         clavicule_ctl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["clavicule"],
+            lib_name=self.styles["clavicule"], 
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         cmds.parent(clav_gen, self.controls_grp)
-
-        # --- IK Root ---
+        
+        # IK Root Control
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["root"],
+            lib_name=self.styles["root"], 
             final_name=f"{self.prefix}_armRoot_CTRL"
         )
         ik_root_gen = self.group_maker.create_rig_hierarchy(ik_root_ctrl, self.ik_chain[0])
         cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
-
-        # --- IK Handle ---
+        
+        # IK Handle Control
         ik_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["mainIk"],
+            lib_name=self.styles["mainIk"], 
             final_name=f"{self.prefix}_armIk_CTRL"
         )
         ik_ctrl_gen = self.group_maker.create_rig_hierarchy(ik_ctrl, self.ik_chain[2])
-        cmds.orientConstraint(ik_ctrl, self.ik_chain[2], mo=True)
-
-        # --- Pole Vector ---
+        cmds.orientConstraint(ik_ctrl, self.ik_chain[2], mo=True)        
+        
+        # Pole Vector
         pv_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["poleVector"],
+            lib_name=self.styles["poleVector"], 
             final_name=f"{self.prefix}_poleVector_CTRL"
         )
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         cmds.xform(pv_gen, ws=True, t=pv_pos)
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
-
+        
         cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
         cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
-        cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)
+        cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)        
         cmds.parent(ik_h, self.arm_grp)
-
-        # --- FK ---
-        fk_ctrls = []
+        
+        # 5. FK SETUP
+        fk_ctrls = [] 
         for i in range(3):
-            jnt      = self.fk_chain[i]
-            ctrl_name = f"{self.prefix}_{self.names[i+1]}_fk_CTRL"
-            ctrl     = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+            jnt = self.fk_chain[i]
+            ctrl_name = f"{self.prefix}_{self.names[i+1]}_fk_CTRL" 
+            
+            ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"], 
                 final_name=ctrl_name
             )
+            
             gen = self.group_maker.create_rig_hierarchy(ctrl, jnt)
             cmds.parentConstraint(ctrl, jnt)
-            fk_ctrls.append(ctrl)
+            fk_ctrls.append(ctrl) 
+            
             if i == 0:
                 cmds.parent(gen, self.fk_grp)
             else:
                 cmds.parent(gen, fk_ctrls[i-1])
-
-        cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)
-
-        # --- Switch ---
+                
+        cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)  
+        
+        # 6. SWITCH & VISIBILIDAD
         switch_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["switch"],
+            lib_name=self.styles["switch"], 
             final_name=f"{self.prefix}_switch_CTRL"
         )
         switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, self.bind_chain[2])
@@ -259,65 +244,53 @@ class LimbModule(object):
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
-        cmds.connectAttr(f"{vis_rev}.outputX",   f"{self.ik_grp}.visibility")
-
-        # ----------------------------------------------------------------
+        cmds.connectAttr(f"{vis_rev}.outputX", f"{self.ik_grp}.visibility")
+        
         # 7. BLEND (Pair Blends)
-        # ----------------------------------------------------------------
         for i in range(len(self.bind_chain)):
             bnd_jnt = self.bind_chain[i]
-            ik_jnt  = self.ik_chain[i]
-            fk_jnt  = self.fk_chain[i]
+            ik_jnt = self.ik_chain[i]
+            fk_jnt = self.fk_chain[i]
 
             pbl_creator = NodeCreator(
-                side=self.side,
+                side=self.side,   
                 node_type="pairBlend",
-                base_name=self.prefix,
-                name=self.names[i+1],
+                base_name=self.prefix,              
+                name=self.names[i+1],                   
                 tag="blend",
                 parent=None,
-                custom_suffix=None
+                custom_suffix=None                    
             )
             pbl = pbl_creator.create()
+            
+            cmds.setAttr(f"{pbl}.rotInterpolation", 1) 
 
-            cmds.setAttr(f"{pbl}.rotInterpolation", 1)
-
-            cmds.connectAttr(f"{ik_jnt}.translate",  f"{pbl}.inTranslate1")
-            cmds.connectAttr(f"{ik_jnt}.rotate",     f"{pbl}.inRotate1")
-            cmds.connectAttr(f"{fk_jnt}.translate",  f"{pbl}.inTranslate2")
-            cmds.connectAttr(f"{fk_jnt}.rotate",     f"{pbl}.inRotate2")
-            cmds.connectAttr(f"{pbl}.outTranslate",  f"{bnd_jnt}.translate")
-            cmds.connectAttr(f"{pbl}.outRotate",     f"{bnd_jnt}.rotate")
+            cmds.connectAttr(f"{ik_jnt}.translate", f"{pbl}.inTranslate1")
+            cmds.connectAttr(f"{ik_jnt}.rotate", f"{pbl}.inRotate1")
+            cmds.connectAttr(f"{fk_jnt}.translate", f"{pbl}.inTranslate2")
+            cmds.connectAttr(f"{fk_jnt}.rotate", f"{pbl}.inRotate2")
+            cmds.connectAttr(f"{pbl}.outTranslate", f"{bnd_jnt}.translate")
+            cmds.connectAttr(f"{pbl}.outRotate", f"{bnd_jnt}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
+            
+        # =================================================================
+        # 8. ORGANIZACIÓN FINAL — Estructura de Roots y Mirror Behavior
+        # =================================================================
+        
+        skeleton_grp = f"{self.root_instance.rig_name}_C_skeleton_GRP" if self.root_instance else None
+        if skeleton_grp and cmds.objExists(skeleton_grp):
+            cmds.parent(self.b_cl, skeleton_grp)
 
-        # ----------------------------------------------------------------
-        # 8. ORGANIZACIÓN FINAL
-        #    El skeleton y el rig_grp se resuelven primero (no afectados
-        #    por el mirror).
-        #    El main_grp se emparenta AL FINAL, usando _reparent_into_mirror
-        #    para el lado R, para que las shapes se lean correctamente a
-        #    través de la escala negativa sin necesidad de tocar los CVs.
-        # ----------------------------------------------------------------
-        if self.root_instance:
-            skeleton_grp = f"{self.root_instance.rig_name}_C_skeleton_GRP"
-            if cmds.objExists(skeleton_grp):
-                cmds.parent(self.b_cl, skeleton_grp)
+        rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
+        if rig_grp and cmds.objExists(rig_grp):
+            cmds.parent(self.arm_grp, rig_grp)
+        
+        # Local control por defecto (Lado Izquierdo o Centro)
+        local_ctl = self.root_instance.localCtl if self.root_instance else None
+        
 
-            rig_grp = f"{self.root_instance.rig_name}_rig_GRP"
-            if cmds.objExists(rig_grp):
-                cmds.parent(self.arm_grp, rig_grp)
-
-            if self.side == "R":
-                mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-                if cmds.objExists(mirror_behavior_grp):
-                    # Preservamos world matrix al emparentar: las shapes se
-                    # voltean solas porque ahora viven en espacio -1 en X
-                    self._reparent_into_mirror([self.main_grp], mirror_behavior_grp)
-                    print(f"{self.prefix}: main_grp emparentado en {mirror_behavior_grp} con world matrix preservada.")
-                else:
-                    cmds.warning(f"No se encontró {mirror_behavior_grp}. Emparentando en localCtl como fallback.")
-                    cmds.parent(self.main_grp, self.root_instance.localCtl)
-            else:
-                cmds.parent(self.main_grp, self.root_instance.localCtl)
-
+        
         print(f"Build {self.prefix} completo.")
+        
+
+

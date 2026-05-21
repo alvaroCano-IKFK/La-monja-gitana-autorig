@@ -174,6 +174,7 @@ class LimbModule(object):
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
+        
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
             
@@ -190,73 +191,7 @@ class LimbModule(object):
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         #cmds.parent(clav_gen, self.controls_grp)
         
-        # IK Root Control
-        ik_root_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["root"], 
-            final_name=f"{self.prefix}_armRoot_CTRL"
-        )
-        ik_root_gen = self.group_maker.create_rig_hierarchy(ik_root_ctrl, self.ik_chain[0])
-        cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
-        
-        # IK Handle Control
-        ik_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["mainIk"], 
-            final_name=f"{self.prefix}_armIk_CTRL"
-        )
-        ik_ctrl_gen = self.group_maker.create_rig_hierarchy(ik_ctrl, self.ik_chain[2])
-        cmds.orientConstraint(ik_ctrl, self.ik_chain[2], mo=True)        
-        
-        # Pole Vector
-        pv_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["poleVector"], 
-            final_name=f"{self.prefix}_poleVector_CTRL"
-        )
-        pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
-        cmds.xform(pv_gen, ws=True, t=pv_pos)
-        cmds.poleVectorConstraint(pv_ctrl, ik_h)
-        
-        cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
-        cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
-        cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)        
-        cmds.parent(ik_h, self.arm_grp)
-        
-        # 5. FK SETUP
-        fk_ctrls = [] 
-        for i in range(3):
-            jnt = self.fk_chain[i]
-            ctrl_name = f"{self.prefix}_{self.names[i+1]}_fk_CTRL" 
-            
-            ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"], 
-                final_name=ctrl_name
-            )
-            
-            gen = self.group_maker.create_rig_hierarchy(ctrl, jnt)
-            cmds.parentConstraint(ctrl, jnt)
-            fk_ctrls.append(ctrl) 
-            
-            if i == 0:
-                cmds.parent(gen, self.fk_grp)
-            else:
-                cmds.parent(gen, fk_ctrls[i-1])
-                
-        cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)  
-        
-        # 6. SWITCH & VISIBILIDAD
-        switch_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["switch"], 
-            final_name=f"{self.prefix}_switch_CTRL"
-        )
-        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, self.bind_chain[2])
-        cmds.xform(switch_gen, r=True, os=True, t=(0, 10 if self.side == "L" else -10, 0))
-        cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
-        cmds.parent(switch_gen, self.main_rig_grp)
 
-        vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
-        cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
-        cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
-        cmds.connectAttr(f"{vis_rev}.outputX", f"{self.ik_grp}.visibility")
         
         # 7. BLEND (Pair Blends)
         for i in range(len(self.bind_chain)):

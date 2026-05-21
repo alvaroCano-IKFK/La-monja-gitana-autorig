@@ -170,16 +170,16 @@ class LimbModule(object):
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
         
         if self.side == "R":
-        if isinstance(clav_gen, list):
-            target_group = clav_gen[0]
-        else:
-            target_group = clav_gen
+            if isinstance(clav_gen, list):
+                target_group = clav_gen[0]
+            else:
+                target_group = clav_gen
 
-        # Aplicamos el setAttr INMEDIATAMENTE aquí, antes de moverlo de sitio en el Outliner
-        if cmds.objExists(target_group):
-            cmds.setAttr(f"{target_group}.scaleZ", 1)
-            print(f"--> Escala Z forzada con éxito en: {target_group}")
-        # ---------------------
+            # Aplicamos el setAttr INMEDIATAMENTE aquí, antes de moverlo de sitio en el Outliner
+            if cmds.objExists(target_group):
+                cmds.setAttr(f"{target_group}.scaleZ", 1)
+                print(f"--> Escala Z forzada con éxito en: {target_group}")
+            # ---------------------
         
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)

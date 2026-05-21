@@ -178,7 +178,7 @@ class LimbModule(object):
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
             cmds.setAttr(f"{clav_gen}.scaleZ", 1)
 
-            cmds.parent(clav_gen, mirror_behavior_grp)
+            #cmds.parent(clav_gen, mirror_behavior_grp)
             print(clav_gen)
             
         cmds.matchTransform(clav_gen, self.clavicule_guide)

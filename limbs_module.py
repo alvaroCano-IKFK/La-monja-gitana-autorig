@@ -3,6 +3,8 @@ import math
 import controlsLibrary
 import groups_module 
 import rigRoot_module
+import nodeCreator_module
+from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
 
@@ -277,9 +279,16 @@ class LimbModule(object):
             ik_jnt = self.ik_chain[i]
             fk_jnt = self.fk_chain[i]
 
-            # Crear el nodo pairBlend
-            pbl_name = f"{bnd_jnt}_PBL"
-            pbl = cmds.createNode("pairBlend", n=pbl_name)
+            pbl_creator = NodeCreator(
+                side=self.rig_name.split("_")[-1],   
+                node_type="pairBlend",
+                base_name=self.rig_name,              
+                name=self.names[i],                   
+                tag="blend",
+                parent=None,
+                custom_suffix=None                    # Usará "PBL" del diccionario
+            )
+            pbl = pbl_creator.create()
             
             # Configurar a Quaternions (evita rotaciones locas)
             cmds.setAttr(f"{pbl}.rotInterpolation", 1) 

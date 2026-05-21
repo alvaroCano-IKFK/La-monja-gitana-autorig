@@ -8,18 +8,18 @@ from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
 
-    def __init__(self, shoulder_guide="L_shoulder", 
-                 elbow_guide="L_elbow", 
-                 wrist_guide="L_wrist",
-                 clavicule_guide ="L_clavicule",
-                 rig_name="L_Character",
+    def __init__(self, shoulder_guide="_shoulder", 
+                 elbow_guide="_elbow", 
+                 wrist_guide="_wrist",
+                 clavicule_guide ="_clavicule",
+                 rig_name="Character",
                  root_instance= None):
                      
         self.shoulder_guide = shoulder_guide
         self.elbow_guide = elbow_guide
         self.wrist_guide = wrist_guide
         self.clavicule_guide= clavicule_guide
-        self.names = ["L_clavicule","L_shoulder","L_elbow","L_wrist"]
+        self.names = ["clavicule","shoulder","elbow","wrist"]
         self.rig_name = rig_name
         self.styles = {"mainIk": "squareControl",
                               "root": "rootControl",

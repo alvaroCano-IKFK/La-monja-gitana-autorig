@@ -3,22 +3,23 @@ import math
 import controlsLibrary
 import groups_module 
 import rigRoot_module
+import guides_module
 import nodeCreator_module
 from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
 
-    def __init__(self, shoulder_guide="_shoulder", 
-                 elbow_guide="_elbow", 
-                 wrist_guide="_wrist",
-                 clavicule_guide ="_clavicule",
+    def __init__(self, limb_root="_shoulder", 
+                 limb_mid="_elbow", 
+                 limb_end="_wrist",
+                 clavicule_root ="_clavicule",
                  rig_name="Character",
                  root_instance= None):
                      
-        self.shoulder_guide = shoulder_guide
-        self.elbow_guide = elbow_guide
-        self.wrist_guide = wrist_guide
-        self.clavicule_guide= clavicule_guide
+        self.limb_root = limb_root
+        self.limb_mid = limb_mid
+        self.limb_end = limb_end
+        self.clavicule = clavicule_root
         self.names = ["clavicule","shoulder","elbow","wrist"]
         self.rig_name = rig_name
         self.styles = {"mainIk": "squareControl",
@@ -46,11 +47,11 @@ class LimbModule(object):
 
 
     #def define_poleVector(self, shoulder, elbow, wrist, distance=5):
-    def define_poleVector(self, shoulder, elbow, wrist, distance=5):
+    def define_poleVector(self, limb_root,limb_mid,limb_end, distance=5):
         # 1. Obtener posiciones en World Space
-        sh_p = cmds.xform(shoulder, q=True, ws=True, t=True)
-        el_p = cmds.xform(elbow, q=True, ws=True, t=True)
-        wr_p = cmds.xform(wrist, q=True, ws=True, t=True)
+        sh_p = cmds.xform(self.limb_root, q=True, ws=True, t=True)
+        el_p = cmds.xform(self.limb_mid, q=True, ws=True, t=True)
+        wr_p = cmds.xform(self.limb_end, q=True, ws=True, t=True)
 
         # 2. Crear vectores (Muñeca - Hombro) y (Codo - Hombro)
         sw = [wr_p[0] - sh_p[0], wr_p[1] - sh_p[1], wr_p[2] - sh_p[2]]
@@ -87,10 +88,10 @@ class LimbModule(object):
         
          
         # 1. POSICIONES
-        pos_cl = cmds.xform(self.clavicule_guide, q=True, ws=True, t=True)
-        pos_sh = cmds.xform(self.shoulder_guide, q=True, ws=True, t=True)
-        pos_el = cmds.xform(self.elbow_guide, q=True, ws=True, t=True)
-        pos_wr = cmds.xform(self.wrist_guide, q=True, ws=True, t=True)
+        pos_cl = cmds.xform(self.clavicule, q=True, ws=True, t=True)
+        pos_sh = cmds.xform(self.limb_root, q=True, ws=True, t=True)
+        pos_el = cmds.xform(self.limb_mid, q=True, ws=True, t=True)
+        pos_wr = cmds.xform(self.limb_end, q=True, ws=True, t=True)
 
 
         # 2. BIND CHAIN (Orientación específica para pierna)
@@ -119,10 +120,10 @@ class LimbModule(object):
             # Lado R: copiamos jointOrient directamente de las guías R
             # ya orientadas correctamente por mirrorJoint — no reorientamos
             guide_map = {
-                b_cl: self.clavicule_guide,
-                b_sh: self.shoulder_guide,
-                b_el: self.elbow_guide,
-                b_wr: self.wrist_guide,
+                b_cl: self.clavicule,
+                b_sh: self.limb_root,
+                b_el: self.limb_mid,
+                b_wr: self.limb_end,
             }
             for jnt, guide in guide_map.items():
                 jo = cmds.getAttr(f"{guide}.jointOrient")[0]
@@ -184,8 +185,8 @@ class LimbModule(object):
             lib_name=self.styles["clavicule"], 
             final_name=f"{self.rig_name}_clavicule_CTRL"
         )
-        clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
-        cmds.matchTransform(clav_gen, self.clavicule_guide)
+        clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule)
+        cmds.matchTransform(clav_gen, self.clavicule)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         cmds.parent(clav_gen, self.controls_grp)
         

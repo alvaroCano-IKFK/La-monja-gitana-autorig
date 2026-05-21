@@ -168,12 +168,19 @@ class LimbModule(object):
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clav_gen = self.group_maker.create_rig_hierarchy(clavicule_ctl, self.clavicule_guide)
+        
         if self.side == "R":
-            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            #cmds.setAttr(f"{clav_gen}.scaleZ", 1)
+        if isinstance(clav_gen, list):
+            target_group = clav_gen[0]
+        else:
+            target_group = clav_gen
 
-            cmds.parent(clav_gen, mirror_behavior_grp)
-            
+        # Aplicamos el setAttr INMEDIATAMENTE aquí, antes de moverlo de sitio en el Outliner
+        if cmds.objExists(target_group):
+            cmds.setAttr(f"{target_group}.scaleZ", 1)
+            print(f"--> Escala Z forzada con éxito en: {target_group}")
+        # ---------------------
+        
         cmds.matchTransform(clav_gen, self.clavicule_guide)
         cmds.parentConstraint(clavicule_ctl, b_cl, mo=True)
         #cmds.parent(clav_gen, self.controls_grp)

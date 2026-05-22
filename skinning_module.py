@@ -44,8 +44,9 @@ class SkinningModule(object):
         #   ("upperLeg_L_ENV",  "hip_C_ENV")      # pierna izq.   -> cadera
         #   ("upperLeg_R_ENV",  "hip_C_ENV")      # pierna der.   -> cadera
         self.reparent_map = [
-            ("Arm_R_R_clavicule_ENV","Character_spineFix_ENV"),
-            ("Arm_L_L_clavicule_ENV","Character_spineFix_ENV"),
+            ("Character_body_ENV, Character_spine_0_ENV")
+            ("R_Arm_clavicule_ENV","Character_spineFix_ENV"),
+            ("L_Arm_clavicule_ENV","Character_spineFix_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
             ("Leg_R_R_thigh_ENV","Character_spine_0_ENV"),

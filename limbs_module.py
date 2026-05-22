@@ -290,9 +290,9 @@ class LimbModule(object):
         # 8. ORGANIZACIÓN FINAL — Estructura de Roots y Mirror Behavior
         # =================================================================
         
-        skeleton_grp = f"{self.root_instance.rig_name}_C_skeleton_GRP" if self.root_instance else None
-        if skeleton_grp and cmds.objExists(skeleton_grp):
-            cmds.parent(self.b_cl, skeleton_grp)
+        #skeleton_grp = f"{self.root_instance.rig_name}_C_skeleton_GRP" if self.root_instance else None
+        #if skeleton_grp and cmds.objExists(skeleton_grp):
+            #cmds.parent(self.b_cl, skeleton_grp)
 
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):

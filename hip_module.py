@@ -36,7 +36,7 @@ class HipModule(object):
                     
         hip_end_joint = cmds.joint(n=f"{self.rig_name}_hipEnd_JNT", p =hip_end_pos)
         
-        #Controls(TO DO:Switch to wave ctl)
+        
         
         name = f"{self.rig_name}_localHip_CTL"
         hipControl = controlsLibrary.create_control_from_lib(

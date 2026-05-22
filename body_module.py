@@ -3,6 +3,9 @@ import guides_module
 import controlsLibrary
 import groups_module
 import spine_module
+import hip_module
+import leg_module
+import right_leg_module
 
 class BodyModule(object):   
     def __init__(self, root_guide="root", 
@@ -32,11 +35,16 @@ class BodyModule(object):
         bodyControl_off = self.group_maker.create_rig_hierarchy(bodyControl, self.root_guide)
         cmds.parentConstraint(bodyControl, body_joint)
 
-        rig_grp = (
-            f"{self.root_instance.rig_name}_rig_GRP"
+        self.localCtl = (
+            f"{self.root_instance.rig_name}_local_CTL"
             if self.root_instance else None
         )
-        if rig_grp:
-            cmds.parent(bodyControl_off, rig_grp)
-            
+        if self.localCtl:
+            cmds.parent(bodyControl_off, self.localCtl)
+
+        #Connections to other modules
+
+
+
+
         print("Body module built successfully.")

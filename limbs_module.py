@@ -195,9 +195,11 @@ class LimbModule(object):
             gen = self.group_maker.create_rig_hierarchy(ctrl, jnt)
             fk_ctrls.append(ctrl)
             fk_gens.append(gen)
+            
+            
+        
 
-        # ---- POSICIONAR antes del mirror ----
-        #cmds.matchTransform(clav_gen, self.clavicule_guide)
+
 
         # ---- MIRROR BEHAVIOUR (lado R) ----
         # Metemos TODOS los gen de controles bajo el grupo mirror
@@ -208,7 +210,26 @@ class LimbModule(object):
             cmds.setAttr(f"{self.main_rig_grp}.scaleY", 1)
             cmds.setAttr(f"{self.main_rig_grp}.scaleZ", 1)
             cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
-
+            cmds.setAttr(f"{self.main_rig_grp}.rotateX", 0)
+            
+            all_children = cmds.listRelatives(self.main_rig_grp, allDescendents=True, type="transform") or []
+            for child in all_children:
+                try:
+                    cmds.setAttr(f"{child}.scaleX", 1)
+                    cmds.setAttr(f"{child}.scaleY", 1)
+                    cmds.setAttr(f"{child}.scaleZ", 1)
+                    cmds.setAttr(f"{child}.rotateY", 0)
+                    cmds.setAttr(f"{child}.rotateX", 0)
+                except:
+                    pass
+                
+        # ---- POSICIONAR antes del mirror ----
+        #cmds.matchTransform(clav_gen, self.clavicule_guide)
+        cmds.parent(clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
+        #cmds.parent(ik_h, self.arm_grp)
+        cmds.parent(switch_gen, self.main_rig_grp)
+        cmds.matchTransform(clav_gen, self.clavicule_guide)
+        
         # ---- CONEXIONES / CONSTRAINTS ----
 
         # Clavicule
@@ -226,7 +247,7 @@ class LimbModule(object):
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
         # IK parenting y constraints
-        cmds.parent(clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
+        #cmds.parent(clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
         cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
         cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)
         cmds.parent(ik_h, self.arm_grp)
@@ -244,7 +265,7 @@ class LimbModule(object):
         # Switch
         cmds.xform(switch_gen, r=True, os=True, t=(0, 10 if self.side == "L" else -10, 0))
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
-        cmds.parent(switch_gen, self.main_rig_grp)
+        #cmds.parent(switch_gen, self.main_rig_grp)
 
         # 6. SWITCH & VISIBILIDAD
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")

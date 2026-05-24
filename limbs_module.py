@@ -212,16 +212,7 @@ class LimbModule(object):
             cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
             cmds.setAttr(f"{self.main_rig_grp}.rotateX", 0)
             
-            all_children = cmds.listRelatives(self.main_rig_grp, allDescendents=True, type="transform") or []
-            for child in all_children:
-                try:
-                    cmds.setAttr(f"{child}.scaleX", 1)
-                    cmds.setAttr(f"{child}.scaleY", 1)
-                    cmds.setAttr(f"{child}.scaleZ", 1)
-                    cmds.setAttr(f"{child}.rotateY", 0)
-                    cmds.setAttr(f"{child}.rotateX", 0)
-                except:
-                    pass
+
                 
         # ---- POSICIONAR antes del mirror ----
         #cmds.matchTransform(clav_gen, self.clavicule_guide)
@@ -229,6 +220,9 @@ class LimbModule(object):
         #cmds.parent(ik_h, self.arm_grp)
         cmds.parent(switch_gen, self.main_rig_grp)
         cmds.matchTransform(clav_gen, self.clavicule_guide)
+        cmds.matchTransform(ik_root_gen, self.shoulder_guide)
+        cmds.matchTransform(ik_ctrl_gen, self.wrist_guide)
+        #cmds.matchTransform(pv_gen, self.elbow_guide)
         
         # ---- CONEXIONES / CONSTRAINTS ----
 

@@ -92,14 +92,9 @@ class LegModule(object):
         pos_an   = cmds.xform(self.ankle_guide, q=True, ws=True, t=True)
         pos_ball = cmds.xform(self.ball_guide,  q=True, ws=True, t=True)
         pos_tip  = cmds.xform(self.tip_guide,   q=True, ws=True, t=True)
+        pos_heel = cmds.xform(self.heel_guide,  q=True, ws=True, t=True)
 
-        # ----------------------------------------------------------------
-        # 2. BIND CHAIN
-        # Mismo patrón que limbs_module:
-        #   joint en posición → matchTransform(rot) desde la guía → parentar → makeIdentity
-        # Esto garantiza que los bind joints hereden la orientación real de las guías
-        # en lugar de recalcularla solo por geometría (que no funciona para el lado R).
-        # ----------------------------------------------------------------
+        # ---- 2. BIND CHAIN ----
         cmds.select(clear=True)
         b_th = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_th)
         cmds.matchTransform(b_th, self.thigh_guide, rot=True, pos=False)
@@ -127,8 +122,6 @@ class LegModule(object):
         cmds.parent(b_ba,  b_an)
         cmds.parent(b_tip, b_ba)
 
-        # makeIdentity hornea la rotación copiada en jointOrient,
-        # igual que limbs_module hace con b_cl tras parentar
         cmds.makeIdentity(b_th, apply=True, t=0, r=1, s=0, n=0, pn=1)
 
         self.bind_chain = [b_th, b_kn, b_an, b_ba, b_tip]
@@ -153,22 +146,22 @@ class LegModule(object):
         self.main_grp       = self.main_rig_grp
         self.ik_grp         = cmds.group(em=True, n=f"{self.prefix}_ik_GRP",  p=self.main_rig_grp)
         self.fk_grp         = cmds.group(em=True, n=f"{self.prefix}_fk_GRP",  p=self.main_rig_grp)
-        self.leg_grp        = cmds.group(em=True, n=f"{self.prefix}_leg_GRP")
+        self.leg_grp        = cmds.group(em=True, n=f"{self.prefix}_leg_GRP", p=self.main_rig_grp)
         self.leg_joints_grp = cmds.group(em=True, n=f"{self.prefix}_legJoints_GRP")
 
-
+        # ---- 4. IK HANDLES ----
         ik_h, _        = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2],
                                         sol="ikRPsolver", n=f"{self.prefix}_IKH")
         ik_footBall, _ = cmds.ikHandle(sj=self.ik_chain[2], ee=self.ik_chain[3],
                                         sol="ikSCsolver", n=f"{self.prefix}_footBall_HDL")
         ik_footTip, _  = cmds.ikHandle(sj=self.ik_chain[3], ee=self.ik_chain[4],
                                         sol="ikSCsolver", n=f"{self.prefix}_footTip_HDL")
-
-        #cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
         cmds.select(clear=True)
 
-        # ---- 5. CONTROLES IK ----
-        # Crear → offset cosmético en WS (mientras flotan) → DESPUÉS parentar jerarquía
+        # ---- 5. CREAR CONTROLES ----
+        # create_rig_hierarchy hace matchTransform internamente al crearse,
+        # pero ese matchTransform se sobreescribe en el paso 10 (despues del mirror),
+        # igual que hace limbs_module con clav_gen, ik_root_gen, ik_ctrl_gen.
 
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footRoot"],
@@ -184,7 +177,6 @@ class LegModule(object):
             lib_name=self.styles["footHeel"],
             final_name=f"{self.prefix}_footHeel_CTRL")
         foot_heel_gen = self.group_maker.create_rig_hierarchy(foot_heel_ctrl, self.heel_guide)
-        
 
         foot_ball_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBall"],
@@ -195,13 +187,11 @@ class LegModule(object):
             lib_name=self.styles["footTip"],
             final_name=f"{self.prefix}_footTip_CTRL")
         foot_tip_gen = self.group_maker.create_rig_hierarchy(foot_tip_ctrl, self.ik_chain[4])
-        
 
         foot_bankIn_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBankIn"],
             final_name=f"{self.prefix}_footBankIn_CTRL")
         foot_bankIn_gen = self.group_maker.create_rig_hierarchy(foot_bankIn_ctrl, self.ik_chain[3])
-        
 
         foot_bankOut_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBankOut"],
@@ -214,7 +204,7 @@ class LegModule(object):
             final_name=f"{self.prefix}_poleVector_CTRL")
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
 
-        # ---- 6. CONTROLES FK ----
+        # ---- 6. FK CONTROLES ----
         fk_ctrls = []
         fk_gens  = []
         for i in range(4):
@@ -230,68 +220,84 @@ class LegModule(object):
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
         switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, b_an)
-        cmds.xform(switch_gen, r=True, t=(10 if self.side == "L" else -10, 0, 0))
 
-        # ---- 8. MIRROR BEHAVIOUR (lado R) ----
-        # Después de posicionar todos los _gen en WS, antes de parentar la jerarquía
+        # ---- 8. PARENTAR A ik_grp / fk_grp ANTES DEL MIRROR ----
+        # Los _gen entran en la jerarquia de grupos aqui, todavia sin mirror.
+        # Sus rotaciones son las del joint (incorrectas para el lado R).
+        cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen,
+                    foot_heel_gen, foot_ball_gen, foot_tip_gen,
+                    foot_bankIn_gen, foot_bankOut_gen,
+                    self.ik_grp)
+        cmds.parent(switch_gen, self.main_rig_grp)
+
+        for i in range(4):
+            if i == 0:
+                cmds.parent(fk_gens[i], self.fk_grp)
+            else:
+                cmds.parent(fk_gens[i], fk_ctrls[i - 1])
+
+        # ---- 9. MIRROR BEHAVIOUR (lado R) ----
+        # Se aplica con los _gen ya dentro de main_rig_grp pero SIN matchTransform
+        # todavia. El scaleX=-1 actua sobre el grupo, no sobre las rotaciones locales
+        # de los _gen que aun no se han corregido.
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
             cmds.parent(self.main_rig_grp, mirror_behavior_grp)
-            
             cmds.setAttr(f"{self.main_rig_grp}.scaleX", 1)
             cmds.setAttr(f"{self.main_rig_grp}.scaleY", 1)
             cmds.setAttr(f"{self.main_rig_grp}.scaleZ", 1)
-            cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
             cmds.setAttr(f"{self.main_rig_grp}.rotateX", 0)
-            cmds.setAttr(f"{self.main_rig_grp}.rotateZ",0)
+            cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
+            cmds.setAttr(f"{self.main_rig_grp}.rotateZ", 0)
 
-        # ---- 9. PARENTAR a grupos Y POSICIONAR----
-        cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
-        cmds.parent(switch_gen, self.main_rig_grp)
-        cmds.matchTransform(ik_root_gen, self.thigh_guide)
-        cmds.matchTransform(ik_ctrl_gen, self.ankle_guide)
-        cmds.matchTransform(foot_heel_gen, self.heel_guide)
-        cmds.matchTransform(foot_ball_gen, self.ball_guide)
-        cmds.matchTransform(foot_tip_gen, self.tip_guide)
-        cmds.xform(foot_heel_gen, r=True, t=(0, -0.3, -2))
-        cmds.xform(foot_tip_gen, r=True, t=(0, -0.3, 2))
-        cmds.xform(foot_bankIn_gen, r=True, t=(-3, -0.3, 0))
-        cmds.xform(foot_bankOut_gen, r=True, t=(3, -0.3, 0))
+        # ---- 10. POSICIONAR (con todos los nodos ya bajo el espacio mirror) ----
+        # matchTransform sobreescribe las rotaciones que create_rig_hierarchy
+        # metio en los _gen al crearlos. Ahora se calculan dentro del espacio
+        # con scaleX=-1, igual que en limbs_module.
+        cmds.matchTransform(ik_root_gen,      self.thigh_guide)
+        cmds.matchTransform(ik_ctrl_gen,      self.ankle_guide)
+        cmds.matchTransform(foot_heel_gen,    self.heel_guide)
+        cmds.matchTransform(foot_ball_gen,    self.ball_guide)
+        cmds.matchTransform(foot_tip_gen,     self.tip_guide)
+        cmds.matchTransform(foot_bankIn_gen,  self.ball_guide)
+        cmds.matchTransform(foot_bankOut_gen, self.ball_guide)
         cmds.xform(pv_gen, ws=True, t=pv_pos)
 
+        # Offsets cosmeticos en object space
+        cmds.xform(switch_gen,       r=True, os=True, t=(10 if self.side == "L" else -10, 0, 0))
+        cmds.xform(foot_heel_gen,    r=True, t=(0, -0.3, -2))
+        cmds.xform(foot_tip_gen,     r=True, t=(0, -0.3,  2))
+        cmds.xform(foot_bankIn_gen,  r=True, t=(-3, -0.3, 0))
+        cmds.xform(foot_bankOut_gen, r=True, t=( 3, -0.3, 0))
 
-
-
-        # Jerarquía del pie: ik_ctrl → heel → bankIn → bankOut → tip → ball
+        # ---- 11. JERARQUIA DEL PIE ----
+        # Ahora si: los _gen tienen sus rotaciones correctas (calculadas dentro
+        # del espacio mirror), y al parentarlos Maya conserva su WS position.
         cmds.parent(foot_heel_gen,    ik_ctrl)
         cmds.parent(foot_bankIn_gen,  foot_heel_ctrl)
         cmds.parent(foot_bankOut_gen, foot_bankIn_ctrl)
         cmds.parent(foot_tip_gen,     foot_bankOut_ctrl)
         cmds.parent(foot_ball_gen,    foot_tip_ctrl)
 
-        # FK jerarquía
+        # ---- 12. FK CONSTRAINTS ----
         for i in range(4):
             cmds.parentConstraint(fk_ctrls[i], self.fk_chain[i])
-            if i == 0:
-                cmds.parent(fk_gens[i], self.fk_grp)
-            else:
-                cmds.parent(fk_gens[i], fk_ctrls[i - 1])
 
-        # ---- 10. CONSTRAINTS ----
+        # ---- 13. CONSTRAINTS IK ----
         cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
         cmds.parentConstraint(foot_ball_ctrl, ik_h,          mo=True)
         cmds.parentConstraint(foot_ball_ctrl, ik_footBall,   mo=True)
         cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,    mo=True)
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
-        # ---- 11. SWITCH atributo + visibilidad ----
+        # ---- 14. SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
         cmds.connectAttr(f"{vis_rev}.outputX",   f"{self.ik_grp}.visibility")
 
-        # ---- 12. PAIR BLENDS ----
+        # ---- 15. PAIR BLENDS ----
         for i in range(3):
             pbl_creator = NodeCreator(
                 side=self.side,
@@ -312,7 +318,7 @@ class LegModule(object):
             cmds.connectAttr(f"{pbl}.outRotate",              f"{self.bind_chain[i]}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK",          f"{pbl}.weight")
 
-        # ---- 13. ORGANIZACIÓN FINAL ----
+        # ---- 16. ORGANIZACION FINAL ----
         cmds.parent(self.bind_chain[0], self.ik_chain[0], self.fk_chain[0],
                     self.leg_joints_grp)
 
@@ -320,9 +326,8 @@ class LegModule(object):
                    if self.root_instance else None)
 
         if rig_grp and cmds.objExists(rig_grp):
-            cmds.parent(self.leg_grp,        rig_grp)
+            cmds.parent(self.leg_grp, rig_grp)
 
         local_ctl = self.root_instance.localCtl if self.root_instance else None
-
 
         print(f"Build {self.prefix} leg completo.")

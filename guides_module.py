@@ -126,7 +126,6 @@ class ArmGuides(object):
 
 ############################################################################
 ############################################################################
-import maya.cmds as cmds
 
 class LegGuides(object):
     """Clase base para extremidades (brazos y piernas)"""
@@ -159,7 +158,7 @@ class LegGuides(object):
         cmds.parent(mid,root)
         cmds.parent(end, mid)
 
-        cmds.joint(root, edit=True, oj="xyz", sao="ydown", ch=True,zso = True)
+        cmds.joint(root, edit=True, oj="xzy", sao="zdown", ch=True,zso = True)
         #zdown xzy
         
 

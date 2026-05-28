@@ -14,8 +14,8 @@ import foot_module
 import groups_module
 import rigRoot_module
 import mirror_module
-import arm_right_module
-import right_leg_module
+#import arm_right_module
+#import right_leg_module
 import skinning_module
 import guides_module
 import build_module
@@ -115,20 +115,26 @@ class BuildRig(object):
                 ball_guide="L_ball",
                 tip_guide="L_toe_tip",
                 heel_guide="L_heel",
-                rig_name="Leg_L",
+                rig_name="Leg",
+                side="L",
                 root_instance=self.root_rig
             )
         self.leg_rig.build()
 
-        # Solo dos líneas: instanciar y construir.
-        # --- PIERNA DERECHA (Aquí estaba el error) ---
-        # Cambiamos L_leg por self.leg_rig que es la instancia real
-        self.right_leg_rig = right_leg_module.LegRightModule(
-                rig_name="Leg_R", 
-                left_leg_instance=self.leg_rig, # Corregido: usamos la instancia de arriba
+        # En el método build de CharacterGuides
+        self.mirror_leg_rig = leg_module.LegModule(
+                thigh_guide="R_hip",
+                knee_guide="R_knee",
+                ankle_guide="R_ankle",
+                ball_guide="R_ball",
+                tip_guide="R_toe_tip",
+                heel_guide="R_heel",
+                rig_name="Leg",
+                side="R",
                 root_instance=self.root_rig
             )
-        self.right_leg_rig.build()
+        self.mirror_leg_rig.build()
+
         
         self.body_rig = body_module.BodyModule(
                 rig_name="Character",

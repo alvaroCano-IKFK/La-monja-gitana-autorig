@@ -150,16 +150,18 @@ class LegGuides(object):
         hierarchy_root = None
 
         root = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
-        cmds.select(clear =True)
+        #cmds.select(clear =True)
         mid = cmds.joint(n=self.limb_mid, p=self.limb_mid_pos)
-        cmds.select(clear =True)
+        #cmds.select(clear =True)
         end = cmds.joint(n=self.limb_end, p=self.limb_end_pos)
-        cmds.select(clear =True)
+        #cmds.select(clear =True)
         
         cmds.parent(mid,root)
-        cmds.joint(root, edit=True, oj="xyz", sao="ydown", ch=True, zso=True)
-        
         cmds.parent(end, mid)
+
+        cmds.joint(root, edit=True, oj="xyz", sao="ydown", ch=True,zso = True)
+        #zdown xzy
+        
 
         if not hierarchy_root:
             hierarchy_root = root
@@ -331,7 +333,7 @@ class CharacterGuides(object):
         leg_instance = LegGuides(
             "L_hip", "L_knee", "L_ankle",
             (3, -10, 0),
-            (3, -20, 0.2),
+            (3, -20, 0),
             (3, -30, 0)
         )
         leg_instance.create_chain()

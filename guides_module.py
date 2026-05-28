@@ -206,7 +206,8 @@ class LegGuides(LimbGuides):
                  limb_root_pos, limb_mid_pos, limb_end_pos):
         
         super(LegGuides, self).__init__(limb_root, limb_mid, limb_end, limb_root_pos, limb_mid_pos, limb_end_pos)
-
+        
+        #Configura el grup, l’orientacio i el joint final de la cama
         self.group_name = "leg_guides_GRP"
         self.up_axis = "ydown"
         self.ankle_joint = self.limb_end
@@ -229,11 +230,12 @@ class FingerGuides(object):
         self.joints = []
 
     def finger_guides(self):
-
+        #Agafa la posicio del joint del canell 
         wrist_pos = cmds.xform(self.parent_joint, q=True, ws=True, t=True)
     
         cmds.select(clear=True)
-    
+        
+        #Crea els joints dels dits a partir de les dades definides
         for i, offset in enumerate(self.offsets):
     
             pos = (
@@ -257,6 +259,7 @@ class FingerGuides(object):
 class HandGuides(object):
     """
     Crea les guies de la ma.
+
     """
 
     def __init__(self, arm_instance):
@@ -265,9 +268,11 @@ class HandGuides(object):
         self.group = None
 
     def hand_guides(self):
-
+        
+        #Agafa el joint del canell
         wrist = self.arm.wrist_joint
 
+        #Dades dels dits
         finger_data = {
             "L_index":  [(1,0,1),(2,0,1),(3,0,1),(4,0,1),(5,0,1)],
             "L_middle": [(1,0,0),(2,0,0),(3,0,0),(4,0,0),(5,0,0)],
@@ -276,12 +281,14 @@ class HandGuides(object):
             "L_thumb":  [(1,-1,2),(2,-1,2),(3,-1,2)]
         }
 
+        #Crea les guies dels dits a partir de les dades definides
         for name, offsets in finger_data.items():
 
             finger = FingerGuides(wrist, name, offsets)
             finger.finger_guides()
             self.fingers.append(finger)
 
+        #Agrupa les guies de la ma
         self.group = cmds.group(wrist, n="hand_guides_GRP")
         
         
@@ -324,7 +331,7 @@ class FootGuides(object):
         
         cmds.select(clear =True)
         
-        # Ball position
+        #Ball position
         ball_pos = (
             ankle_pos[0] + self.ball_offset[0],
             ankle_pos[1] + self.ball_offset[1],
@@ -333,7 +340,7 @@ class FootGuides(object):
 
         ball = cmds.joint(n=self.ball_name, p=ball_pos)
 
-        # Tip position
+        #Tip position
         tip_pos = (
             ankle_pos[0] + self.tip_offset[0],
             ankle_pos[1] + self.tip_offset[1],
@@ -344,7 +351,7 @@ class FootGuides(object):
 
         self.joints = [ball, tip, heel]
 
-        # Parentar ball al ankle
+        #Parentar ball al ankle
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
 
@@ -360,13 +367,19 @@ class CharacterGuides(object):
         self.all_guides_grp = None
         
     def create_guides(self):
+        """
+        Aquesta funcio crea totes les guies del personatge i les agrupa sota un grup principal anomenat "guides_GRP".
 
+        """
+        #Crea les guies de la spine
         spine_instance = SpineGuides("root", "chest", (0, 10, 0))
         spine_instance.spine_guides()
 
+        #Crea les guies del coll
         neck_instance = NeckGuides("neck_root","neck_end",(0, 20, 0), (0, 23, 0.5))
         neck_instance.neck_guides()
 
+        #Crea les guies del brac
         arm_instance = ArmGuides(
             "L_shoulder", "L_elbow", "L_wrist","L_clavicule",
             (3, 12, 0),
@@ -376,6 +389,7 @@ class CharacterGuides(object):
         )
         arm_instance.create_chain()
 
+        #Crea les guies de la cama
         leg_instance = LegGuides(
             "L_hip", "L_knee", "L_ankle",
             (3, -10, 0),
@@ -384,9 +398,11 @@ class CharacterGuides(object):
         )
         leg_instance.create_chain()
 
+        #Crea les guies de la ma a partir del brac
         hand_instance = HandGuides(arm_instance)
         hand_instance.hand_guides()
 
+        #Crea les guies del peu a partir de la cama
         foot_instance = FootGuides(
             leg_instance,
             "L_ball",
@@ -398,6 +414,7 @@ class CharacterGuides(object):
         )
         foot_instance.foot_guides()
        
+        #Llista amb tots els grups de guies creats       
         guide_groups = [
             spine_instance.guides_group,
             neck_instance.guides_group,
@@ -406,6 +423,7 @@ class CharacterGuides(object):
             hand_instance.group,
          ]
 
+        # Filtra nomes els grups que existeixen
         new_list = []
         
         for g in guide_groups:
@@ -413,10 +431,12 @@ class CharacterGuides(object):
                 new_list.append(g)
         guide_groups = new_list
 
+        #Si no hi ha grups valids, mostra un warining
         if not guide_groups:
             cmds.warning("No se encontraron grupos de guías para agrupar.")
             return
 
+        #Agrupa totes les guies sota un únic grup principal
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
 

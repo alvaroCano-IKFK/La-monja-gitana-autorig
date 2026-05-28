@@ -418,7 +418,7 @@ class CharacterGuides(object):
             return
 
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
-        
+        cmds.setAttr(f"{self.all_guides_grp}.translateY, 32.5) 
 
         
     def build(self):

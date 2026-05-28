@@ -150,11 +150,11 @@ class LegGuides(object):
         hierarchy_root = None
 
         root = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
-        #cmds.select(clear =True)
+        cmds.select(clear =True)
         mid = cmds.joint(n=self.limb_mid, p=self.limb_mid_pos)
-        #cmds.select(clear =True)
+        cmds.select(clear =True)
         end = cmds.joint(n=self.limb_end, p=self.limb_end_pos)
-        #cmds.select(clear =True)
+        cmds.select(clear =True)
         
         cmds.parent(mid,root)
         cmds.parent(end, mid)

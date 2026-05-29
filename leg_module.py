@@ -1,6 +1,5 @@
 import maya.cmds as cmds
 import math
-#import controls_module
 import controlsLibrary 
 import guides_module
 from groups_module import ControlsGroups
@@ -33,7 +32,6 @@ class LegModule(object):
         
         self.names = ["thigh", "knee", "ankle","ball","toe_tip","heel"]
         self.rig_name = rig_name
-        #self.ctrl_maker = controls_module.Controls(scale=2, color=6)
         self.styles = {"mainIk": "squareControl",
                               "mainFk": "circleControl",
                               "footBall": "footBallControl",
@@ -62,7 +60,9 @@ class LegModule(object):
             match_rotation=orient, 
             world_space=world_space
     )
+    
     def define_poleVector(self, start, mid, end, distance=5):
+        # NO TOCADO: Tu método original exacto
         sh_p = cmds.xform(start, q=True, ws=True, t=True)
         el_p = cmds.xform(mid, q=True, ws=True, t=True)
         wr_p = cmds.xform(end, q=True, ws=True, t=True)
@@ -87,9 +87,8 @@ class LegModule(object):
         return [el_p[i] + perp[i] * distance for i in range(3)]
     
 
-            
     def build(self):
-        # 1. POSICIONES
+        # 1. POSICIONES REALES (Para los Joints)
         pos_th = cmds.xform(self.thigh_guide, q=True, ws=True, t=True)
         pos_kn = cmds.xform(self.knee_guide, q=True, ws=True, t=True)
         pos_an = cmds.xform(self.ankle_guide, q=True, ws=True, t=True)
@@ -97,7 +96,24 @@ class LegModule(object):
         pos_tip = cmds.xform(self.tip_guide, q=True, ws=True, t=True)
         pos_heel = cmds.xform(self.heel_guide, q=True, ws=True, t=True)
 
-        # 2. BIND CHAIN (Orientación específica para pierna)
+        # 1b. POSICIONES DE CONTROL (Si es "R", usamos "L" para que el grupo -1 lo mande a R)
+        if self.side == "R":
+            # Buscamos sus contrapartes del lado izquierdo solo para posicionar los controles
+            th_ctrl_target = self.thigh_guide.replace("R_", "L_")
+            kn_ctrl_target = self.knee_guide.replace("R_", "L_")
+            an_ctrl_target = self.ankle_guide.replace("R_", "L_")
+            ball_ctrl_target = self.ball_guide.replace("R_", "L_")
+            tip_ctrl_target = self.tip_guide.replace("R_", "L_")
+            heel_ctrl_target = self.heel_guide.replace("R_", "L_")
+        else:
+            th_ctrl_target = self.thigh_guide
+            kn_ctrl_target = self.knee_guide
+            an_ctrl_target = self.ankle_guide
+            ball_ctrl_target = self.ball_guide
+            tip_ctrl_target = self.tip_guide
+            heel_ctrl_target = self.heel_guide
+
+        # 2. BIND CHAIN (Usa posiciones reales del lado que toca)
         cmds.select(clear=True)
         b_th = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_th)
         cmds.matchTransform(b_th, self.thigh_guide, rot=True, pos=False)
@@ -116,16 +132,11 @@ class LegModule(object):
         cmds.matchTransform(b_tip, self.tip_guide, rot=True, pos=False)
         cmds.select(clear=True)        
                
-        # Limpiamos todo rastro de orientaciones previas
-
-            
         cmds.parent(b_kn, b_th)
         cmds.parent(b_an, b_kn)
         cmds.parent(b_ba, b_an)
         cmds.parent(b_tip, b_ba)
         
-
-
         cmds.makeIdentity(b_th, apply=True, t=0, r=1, s=0, n=0, pn=1)
 
         self.bind_chain = [b_th, b_kn, b_an, b_ba, b_tip]
@@ -159,10 +170,6 @@ class LegModule(object):
         cmds.joint(self.ik_chain[0], edit=True, ch=True, spa=True) 
         cmds.setAttr(f"{self.ik_chain[1]}.rotateX", 0) 
 
-
-        
-        cmds.select(clear=True)
-        
         # ---- 4. IK HANDLES ----
         ik_h, _        = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2],
                                         sol="ikRPsolver", n=f"{self.prefix}_IKH")
@@ -172,139 +179,134 @@ class LegModule(object):
                                         sol="ikSCsolver", n=f"{self.prefix}_footTip_HDL")
         cmds.select(clear=True)
         
-        # IK Controls
+        # IK Controls (Emparejados usando targets espejo si side == "R")
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footRoot"], 
             final_name=f"{self.prefix}_legRoot_CTRL"
         )
-        ik_root_gen = self.create_offset_group(ik_root_ctrl, self.ik_chain[0], orient = True)
+        ik_root_gen = self.create_offset_group(ik_root_ctrl, th_ctrl_target, orient=True)
                 
-        
         ik_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["mainIk"], 
             final_name=f"{self.prefix}_legIk_CTRL"
         )
-        ik_gen = self.create_offset_group(ik_ctrl, self.ik_chain[2], world_space = True)
+        ik_gen = self.create_offset_group(ik_ctrl, an_ctrl_target, world_space=True)
         
         foot_heel_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footHeel"], 
             final_name=f"{self.prefix}_footHeel_CTRL"
         )
-        foot_heel_gen = self.create_offset_group(foot_heel_ctrl, self.heel_guide,world_space = True)        
-        cmds.xform(foot_heel_gen, r=True, t=(0,-0.3,-2))
+        foot_heel_gen = self.create_offset_group(foot_heel_ctrl, heel_ctrl_target, world_space=True)        
+        cmds.xform(foot_heel_gen, r=True, t=(0, -0.3, -2))
         
         foot_ball_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBall"], 
             final_name=f"{self.prefix}_footBall_CTRL"
         )
-        foot_ball_gen = self.create_offset_group(foot_ball_ctrl, self.ik_chain[3],world_space = True)
+        foot_ball_gen = self.create_offset_group(foot_ball_ctrl, ball_ctrl_target, world_space=True)
         
         foot_tip_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footTip"], 
             final_name=f"{self.prefix}_footTip_CTRL"
         )
-        foot_tip_gen = self.create_offset_group(foot_tip_ctrl, self.ik_chain[4],world_space = True)
-        cmds.xform(foot_tip_gen, r=True, t=(0,-0.3,2))
+        foot_tip_gen = self.create_offset_group(foot_tip_ctrl, tip_ctrl_target, world_space=True)
+        cmds.xform(foot_tip_gen, r=True, t=(0, -0.3, 2))
         
         foot_bankIn_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBankIn"], 
             final_name=f"{self.prefix}_footBankIn_CTRL"
         )
-        foot_bankIn_gen = self.create_offset_group(foot_bankIn_ctrl, self.ik_chain[3],world_space = True)
-        cmds.xform(foot_bankIn_gen, r=True, t=(-3,-0.3,0))
+        foot_bankIn_gen = self.create_offset_group(foot_bankIn_ctrl, ball_ctrl_target, world_space=True)
+        cmds.xform(foot_bankIn_gen, r=True, t=(-3, -0.3, 0))
                 
         foot_bankOut_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footBankOut"], 
             final_name=f"{self.prefix}_footBankOut_CTRL"
         )
-        foot_bankOut_gen = self.create_offset_group(foot_bankOut_ctrl, self.ik_chain[3],world_space = True)                
-        cmds.xform(foot_bankOut_gen, r=True, t=(3,-0.3,0))
+        foot_bankOut_gen = self.create_offset_group(foot_bankOut_ctrl, ball_ctrl_target, world_space=True)                
+        cmds.xform(foot_bankOut_gen, r=True, t=(3, -0.3, 0))
         
         switch_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
-        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, b_an)
-        cmds.xform(switch_gen, r=True, t=(14, 0, 0))
+        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, an_ctrl_target)
+        cmds.xform(switch_gen, r=True, t=(14, 0, 0)) # Mantenemos 14 fijo porque el grupo espejo lo invertirá solo
         
+        # NO TOCADO: Tu cálculo de Pole vector original
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
             final_name=f"{self.prefix}_poleVector_CTRL")
+        
+        # Truco para el PV: Lo generamos relativo al esqueleto real y luego reajustamos su posición de mundo
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
         cmds.xform(pv_gen, ws=True, t=pv_pos)
+        # Si es el lado R, invertimos su posición X local dentro del main_rig_grp para compensar el espejo
+        if self.side == "R":
+            cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
+            cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
-        cmds.parent(ik_root_gen,ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
-        cmds.parent(self.main_rig_grp, self.leg_grp)
-        
-        # FK
+        cmds.parent(ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
+
+        # FK Setup (Corregido desfase de nombres y targets espejo)
         fk_ctrls = []
         fk_gens = []
+        fk_targets = [th_ctrl_target, kn_ctrl_target, an_ctrl_target, ball_ctrl_target]
+        
         for i in range(4):
-            jnt = self.fk_chain[i]
-            ctrl_name = f"{self.prefix}_{self.names[i+1]}_fk_CTRL"
+            ctrl_name = f"{self.prefix}_{self.names[i]}_fk_CTRL" # names[i] arregla el desfase de toe_tip
             ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["mainFk"], 
                 final_name=ctrl_name
             )
-            gen = self.group_maker.create_rig_hierarchy(ctrl, jnt)
+            gen = self.group_maker.create_rig_hierarchy(ctrl, fk_targets[i])
             fk_ctrls.append(ctrl)
             fk_gens.append(gen)
             
-
+        for i in range(4):
+            if i == 0:
+                cmds.parent(fk_gens[i], self.fk_grp)
+            else:
+                cmds.parent(fk_gens[i], fk_ctrls[i - 1])
             
-        # ---- MIRROR BEHAVIOUR (lado R) ----
-        # Metemos TODOS los gen de controles bajo el grupo mirror
+        # ---- INTEGRACIÓN CON EL MIRROR GROUPS (ESPEJO AUTOMÁTICO) ----
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            
-            # Verificamos que el grupo de mirror global realmente exista en la escena
             if cmds.objExists(mirror_behavior_grp):
                 cmds.parent(self.main_rig_grp, mirror_behavior_grp)
-                
-                # Reseteamos transformaciones locales para que herede el -1 del grupo padre
-                cmds.setAttr(f"{self.main_rig_grp}.translateX", 0)
-                cmds.setAttr(f"{self.main_rig_grp}.translateY", 0)
-                cmds.setAttr(f"{self.main_rig_grp}.translateZ", 0)
                 cmds.setAttr(f"{self.main_rig_grp}.scaleX", 1)
                 cmds.setAttr(f"{self.main_rig_grp}.scaleY", 1)
                 cmds.setAttr(f"{self.main_rig_grp}.scaleZ", 1)
-                cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
                 cmds.setAttr(f"{self.main_rig_grp}.rotateX", 0)
+                cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
                 cmds.setAttr(f"{self.main_rig_grp}.rotateZ", 0)
-            else:
-                cmds.warning(f"No se encontro el grupo de mirror: {mirror_behavior_grp}")   
-        
-        #cmds.parent(ik_gen, ik_root_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen,  self.ik_grp)
-        #cmds.parent(ik_h, self.arm_grp)
-        #cmds.parent(switch_gen, self.main_rig_grp)
-        
-        # ---- 11. JERARQUIA DEL PIE ----
 
+        # ---- JERARQUIA DEL PIE ----
         cmds.parent(foot_heel_gen,    ik_ctrl)
         cmds.parent(foot_bankIn_gen,  foot_heel_ctrl)
         cmds.parent(foot_bankOut_gen, foot_bankIn_ctrl)
         cmds.parent(foot_tip_gen,     foot_bankOut_ctrl)
         cmds.parent(foot_ball_gen,    foot_tip_ctrl)
 
-        # ---- 12. FK CONSTRAINTS ----
+        # ---- FK CONSTRAINTS ----
         for i in range(4):
             cmds.parentConstraint(fk_ctrls[i], self.fk_chain[i])
 
-        # ---- 13. CONSTRAINTS IK ----
+        # ---- CONSTRAINTS IK ----
         cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
         cmds.parentConstraint(foot_ball_ctrl, ik_h,          mo=True)
         cmds.parentConstraint(foot_ball_ctrl, ik_footBall,   mo=True)
         cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,    mo=True)
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
-        # ---- 14. SWITCH atributo + visibilidad ----
+        # ---- SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
         cmds.connectAttr(f"{vis_rev}.outputX",   f"{self.ik_grp}.visibility")
 
-        # ---- 15. PAIR BLENDS ----
+        # ---- PAIR BLENDS ----
         for i in range(5):
             pbl_creator = NodeCreator(
                 side=self.side,
@@ -329,7 +331,8 @@ class LegModule(object):
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(self.leg_grp, rig_grp)
+            cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
         
-        local_ctl = self.root_instance.localCtl if self.root_instance else None  
+        cmds.parent(switch_gen, self.main_rig_grp)
 
         print(f"Build {self.prefix} leg completo.")

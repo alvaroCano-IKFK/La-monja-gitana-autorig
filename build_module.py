@@ -120,9 +120,10 @@ class BuildRig(object):
                 tip_guide="R_toe_tip",
                 heel_guide="R_heel",
                 rig_name="Leg",
+                side="R", # Lado Derecho
                 root_instance=self.root_rig
             )
-        self.mirror_leg_rig.build()
+        self.mirror_leg_rig.build() 
 
         
         self.body_rig = body_module.BodyModule(

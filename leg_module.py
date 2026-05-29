@@ -142,6 +142,60 @@ class LegModule(object):
         self.bind_chain = [b_th, b_kn, b_an, b_ba, b_tip]
 
         # Duplicate chains
+    def build(self):
+        # 1. POSICIONES REALES (Para que los joints bind/ik/fk nazcan en el esqueleto real R)
+        pos_th = cmds.xform(self.thigh_guide, q=True, ws=True, t=True)
+        pos_kn = cmds.xform(self.knee_guide, q=True, ws=True, t=True)
+        pos_an = cmds.xform(self.ankle_guide, q=True, ws=True, t=True)
+        pos_ball = cmds.xform(self.ball_guide, q=True, ws=True, t=True)
+        pos_tip = cmds.xform(self.tip_guide, q=True, ws=True, t=True)
+        pos_heel = cmds.xform(self.heel_guide, q=True, ws=True, t=True)
+
+        # 1b. OBJETIVOS PARA ALINEAR CONTROLES (Si es R, usamos L para que el grupo espejo haga el cálculo)
+        if self.side == "R":
+            th_ctrl_target = self.thigh_guide.replace("R_", "L_")
+            kn_ctrl_target = self.knee_guide.replace("R_", "L_")
+            an_ctrl_target = self.ankle_guide.replace("R_", "L_")
+            ball_ctrl_target = self.ball_guide.replace("R_", "L_")
+            tip_ctrl_target = self.tip_guide.replace("R_", "L_")
+            heel_ctrl_target = self.heel_guide.replace("R_", "L_")
+        else:
+            th_ctrl_target = self.thigh_guide
+            kn_ctrl_target = self.knee_guide
+            an_ctrl_target = self.ankle_guide
+            ball_ctrl_target = self.ball_guide
+            tip_ctrl_target = self.tip_guide
+            heel_ctrl_target = self.heel_guide
+
+        # 2. BIND CHAIN (Usa posiciones reales)
+        cmds.select(clear=True)
+        b_th = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_th)
+        cmds.matchTransform(b_th, self.thigh_guide, rot=True, pos=False)
+
+        cmds.select(clear=True)
+        b_kn = cmds.joint(n=f"{self.prefix}_{self.names[1]}_bind_JNT", p=pos_kn)
+        cmds.matchTransform(b_kn, self.knee_guide, rot=True, pos=False)
+        cmds.select(clear=True)
+        b_an = cmds.joint(n=f"{self.prefix}_{self.names[2]}_bind_JNT", p=pos_an)
+        cmds.matchTransform(b_an, self.ankle_guide, rot=True, pos=True)
+        cmds.select(clear=True)
+        b_ba = cmds.joint(n=f"{self.prefix}_{self.names[3]}_bind_JNT", p=pos_ball)
+        cmds.matchTransform(b_ba, self.ball_guide, rot=True, pos=False)
+        cmds.select(clear=True)
+        b_tip = cmds.joint(n=f"{self.prefix}_{self.names[4]}_bind_JNT", p=pos_tip)         
+        cmds.matchTransform(b_tip, self.tip_guide, rot=True, pos=False)
+        cmds.select(clear=True)        
+               
+        cmds.parent(b_kn, b_th)
+        cmds.parent(b_an, b_kn)
+        cmds.parent(b_ba, b_an)
+        cmds.parent(b_tip, b_ba)
+        
+        cmds.makeIdentity(b_th, apply=True, t=0, r=1, s=0, n=0, pn=1)
+
+        self.bind_chain = [b_th, b_kn, b_an, b_ba, b_tip]
+
+        # Duplicate chains
         def duplicate_chain(suffix):
             new_jnts = cmds.duplicate(self.bind_chain[0], rc=True)
             root = cmds.rename(new_jnts[0], f"{self.prefix}_{self.names[0]}_{suffix}_JNT")
@@ -179,7 +233,7 @@ class LegModule(object):
                                         sol="ikSCsolver", n=f"{self.prefix}_footTip_HDL")
         cmds.select(clear=True)
         
-        # IK Controls (Emparejados usando targets espejo si side == "R")
+        # IK Controls (Alineados con los targets corregidos)
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footRoot"], 
             final_name=f"{self.prefix}_legRoot_CTRL"
@@ -226,35 +280,34 @@ class LegModule(object):
         foot_bankOut_gen = self.create_offset_group(foot_bankOut_ctrl, ball_ctrl_target, world_space=True)                
         cmds.xform(foot_bankOut_gen, r=True, t=(3, -0.3, 0))
         
+        # Switch Control (Alineado con el target relativo)
         switch_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
         switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, an_ctrl_target)
-        cmds.xform(switch_gen, r=True, t=(14, 0, 0)) # Mantenemos 14 fijo porque el grupo espejo lo invertirá solo
+        cmds.xform(switch_gen, r=True, t=(14, 0, 0)) # Dejamos 14, la escala -1 lo mandará a -14
         
-        # NO TOCADO: Tu cálculo de Pole vector original
+        # NO TOCADO: Tu método original exacto de Pole Vector
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
             final_name=f"{self.prefix}_poleVector_CTRL")
         
-        # Truco para el PV: Lo generamos relativo al esqueleto real y luego reajustamos su posición de mundo
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
         cmds.xform(pv_gen, ws=True, t=pv_pos)
-        # Si es el lado R, invertimos su posición X local dentro del main_rig_grp para compensar el espejo
+        # Si es el lado R, invertimos su TX local en el grupo para compensar el espejo negativo
         if self.side == "R":
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
         cmds.parent(ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
 
-        # FK Setup (Corregido desfase de nombres y targets espejo)
+        # FK Setup (Alineado con targets corregidos y solucionado el desfase del toe_tip)
         fk_ctrls = []
         fk_gens = []
         fk_targets = [th_ctrl_target, kn_ctrl_target, an_ctrl_target, ball_ctrl_target]
-        
         for i in range(4):
-            ctrl_name = f"{self.prefix}_{self.names[i]}_fk_CTRL" # names[i] arregla el desfase de toe_tip
+            ctrl_name = f"{self.prefix}_{self.names[i]}_fk_CTRL" # names[i] soluciona el descolocado del control final
             ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["mainFk"], 
                 final_name=ctrl_name
@@ -269,7 +322,7 @@ class LegModule(object):
             else:
                 cmds.parent(fk_gens[i], fk_ctrls[i - 1])
             
-        # ---- INTEGRACIÓN CON EL MIRROR GROUPS (ESPEJO AUTOMÁTICO) ----
+        # ---- ESTRUCTURA DEL MIRROR (LADO R) ----
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
             if cmds.objExists(mirror_behavior_grp):

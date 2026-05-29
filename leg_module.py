@@ -159,8 +159,7 @@ class LegModule(object):
         cmds.joint(self.ik_chain[0], edit=True, ch=True, spa=True) 
         cmds.setAttr(f"{self.ik_chain[1]}.rotateX", 0) 
 
-        ik_h, ik_eff = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2], 
-                                     sol="ikRPsolver", n=f"{self.prefix}_IKH")
+
         
         cmds.select(clear=True)
         
@@ -235,7 +234,7 @@ class LegModule(object):
         cmds.xform(pv_gen, ws=True, t=pv_pos)
 
         cmds.parent(ik_root_gen,ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
-
+        cmds.parent(self.main_rig_grp, self.leg_grp)
         
         # FK
         fk_ctrls = []
@@ -252,13 +251,6 @@ class LegModule(object):
             fk_gens.append(gen)
             
 
-        
-
-        for i in range(4):
-            if i == 0:
-                cmds.parent(fk_gens[i], self.fk_grp)
-            else:
-                cmds.parent(fk_gens[i], fk_ctrls[i - 1])
             
         # ---- MIRROR BEHAVIOUR (lado R) ----
         # Metemos TODOS los gen de controles bajo el grupo mirror

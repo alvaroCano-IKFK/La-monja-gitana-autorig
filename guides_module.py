@@ -172,7 +172,7 @@ class LegGuides(object):
         self.guides_group = cmds.group(root, n="leg_guides_GRP")
 
         # El último joint (muñeca/tobillo) siempre debe tener orientación a cero
-        cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
+        #€cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
         
         self.ankle_joint = self.limb_end 
 
@@ -304,6 +304,8 @@ class FootGuides(object):
         # Parentar ball al ankle
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
+        
+        cmds.joint(ankle, edit=True, oj="xzy", sao="zdown", ch=True,zso = True)
 
 ##### INSTANCIAS #####
 
@@ -332,7 +334,7 @@ class CharacterGuides(object):
         leg_instance = LegGuides(
             "L_hip", "L_knee", "L_ankle",
             (3, -10, 0),
-            (3, -20, 0),
+            (3, -20, 0.1),
             (3, -30, 0)
         )
         leg_instance.create_chain()

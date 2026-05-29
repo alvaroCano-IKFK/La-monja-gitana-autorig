@@ -108,12 +108,10 @@ class BuildRig(object):
                 tip_guide="L_toe_tip",
                 heel_guide="L_heel",
                 rig_name="Leg",
-                side="L",
                 root_instance=self.root_rig
             )
         self.leg_rig.build()
 
-        # En el método build de CharacterGuides
         self.mirror_leg_rig = leg_module.LegModule(
                 thigh_guide="R_hip",
                 knee_guide="R_knee",
@@ -122,7 +120,6 @@ class BuildRig(object):
                 tip_guide="R_toe_tip",
                 heel_guide="R_heel",
                 rig_name="Leg",
-                side="R",
                 root_instance=self.root_rig
             )
         self.mirror_leg_rig.build()

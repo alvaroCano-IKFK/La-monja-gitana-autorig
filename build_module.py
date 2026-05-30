@@ -26,7 +26,8 @@ class BuildRig(object):
     def build(self):
         """Este es el método que llama el botón BUILD de la UI"""
         print("Iniciando construcción del Rig...")
-            
+                #Llista amb tots els grups de guies creats       
+    
         # 0. CONSTRUIR ROOT RIG (NUEVO - va primero)
         self.root_rig = rigRoot_module.RigRoot(rig_name="Character")
         self.root_rig.build()

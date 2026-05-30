@@ -9,6 +9,7 @@ from nodeCreator_module import NodeCreator
 
 
 class LegModule(object):
+    """Módulo para construir las piernas, con setup IK/FK y switch."""
 
     def __init__(self, thigh_guide="hip", 
                  knee_guide="knee", 
@@ -54,6 +55,7 @@ class LegModule(object):
         self.leg_joints_grp = None
 
     def create_offset_group(self, ctrl, target_proc, orient=False, world_space=True):
+        """Crea un grupo de offset para el control, alineado con el target_proc."""
         return self.group_maker.create_rig_hierarchy(
             ctrl, 
             target_proc, 
@@ -62,6 +64,7 @@ class LegModule(object):
     )
     
     def define_poleVector(self, start, mid, end, distance=5):
+        """Calcula la posición del pole vector basándose en la posición de los joints."""
         # NO TOCADO: Tu método original exacto
         sh_p = cmds.xform(start, q=True, ws=True, t=True)
         el_p = cmds.xform(mid, q=True, ws=True, t=True)
@@ -88,61 +91,6 @@ class LegModule(object):
     
 
     def build(self):
-        # 1. POSICIONES REALES (Para los Joints)
-        pos_th = cmds.xform(self.thigh_guide, q=True, ws=True, t=True)
-        pos_kn = cmds.xform(self.knee_guide, q=True, ws=True, t=True)
-        pos_an = cmds.xform(self.ankle_guide, q=True, ws=True, t=True)
-        pos_ball = cmds.xform(self.ball_guide, q=True, ws=True, t=True)
-        pos_tip = cmds.xform(self.tip_guide, q=True, ws=True, t=True)
-        pos_heel = cmds.xform(self.heel_guide, q=True, ws=True, t=True)
-
-        # 1b. POSICIONES DE CONTROL (Si es "R", usamos "L" para que el grupo -1 lo mande a R)
-        if self.side == "R":
-            # Buscamos sus contrapartes del lado izquierdo solo para posicionar los controles
-            th_ctrl_target = self.thigh_guide.replace("R_", "L_")
-            kn_ctrl_target = self.knee_guide.replace("R_", "L_")
-            an_ctrl_target = self.ankle_guide.replace("R_", "L_")
-            ball_ctrl_target = self.ball_guide.replace("R_", "L_")
-            tip_ctrl_target = self.tip_guide.replace("R_", "L_")
-            heel_ctrl_target = self.heel_guide.replace("R_", "L_")
-        else:
-            th_ctrl_target = self.thigh_guide
-            kn_ctrl_target = self.knee_guide
-            an_ctrl_target = self.ankle_guide
-            ball_ctrl_target = self.ball_guide
-            tip_ctrl_target = self.tip_guide
-            heel_ctrl_target = self.heel_guide
-
-        # 2. BIND CHAIN (Usa posiciones reales del lado que toca)
-        cmds.select(clear=True)
-        b_th = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_th)
-        cmds.matchTransform(b_th, self.thigh_guide, rot=True, pos=False)
-
-        cmds.select(clear=True)
-        b_kn = cmds.joint(n=f"{self.prefix}_{self.names[1]}_bind_JNT", p=pos_kn)
-        cmds.matchTransform(b_kn, self.knee_guide, rot=True, pos=False)
-        cmds.select(clear=True)
-        b_an = cmds.joint(n=f"{self.prefix}_{self.names[2]}_bind_JNT", p=pos_an)
-        cmds.matchTransform(b_an, self.ankle_guide, rot=True, pos=True)
-        cmds.select(clear=True)
-        b_ba = cmds.joint(n=f"{self.prefix}_{self.names[3]}_bind_JNT", p=pos_ball)
-        cmds.matchTransform(b_ba, self.ball_guide, rot=True, pos=False)
-        cmds.select(clear=True)
-        b_tip = cmds.joint(n=f"{self.prefix}_{self.names[4]}_bind_JNT", p=pos_tip)         
-        cmds.matchTransform(b_tip, self.tip_guide, rot=True, pos=False)
-        cmds.select(clear=True)        
-               
-        cmds.parent(b_kn, b_th)
-        cmds.parent(b_an, b_kn)
-        cmds.parent(b_ba, b_an)
-        cmds.parent(b_tip, b_ba)
-        
-        cmds.makeIdentity(b_th, apply=True, t=0, r=1, s=0, n=0, pn=1)
-
-        self.bind_chain = [b_th, b_kn, b_an, b_ba, b_tip]
-
-        # Duplicate chains
-    def build(self):
         # 1. POSICIONES REALES (Para que los joints bind/ik/fk nazcan en el esqueleto real R)
         pos_th = cmds.xform(self.thigh_guide, q=True, ws=True, t=True)
         pos_kn = cmds.xform(self.knee_guide, q=True, ws=True, t=True)
@@ -159,6 +107,7 @@ class LegModule(object):
             ball_ctrl_target = self.ball_guide.replace("R_", "L_")
             tip_ctrl_target = self.tip_guide.replace("R_", "L_")
             heel_ctrl_target = self.heel_guide.replace("R_", "L_")
+            
         else:
             th_ctrl_target = self.thigh_guide
             kn_ctrl_target = self.knee_guide
@@ -285,9 +234,9 @@ class LegModule(object):
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
         switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, an_ctrl_target)
-        cmds.xform(switch_gen, r=True, t=(14, 0, 0)) # Dejamos 14, la escala -1 lo mandará a -14
-        
-        # NO TOCADO: Tu método original exacto de Pole Vector
+        switch_offset_x = 14 if self.side == "L" else -14
+        cmds.xform(switch_gen, r=True, t=(switch_offset_x, 0, 0))     
+           
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
@@ -295,6 +244,7 @@ class LegModule(object):
         
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
         cmds.xform(pv_gen, ws=True, t=pv_pos)
+        
         # Si es el lado R, invertimos su TX local en el grupo para compensar el espejo negativo
         if self.side == "R":
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
@@ -385,7 +335,14 @@ class LegModule(object):
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(self.leg_grp, rig_grp)
             cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
-        
-        cmds.parent(switch_gen, self.main_rig_grp)
+            cmds.parent(self.ik_chain[0], self.fk_chain[0], self.bind_chain[0], self.leg_grp)
+            
+        cmds.parent(switch_gen, self.main_rig_grp)    
+            
+        local_ctl = self.root_instance.localCtl if self.root_instance else None
+        if local_ctl and cmds.objExists(local_ctl):
+            if self.side == "L":
+                cmds.parent(self.main_rig_grp, local_ctl)
+            
 
         print(f"Build {self.prefix} leg completo.")

@@ -16,9 +16,9 @@ class SpineModule(object):
         self.root_guide = root_guide
         self.chest_guide = chest_guide
         self.rig_name = rig_name
-        # Instanciamos tu clase de controles
+        
         self.ctrl_maker = controls_module.Controls(scale=2, color=6)
-        # Instanciamos el módulo de grupos
+        
         self.group_maker = ControlsGroups()
         
         self.spine_grp = None
@@ -90,6 +90,7 @@ class SpineModule(object):
             # 4. Guardamos los nodos (Usamos spine_grp_root como el 'top')
             ctrl_data[i] = {'ctrl': ctrl, 'top': spine_grp_root, 'cluster': cluster_handle}
             self.controls.append(ctrl)
+        cmds.parent(self.joints[0], self.spine_grp)
 
         # 2. SECCIÓN DE JERARQUÍA
         # spine_0 es el top, va al grupo de controles
@@ -130,6 +131,9 @@ class SpineModule(object):
         cmds.setAttr(f"{ik}.dWorldUpVectorY", 0)
         cmds.setAttr(f"{ik}.dWorldUpVectorEndY", 0)
         
+        cmds.parent(ik, self.spine_grp)
+
+        
         chest_ctl_name = f"{self.rig_name}_chestFix_CTL"
         hip_ctl_name = f"{self.rig_name}_localHip_CTL"
         
@@ -141,7 +145,7 @@ class SpineModule(object):
         rig_name = self.root_instance.rig_name if self.root_instance else "Character"
         local_ctl = self.root_instance.localCtl if self.root_instance else None
         
-        # 1. Emparentar la estructura de joints/IK al grupo de rig (Sistemas/No tocables)
+        # 1. Emparentar la estructura de joints/IK al grupo de rig
         rig_system_grp = f"{rig_name}_rig_GRP"
         if cmds.objExists(rig_system_grp):
             cmds.parent(self.spine_grp, rig_system_grp)

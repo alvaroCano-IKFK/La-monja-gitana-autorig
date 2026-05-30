@@ -111,6 +111,9 @@ class LimbGuides(object):
         self.limb_mid_pos = limb_mid_pos
         self.limb_end_pos = limb_end_pos
         
+        self.joint_orient = "xyz"   
+        self.up_axis      = "yup"  
+        
         self.guides_group = None
     
     def create_chain(self):
@@ -130,8 +133,8 @@ class LimbGuides(object):
         if not hierarchy_root:
             hierarchy_root = root
 
-        # Forca a que els joints apuntin sempre en l eix X
-        cmds.joint(root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
+        # Força a que els joints apuntin sempre en l eix X
+        cmds.joint(root, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
 
         #Crea el grup de limb        
         self.guides_group = cmds.group(hierarchy_root, n="limb_guides_GRP")
@@ -182,7 +185,7 @@ class ArmGuides(LimbGuides):
             #Emparenta la clavicula amb el primer joint del brac
             cmds.parent(root, hierarchy_root)
 
-            cmds.joint(hierarchy_root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
+            cmds.joint(hierarchy_root, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
             cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)  
 
             cmds.parent(root, world=True)
@@ -209,7 +212,8 @@ class LegGuides(LimbGuides):
         
         #Configura el grup, l’orientacio i el joint final de la cama
         self.group_name = "leg_guides_GRP"
-        self.up_axis = "ydown"
+        self.joint_orient = "xzy"
+        self.up_axis = "zdown"
         self.ankle_joint = self.limb_end
 
                                              
@@ -441,107 +445,3 @@ class CharacterGuides(object):
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
 
         
-    def build(self):
-        """Este es el método que llama el botón BUILD de la UI"""
-        print("Iniciando construcción del Rig...")
-        
-        # 0. CONSTRUIR ROOT RIG (NUEVO - va primero)
-        self.root_rig = rigRoot_module.RigRoot(rig_name="Character")
-        self.root_rig.build()
-        #self.root_rig.mirrorControls()
-        
-        # 1. CONSTRUIR ESPINA
-        self.spine_rig = spine_module.SpineModule(
-            root_guide="root", 
-            chest_guide="chest", 
-            rig_name="Character",
-            root_instance=self.root_rig
-        )
-        self.spine_rig.build()
-        
-        # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
-        # Usamos los nombres que definiste en create_guides: "shoulder", "elbow", "wrist"
-        self.arm_rig = limbs_module.LimbModule(
-            shoulder_guide="L_shoulder",
-            elbow_guide="L_elbow",
-            wrist_guide="L_wrist",
-            clavicule_guide="L_clavicule",
-            rig_name="Arm_L",
-            root_instance=self.root_rig
-        )
-        self.arm_rig.build()
-        
-        # --- BRAZO DERECHO (El nuevo) ---
-        self.right_arm_rig = arm_right_module.ArmRightModule(
-            rig_name="Arm_R", 
-            left_arm_instance=self.arm_rig,
-            root_instance=self.root_rig
-        )
-        self.right_arm_rig.build()
-               
-
-
-        #4. CONSTRRUIR DEDOS
-        self.fingers_rig = fingers_module.FingersModule( wrist_guide="L_wrist", rig_name ="Arm_L",root_instance=self.root_rig)
-        self.fingers_rig.build()
-        
-        # Modifica LimbModule para que guarde self.b_sh al terminar build.
-        shoulder_jnt = "Arm_L_shoulder_bind_JNT"
-        
-        # CONSTRUIR CUELLO
-        # Aquí le pasas exactamente los nombres que usaste en NeckGuides: "neck_root" y "neck_end"
-        self.neck_rig = neck_module.NeckModule(
-            neck_root="neck_root", 
-            neck_end="neck_end", 
-            rig_name="Character",
-            root_instance=self.root_rig
-        )
-        self.neck_rig.build()
-                
-        #CONSTRUIR CHEST
-        
-        self.chest_rig = chest_module.ChestModule(chest_guide = "chest",root_instance=self.root_rig)
-        
-        self.chest_rig.build()
-        
-        #CONSTRRUIR HIP
-        
-        self.hip_rig = hip_module.HipModule(root_guide ="root",root_instance=self.root_rig)
-        
-        self.hip_rig.build()
-        
-        # Dedos R (las guías ya existen porque son hijos de R_wrist)
-        self.fingers_rig.build_mirror()
-
-        # En el método build de CharacterGuides
-        self.leg_rig = leg_module.LegModule(
-            thigh_guide="L_hip",
-            knee_guide="L_knee",
-            ankle_guide="L_ankle",
-            ball_guide="L_ball",
-            tip_guide="L_toe_tip",
-            heel_guide="L_heel",
-            rig_name="Leg_L",
-            root_instance=self.root_rig
-        )
-        self.leg_rig.build()
-
-        # Solo dos líneas: instanciar y construir.
-        # --- PIERNA DERECHA (Aquí estaba el error) ---
-        # Cambiamos L_leg por self.leg_rig que es la instancia real
-        self.right_leg_rig = right_leg_module.LegRightModule(
-            rig_name="Leg_R", 
-            left_leg_instance=self.leg_rig, # Corregido: usamos la instancia de arriba
-            root_instance=self.root_rig
-        )
-        self.right_leg_rig.build()
-        
-
-        # Importamos el nuevo módulo y ejecutamos
-        skn = skinning_module.SkinningModule(
-            rig_name="Character",
-            root_instance=self.root_rig
-        )
-        skn.build()
-                       
-        print("Build completo: Spine, Arm y Leg construidos.")

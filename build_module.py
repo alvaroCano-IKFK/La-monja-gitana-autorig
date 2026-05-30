@@ -21,12 +21,13 @@ import guides_module
 import build_module
 import body_module
 
+
 class BuildRig(object):
     
     def build(self):
         """Este es el método que llama el botón BUILD de la UI"""
         print("Iniciando construcción del Rig...")
-                #Llista amb tots els grups de guies creats       
+        #Llista amb tots els grups de guies creats       
     
         # 0. CONSTRUIR ROOT RIG (NUEVO - va primero)
         self.root_rig = rigRoot_module.RigRoot(rig_name="Character")
@@ -43,7 +44,6 @@ class BuildRig(object):
         self.spine_rig.build()
             
         # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
-        # Usamos los nombres que definiste en create_guides: "shoulder", "elbow", "wrist"
         self.arm_rig = limbs_module.LimbModule(
                 shoulder_guide="L_shoulder",
                 elbow_guide="L_elbow",
@@ -69,14 +69,24 @@ class BuildRig(object):
 
 
         #4. CONSTRRUIR DEDOS
-        self.fingers_rig = fingers_module.FingersModule( wrist_guide="L_wrist", rig_name ="Arm_L",root_instance=self.root_rig)
+        self.fingers_rig = fingers_module.FingersModule( 
+                wrist_guide="L_wrist", 
+                rig_name ="Arm",
+                side = "L",
+                root_instance=self.root_rig)
         self.fingers_rig.build()
+        
+        self.mirror_fingers_rig = fingers_module.FingersModule(
+                wrist_guide="R_wrist",
+                rig_name="Arm",
+                side="R",
+                root_instance=self.root_rig)
+        self.mirror_fingers_rig.build()
             
         # Modifica LimbModule para que guarde self.b_sh al terminar build.
         shoulder_jnt = "Arm_L_shoulder_bind_JNT"
             
         # CONSTRUIR CUELLO
-        # Aquí le pasas exactamente los nombres que usaste en NeckGuides: "neck_root" y "neck_end"
         self.neck_rig = neck_module.NeckModule(
                 neck_root="neck_root", 
                 neck_end="neck_end", 
@@ -97,8 +107,7 @@ class BuildRig(object):
             
         self.hip_rig.build()
             
-        # Dedos R (las guías ya existen porque son hijos de R_wrist)
-        self.fingers_rig.build_mirror()
+        # Dedos R 
 
         # En el método build de CharacterGuides
         self.leg_rig = leg_module.LegModule(
@@ -121,7 +130,7 @@ class BuildRig(object):
                 tip_guide="R_toe_tip",
                 heel_guide="R_heel",
                 rig_name="Leg",
-                side="R", # Lado Derecho
+                side="R", 
                 root_instance=self.root_rig
             )
         self.mirror_leg_rig.build() 
@@ -133,7 +142,7 @@ class BuildRig(object):
             )    
         self.body_rig.build()
 
-        # Importamos el nuevo módulo y ejecutamos
+        # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(
                 rig_name="Character",
                 root_instance=self.root_rig

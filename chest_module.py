@@ -88,6 +88,12 @@ class ChestModule(object):
         
         cmds.pointConstraint(chestControl,chestFix_joint)
         
+        ik_name = f"{self.rig_name}_spine_IK"
+        if cmds.objExists(ik_name) and cmds.objExists(chestControl):
+            cmds.connectAttr(f"{chestControl}.worldMatrix[0]", f"{ik_name}.dWorldUpMatrix", force=True)
+            print(f"Chest CTL conectado al twist de la espina.")
+            
+            
         # ORGANIZACIÓN FINAL
         rig_grp = (
             f"{self.root_instance.rig_name}_rig_GRP"

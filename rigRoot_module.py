@@ -76,28 +76,6 @@ class RigRoot(object):
         self.controls.extend([globalCtl,self.localCtl])
         
         
-    def mirrorControls(self):
-        #grupo a menos1 DONE
-        #grupo con parent relative al grupo de menos1
-        #parent constraint sin offset del joint(padre) al grupo y luego borrar
-        
-        # Verificamos que el joint exista antes de intentar posicionar
-        #if not self.r_clavicule or not cmds.objExists(self.r_clavicule):
-            #cmds.error("No existe el joint de la clavícula R para posicionar el grupo.")
-            #return
 
-        # 1. Crear el grupo vacío
-        group_name = f"{self.rig_name}_mirrorBehaviour_GRP"
-        #locator_prueba = cmds.spaceLocator()
-        
-        
-        # Limpieza por si ya existe el grupo
-        if cmds.objExists(group_name):
-            cmds.delete(group_name)
-            
-        self.mirror_grp = cmds.group(em=True, name=group_name)
-        cmds.setAttr(f"{self.mirror_grp}.scaleX", -1)
-        cmds.parent(self.mirror_grp, self.localCtl)  
-        print(f"Grupo {self.mirror_grp} creado")
             
   

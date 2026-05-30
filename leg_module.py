@@ -107,8 +107,7 @@ class LegModule(object):
             ball_ctrl_target = self.ball_guide.replace("R_", "L_")
             tip_ctrl_target = self.tip_guide.replace("R_", "L_")
             heel_ctrl_target = self.heel_guide.replace("R_", "L_")
-            sw_ctrl_target = self.ankle_guide.replace("R_", "L_") 
-
+            
         else:
             th_ctrl_target = self.thigh_guide
             kn_ctrl_target = self.knee_guide
@@ -116,8 +115,6 @@ class LegModule(object):
             ball_ctrl_target = self.ball_guide
             tip_ctrl_target = self.tip_guide
             heel_ctrl_target = self.heel_guide
-            sw_ctrl_target = self.ankle_guide 
-
 
         # 2. BIND CHAIN (Usa posiciones reales)
         cmds.select(clear=True)
@@ -236,9 +233,10 @@ class LegModule(object):
         switch_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
-        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, sw_ctrl_target)
-        cmds.matchTransform(switch_gen, sw_ctrl_target)
-        
+        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, an_ctrl_target)
+        switch_offset_x = 14 if self.side == "L" else -14
+        cmds.xform(switch_gen, r=True, t=(switch_offset_x, 0, 0))     
+           
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
@@ -246,12 +244,13 @@ class LegModule(object):
         
         pv_gen = self.group_maker.create_rig_hierarchy(pv_ctrl, self.ik_chain[1], world_space=False)
         cmds.xform(pv_gen, ws=True, t=pv_pos)
+        
         # Si es el lado R, invertimos su TX local en el grupo para compensar el espejo negativo
         if self.side == "R":
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
-        cmds.parent(switch_gen, ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
+        cmds.parent(ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
 
         # FK Setup (Alineado con targets corregidos y solucionado el desfase del toe_tip)
         fk_ctrls = []
@@ -304,7 +303,6 @@ class LegModule(object):
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
         # ---- SWITCH atributo + visibilidad ----
-        cmds.xform(switch_gen, r=True, os=True, t=(0, 20, 0)) 
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
@@ -339,7 +337,7 @@ class LegModule(object):
             cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
             cmds.parent(self.ik_chain[0], self.fk_chain[0], self.bind_chain[0], self.leg_grp)
             
-           
+        cmds.parent(switch_gen, self.main_rig_grp)    
             
         local_ctl = self.root_instance.localCtl if self.root_instance else None
         if local_ctl and cmds.objExists(local_ctl):

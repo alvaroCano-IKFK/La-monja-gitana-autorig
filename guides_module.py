@@ -354,6 +354,8 @@ class FootGuides(object):
         #Parentar ball al ankle
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
+        
+        cmds.joint(ankle, edit=True, oj="xzy", sao="zdown", ch=True,zso = True)
 
 ##### INSTANCIAS #####
 
@@ -393,7 +395,7 @@ class CharacterGuides(object):
         leg_instance = LegGuides(
             "L_hip", "L_knee", "L_ankle",
             (3, -10, 0),
-            (3, -20, 0.2),
+            (3, -20, 0.1),
             (3, -30, 0)
         )
         leg_instance.create_chain()

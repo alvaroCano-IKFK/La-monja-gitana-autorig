@@ -1,5 +1,6 @@
 import maya.cmds as cmds
 import controls_module
+import spine_module
 
 
 class NeckModule(object):
@@ -111,7 +112,7 @@ class NeckModule(object):
         # Ahora head_ctl SÍ existe como variable
         cmds.connectAttr(f"{head_ctl}.worldMatrix[0]", f"{ik_h}.dWorldUpMatrixEnd", f=True)
         
-        
+
         # ORGANIZACIÓN FINAL
         rig_grp = (
             f"{self.root_instance.rig_name}_rig_GRP"

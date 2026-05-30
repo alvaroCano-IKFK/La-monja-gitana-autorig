@@ -44,8 +44,9 @@ class SkinningModule(object):
         #   ("upperLeg_L_ENV",  "hip_C_ENV")      # pierna izq.   -> cadera
         #   ("upperLeg_R_ENV",  "hip_C_ENV")      # pierna der.   -> cadera
         self.reparent_map = [
-            ("Arm_R_R_clavicule_ENV","Character_spineFix_ENV"),
-            ("Arm_L_L_clavicule_ENV","Character_spineFix_ENV"),
+            ("Character_spine_0_ENV","Character_body_ENV"),
+            ("R_Arm_clavicule_ENV","Character_spineFix_ENV"),
+            ("L_Arm_clavicule_ENV","Character_spineFix_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
             ("Leg_R_R_thigh_ENV","Character_spine_0_ENV"),
@@ -113,28 +114,45 @@ class SkinningModule(object):
             map_orig_to_skn[jnt] = skn_jnt
             self.skin_joints.append(skn_jnt)
 
-        # 4. Segundo pase: Reconstruir la jerarquía en los SKN
+        # 4. Segundo pase: Reconstruir jerarquía buscando el padre más cercano en el mapa
         for orig_jnt, skn_jnt in map_orig_to_skn.items():
-            parent_orig = cmds.listRelatives(orig_jnt, parent=True, type="joint")
+            # Subir por la jerarquía del original hasta encontrar un padre que también duplicamos
+            parent_found = False
+            all_parents = cmds.listRelatives(orig_jnt, allParents=True, fullPath=True) or []
             
-            if parent_orig and parent_orig[0] in map_orig_to_skn:
-                # Si el original tiene un padre que también duplicamos, emparentamos los SKN
-                cmds.parent(skn_jnt, map_orig_to_skn[parent_orig[0]])
-            else:
-                # Si no tiene padre joint o el padre no es un JNT, va al grupo principal
+            for parent_path in all_parents:
+                parent_short = parent_path.split("|")[-1]
+                if parent_short in map_orig_to_skn:
+                    cmds.parent(skn_jnt, map_orig_to_skn[parent_short])
+                    parent_found = True
+                    break
+            
+            if not parent_found:
                 cmds.parent(skn_jnt, main_skn_grp)
 
         # 5. Re-parenting manual (sobreescribe la jerarquía automática)
         if self.reparent_map:
             for child_env, new_parent_env in self.reparent_map:
                 if not cmds.objExists(child_env):
-                    cmds.warning(f"REPARENT: No existe el joint hijo '{child_env}'. Revisa el nombre.")
+                    cmds.warning(f"REPARENT: No existe el joint hijo '{child_env}'.")
                     continue
                 if not cmds.objExists(new_parent_env):
-                    cmds.warning(f"REPARENT: No existe el joint padre '{new_parent_env}'. Revisa el nombre.")
+                    cmds.warning(f"REPARENT: No existe el joint padre '{new_parent_env}'.")
                     continue
-                #cmds.parent(child_env, new_parent_env)
-                print(f"REPARENT: '{child_env}'  ->  '{new_parent_env}'")
+                
+                # Obtener padre actual para evitar re-emparentamiento redundante
+                current_parent = cmds.listRelatives(child_env, parent=True)
+                current_parent = current_parent[0] if current_parent else None
+                
+                if current_parent == new_parent_env:
+                    print(f"REPARENT: '{child_env}' ya está bajo '{new_parent_env}', se omite.")
+                    continue
+                
+                try:
+                    cmds.parent(child_env, new_parent_env)
+                    print(f"REPARENT OK: '{child_env}' -> '{new_parent_env}'")
+                except Exception as e:
+                    cmds.warning(f"REPARENT FAILED: '{child_env}' -> '{new_parent_env}' | {e}")
 
         # 6. Organizar el grupo dentro del rig_GRP si existe
         if self.root_instance:

@@ -269,7 +269,7 @@ class HandGuides(object):
 
     def hand_guides(self):
         
-        #Agafa el joint del canell
+        #Agafa el joint del canel
         wrist = self.arm.wrist_joint
 
         #Dades dels dits

@@ -107,7 +107,6 @@ class BuildRig(object):
             
         self.hip_rig.build()
             
-        # Dedos R 
 
         # En el método build de CharacterGuides
         self.leg_rig = leg_module.LegModule(

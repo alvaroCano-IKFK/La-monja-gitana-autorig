@@ -88,6 +88,7 @@ class LimbModule(object):
         pos_el = cmds.xform(self.elbow_guide,     q=True, ws=True, t=True)
         pos_wr = cmds.xform(self.wrist_guide,     q=True, ws=True, t=True)
 
+
         # 1b. TARGETS PARA ALINEAR CONTROLES
         # Si es lado R, usamos las guías L para que el mirrorBehaviour_GRP
         # (scaleX -1) haga el mirror correcto, igual que en leg_module
@@ -96,11 +97,13 @@ class LimbModule(object):
             sh_ctrl_target = self.shoulder_guide.replace("R_", "L_")
             el_ctrl_target = self.elbow_guide.replace("R_", "L_")
             wr_ctrl_target = self.wrist_guide.replace("R_", "L_")
+            sw_ctrl_target = self.wrist_guide.replace("R_", "L_") 
         else:
             cl_ctrl_target = self.clavicule_guide
             sh_ctrl_target = self.shoulder_guide
             el_ctrl_target = self.elbow_guide
             wr_ctrl_target = self.wrist_guide
+            sw_ctrl_target = self.wrist_guide 
 
         # 2. BIND CHAIN (usa posiciones reales del lado correcto)
         cmds.select(clear=True)
@@ -200,7 +203,7 @@ class LimbModule(object):
             lib_name=self.styles["switch"], 
             final_name=f"{self.prefix}_switch_CTRL"
         )
-        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, self.bind_chain[2])
+        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, sw_ctrl_target)
 
         # FK alineados con sus propios joints (que ya están en R)
         fk_targets = [self.fk_chain[0], self.fk_chain[1], self.fk_chain[2]]
@@ -216,12 +219,12 @@ class LimbModule(object):
             fk_ctrls.append(ctrl)
             fk_gens.append(gen)
             
-        # CORRECTO (primero posicionar, luego meter en mirror)
-        cmds.parent(clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
-        cmds.parent(switch_gen, self.main_rig_grp)
+        
+        cmds.parent(switch_gen,clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
         cmds.matchTransform(clav_gen,    cl_ctrl_target)
         cmds.matchTransform(ik_root_gen, sh_ctrl_target)
         cmds.matchTransform(ik_ctrl_gen, wr_ctrl_target)
+        cmds.matchTransform(switch_gen,  sw_ctrl_target)
 
         # Pole Vector
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
@@ -272,7 +275,7 @@ class LimbModule(object):
         cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)
 
         # Switch
-        cmds.xform(switch_gen, r=True, os=True, t=(0, 10 if self.side == "L" else -10, 0))
+        cmds.xform(switch_gen, r=True, os=True, t=(0, 10, 0)) 
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
 
         # 6. SWITCH & VISIBILIDAD

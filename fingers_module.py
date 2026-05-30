@@ -105,20 +105,3 @@ class FingersModule(object):
 
         print(f"Build {self.prefix} completo.")
 
-
-    def build_mirror(self):
-        """Construye los dedos del lado R usando el mismo build()."""
-        r_wrist_guide = self.wrist_guide.replace("L_", "R_", 1)
-
-        if not cmds.objExists(r_wrist_guide):
-            cmds.warning(f"build_mirror (fingers): no existe {r_wrist_guide}.")
-            return None
-
-        r_fingers = FingersModule(
-            wrist_guide   = r_wrist_guide,
-            rig_name      = self.rig_name,
-            side          = "R",
-            root_instance = self.root_instance
-        )
-        r_fingers.build()
-        return r_fingers

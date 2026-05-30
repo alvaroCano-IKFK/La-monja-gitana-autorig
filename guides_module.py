@@ -362,9 +362,8 @@ class FootGuides(object):
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
-    """
+    """Esta clase se encarga de crear todas las guías del personaje y agruparlas bajo un grupo principal llamado "guides_GRP"."""
     
-    """
     def __init__(self):
         # Añadimos una variable para guardar la instancia del spine
         self.spine_rig = None

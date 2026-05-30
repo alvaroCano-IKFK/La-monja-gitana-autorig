@@ -7,7 +7,8 @@ import hip_module
 import leg_module
 import right_leg_module
 
-class BodyModule(object):   
+class BodyModule(object): 
+    """Este módulo se encarga de construir el cuerpo del rig, incluyendo la columna vertebral, cadera y piernas."""  
     def __init__(self, root_guide="root", 
                  rig_name="Character", 
                  root_instance=None):
@@ -22,6 +23,7 @@ class BodyModule(object):
         
 
     def build(self):
+        """Construye el cuerpo del rig a partir de la guía raíz."""
 
         pos_spine = cmds.xform(self.root_guide, q=True, ws=True, t=True)
         cmds.select(clear=True)
@@ -41,10 +43,9 @@ class BodyModule(object):
         )
         if self.localCtl:
             cmds.parent(bodyControl_off, self.localCtl)
-
-        #Connections to other modules
-
-
-
+            
+        rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
+        if rig_grp and cmds.objExists(rig_grp):
+            cmds.parent(body_joint, rig_grp)
 
         print("Body module built successfully.")

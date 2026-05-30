@@ -49,8 +49,8 @@ class SkinningModule(object):
             ("L_Arm_clavicule_ENV","Character_spineFix_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
             ("Character_spineFix_ENV","Character_spine_4_ENV"),
-            ("Leg_R_R_thigh_ENV","Character_spine_0_ENV"),
-            ("Leg_L_L_thigh_ENV","Character_spine_0_ENV"),
+            ("R_Leg_thigh_ENV","Character_spine_0_ENV"),
+            ("L_Leg_thigh_ENV","Character_spine_0_ENV"),
             ("Character_neck_01_ENV","Character_spineFix_ENV")
         ]
 

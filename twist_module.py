@@ -25,6 +25,27 @@ class TwistModule(object):
         self.upper_motion_paths = []
         self.lower_motion_paths = []
 
+    def basic_twist_setup(self, start_joint, mid_joint, end_joint):
+        self.nonroll_upper_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperNonRoll_JNT")[0]
+        self.nonroll_upper_end = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerNonRoll_JNT")[0]
+        cmds.parent(self.nonroll_lower_joints,self.nonroll_upper_joints)
+
+        ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikRPsolver", name=f"{self.side}_{self.name}_upperNonRoll_IKH")[0]
+
+        cmds.pointConstraint(self.nonroll_upper_start, start_joint, mo=False)
+        cmds.pointConstraint(self.nonroll_upper_end, mid_joint, mo=False)
+
+        self.nonroll_lower_start = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerNonRoll_JNT")[0]
+        self.nonroll_lower_end = cmds.duplicate(end_joint, po=True, n=f"{self.side}_{self.name}_lowerNonRoll_JNT")[0]
+        cmds.parent(self.nonroll_lower_joints,self.nonroll_upper_joints)
+
+        ik_hdl_lower = cmds.ikHandle(sj=self.nonroll_lower_start, ee=self.nonroll_lower_end, sol="ikRPsolver", name=f"{self.side}_{self.name}_lowerNonRoll_IKH")[0]
+
+        cmds.pointConstraint(self.nonroll_lower_start, mid_joint, mo=False)
+        cmds.pointConstraint(self.nonroll_lower_end, end_joint, mo=False)
+        
+
+
     def create_basic_curve(self, start_joint, mid_joint, end_joint):
         self.start_joint = start_joint
         self.mid_joint = mid_joint

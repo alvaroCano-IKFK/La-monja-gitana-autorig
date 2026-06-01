@@ -35,16 +35,16 @@ class TwistModule(object):
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
 
-        self.base_curve = cmds.curve(degree =2, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2, 2])
+        self.base_curve = cmds.curve(degree =1, p=[pos_start_joint, pos_mid_joint, pos_end_joint])
 
-        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=[True, True])
+        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[1.0]"), ch=True, k=[True, True])
 
         self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
         self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")
 
         history = cmds.listHistory(self.upper_curve)
         node_detach = cmds.ls(history, type="detachCurve")[0]
-        cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
+        cmds.setAttr(f"{node_detach}.parameter[0]", 1.0)
 
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 

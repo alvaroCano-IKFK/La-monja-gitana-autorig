@@ -56,7 +56,7 @@ class BuildRig(object):
         self.chest_rig = chest_module.ChestModule(chest_guide = "chest",root_instance=self.root_rig)
             
         self.chest_rig.build()   
-         
+
         # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
         self.arm_rig = limbs_module.LimbModule(
                 shoulder_guide="L_shoulder",
@@ -125,7 +125,8 @@ class BuildRig(object):
                 tip_guide="L_toe_tip",
                 heel_guide="L_heel",
                 rig_name="Leg",
-                root_instance=self.root_rig
+                root_instance=self.root_rig,
+                hip_instance=self.hip_rig
             )
         self.leg_rig.build()
 
@@ -138,7 +139,8 @@ class BuildRig(object):
                 heel_guide="R_heel",
                 rig_name="Leg",
                 side="R", 
-                root_instance=self.root_rig
+                root_instance=self.root_rig,
+                hip_instance=self.hip_rig
             )
         self.mirror_leg_rig.build() 
 

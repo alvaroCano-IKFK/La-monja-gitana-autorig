@@ -61,10 +61,15 @@ class HipModule(object):
         if rig_grp  and cmds.objExists(rig_grp ):
             cmds.parent(hip_joint , rig_grp )
             
+        self.hip_control_name = hipControl      
+        self.hip_group_name = hipControl_off
         
         # METER LOS CONTROLADORES DENTRO DEL LOCAL CONTROL            
         local_ctl = self.root_instance.localCtl if self.root_instance else None
+        body_ctl = self.root_instance.body_ctl if self.root_instance else None
 
-        if local_ctl and cmds.objExists(local_ctl):
-            cmds.parent(hipControl_off, local_ctl)
-             
+        if body_ctl and cmds.objExists(body_ctl):
+            cmds.parent(hipControl_off, body_ctl)
+
+
+

@@ -5,6 +5,7 @@ import guides_module
 from groups_module import ControlsGroups
 import rigRoot_module
 import nodeCreator_module
+import hip_module
 from nodeCreator_module import NodeCreator
 
 
@@ -19,6 +20,7 @@ class LegModule(object):
                  heel_guide = "heel",  
                  rig_name="Character",
                  side = "L",
+                 hip_instance= None,
                  root_instance= None):
                      
         self.thigh_guide = thigh_guide
@@ -48,6 +50,7 @@ class LegModule(object):
         self.leg_grp = None
         
         self.root_instance = root_instance 
+        self.hip_instance = hip_instance
 
         self.bind_chain = []
         self.ik_chain = []
@@ -407,9 +410,24 @@ class LegModule(object):
         cmds.parent(switch_gen, self.main_rig_grp)    
             
         local_ctl = self.root_instance.localCtl if self.root_instance else None
+
         if local_ctl and cmds.objExists(local_ctl):
             if self.side == "L":
                 cmds.parent(self.main_rig_grp, local_ctl)
-            
 
-        print(f"Build {self.prefix} leg completo.")
+        # Buscar en la instancia del Hip y NO en el root_instance
+        hipControl = None
+        if hasattr(self, 'hip_instance') and self.hip_instance:
+            if hasattr(self.hip_instance, 'hip_control_name'):
+                hipControl = self.hip_instance.hip_control_name
+
+        # APLICAR EL POINT CONSTRAINT AL HIP CONTROL
+        if hipControl and cmds.objExists(hipControl):
+            # Restringimos el grupo principal de controles de la pierna (main_rig_grp) a la cadera
+            cmds.parentConstraint(hipControl, ik_root_gen, mo=True)
+            cmds.parentConstraint(hipControl,fk_ctrls[0], mo= True )
+            print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {hipControl}")
+        else:
+            cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
+
+        print(f"Leg Module {self.side} construido con éxito.")

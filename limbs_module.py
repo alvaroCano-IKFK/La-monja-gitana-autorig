@@ -306,10 +306,6 @@ class LimbModule(object):
         arm_twist = twist_module.TwistModule(name="arm", side=self.side)
 
         arm_twist.create_basic_curve(shoulder_jnt, elbow_jnt, wrist_jnt)
-
-        cmds.parent(f"{self.side}_armBaseDriver_CRV", self.arm_grp)
-        cmds.parent(f"{self.side}_armUpperSegment_CRV", self.arm_grp)
-        cmds.parent(f"{self.side}_armLowerSegment_CRV", self.arm_grp)
         
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None

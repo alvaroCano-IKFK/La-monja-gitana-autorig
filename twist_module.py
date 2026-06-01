@@ -16,10 +16,9 @@ class TwistModule(object):
         self.end_joint = None
         self.upper_non_roll = None
         self.lower_non_roll = None
-        self.shoulder_joint = self.shoulder_joint
-        self.elbow_joint = self.elbow_joint
-        self.wrist_joint = self.wrist_joint
-        self.clavicule_joint= self.clavicule_joint
+        self.shoulder_joint = self.bind_chain[0]
+        self.elbow_joint = self.bind_chain[1]
+        self.wrist_joint = self.bind_chain[2]
 
     def create_basic_curve(self):
         pos_shoulder = cmds.xform(self.shoulder_joint, q=True, ws=True, t=True)

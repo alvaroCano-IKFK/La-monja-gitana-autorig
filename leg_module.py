@@ -6,6 +6,7 @@ from groups_module import ControlsGroups
 import rigRoot_module
 import nodeCreator_module
 from nodeCreator_module import NodeCreator
+import limbs_module
 
 
 class LegModule(object):
@@ -387,5 +388,16 @@ class LegModule(object):
             cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
         
         cmds.parent(switch_gen, self.main_rig_grp)
+
+        # Instanciem el mòdul de Twist apuntant a la cama ("leg")
+        leg_twist_inst = twist_module.TwistModule(name="leg", side=self.side, parent=self)
+
+        # Cridem la funció passant els teus joints de la cuixa, genoll i ancle de bind
+        leg_twist_elements = leg_twist_inst.create_basic_curve(self.bind_chain[0], self.bind_chain[1], self.bind_chain[2])
+
+        # Fiquem la corba i l'arrel dels joints de twist a dins del teu grup "_leg_GRP"
+        if self.leg_grp and cmds.objExists(self.leg_grp):
+            cmds.parent(leg_twist_elements[0], self.leg_grp)  # La corba BaseDriver
+            cmds.parent(leg_twist_elements[3], self.leg_grp)  # L'os upperNonRollStart
 
         print(f"Build {self.prefix} leg completo.")

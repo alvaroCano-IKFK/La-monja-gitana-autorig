@@ -6,7 +6,7 @@ import json
 import guides_module
 import limbs_module
 import leg_module
-import NodeCreator
+from nodeCreator_module import NodeCreator
 
 class TwistModule(object):  
     def __init__(self, name, side, parent=None):

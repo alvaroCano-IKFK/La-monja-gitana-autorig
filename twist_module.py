@@ -60,7 +60,7 @@ class TwistModule(object):
                 target_list = self.lower_motion_paths
 
             for i in range(5):
-                motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag=None, parent=None, custom_suffix="MPA")
+                motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag="Segment", parent=None, custom_suffix="MPA")
                 motion_path_node = motion_path.create()
                 cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
                 cmds.setAttr(f"{motion_path_node}.fractionMode", True)

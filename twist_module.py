@@ -6,6 +6,7 @@ import json
 import guides_module
 import limbs_module
 import leg_module
+import nodeCreator_module
 
 class TwistModule(object):  
     def __init__(self, name, side, parent=None):
@@ -31,7 +32,7 @@ class TwistModule(object):
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
 
-        self.base_curve = cmds.curve(degree =2, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2])
+        self.base_curve = cmds.curve(degree =2, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2, 2])
 
         detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=True)
 
@@ -44,4 +45,20 @@ class TwistModule(object):
 
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
-        print(f"[Twist {self.name.upper()}] Sistema de curvas creado con éxito para {start_joint}.")
+        for crv in [self.upper_curve, self.lower_curve]:
+            
+            crv_shape = cmds.listRelatives(crv, shapes=True)[0]
+            
+            if crv == self.upper_curve:
+                segment_name = "Upper"
+                target_list = self.upper_motion_paths
+            else:
+                segment_name = "Lower"
+                target_list = self.lower_motion_paths
+
+            for i in range(5):
+                motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag=str(i+1), parent=None, custom_suffix="MPA")
+                motion_path_node = motion_path.create()
+                cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
+                cmds.setAttr(f"{motion_path_node}.fractionMode", True)
+                target_list.append(motion_path_node)

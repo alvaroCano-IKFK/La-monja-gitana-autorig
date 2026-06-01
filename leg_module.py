@@ -330,6 +330,84 @@ class LegModule(object):
             cmds.connectAttr(f"{pbl}.outRotate",              f"{self.bind_chain[i]}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK",          f"{pbl}.weight")
 
+        # ---- FOOT REVERSE ----
+        #Separator
+        cmds.addAttr(ik_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
+        cmds.setAttr(f"{ik_ctrl}.extraAttrSep", cb=True)  
+        cmds.setAttr(f"{ik_ctrl}.extraAttrSep", l=True)
+
+        #Roll
+        cmds.addAttr(ik_ctrl, ln = "Roll", at="float",k =True)
+
+        #Roll Lift Angle
+        cmds.addAttr(ik_ctrl, ln ="RollLiftAngle",k=True, at="float",min = 0, dv =45 )  
+
+        #Roll Straight Angle
+        cmds.addAttr(ik_ctrl, ln ="RollStraightAngle", k=True, at="float", min = 0, dv =90 ) 
+
+        
+        def quick_node(node_type, name, tag, side="L", base_name="leg", parent=None):
+            """Simplifica la instanciación de NodeCreator para evitar código repetitivo."""
+            creator = NodeCreator(
+                side=side,
+                node_type=node_type,
+                base_name=base_name,
+                name=name,
+                tag=tag,
+                parent=parent,
+                custom_suffix=None
+            )
+            return creator.create()
+
+        #Creacion de nodos y sus atributos
+        heel_clp = quick_node("clamp", "Roll", "Positive")
+        cmds.setAttr(f"{heel_clp}.minR",-1080)
+        cmds.connectAttr(f"{ik_ctrl}.Roll", f"{heel_clp}.inputR")
+        heel_sdk = foot_heel_gen.replace("_GRP", "_SDK")
+        cmds.connectAttr(f"{heel_clp}.outputR", f"{heel_sdk}.rotateX")
+
+
+        legLiftAngle_rmv  = quick_node("remapValue", "RollLift", "Angle")
+        cmds.connectAttr(f"{ik_ctrl}.Roll",f"{legLiftAngle_rmv}.inputValue")
+        cmds.connectAttr(f"{ik_ctrl}.RollLiftAngle",f"{legLiftAngle_rmv}.inputMax")
+
+        legRollStraightAngle_rmv  = quick_node("remapValue", "straightRoll", "Angle")
+        cmds.connectAttr(f"{ik_ctrl}.RollLiftAngle",f"{legRollStraightAngle_rmv}.inputMin")
+        cmds.connectAttr(f"{ik_ctrl}.Roll",f"{legRollStraightAngle_rmv}.inputValue")
+        cmds.connectAttr(f"{ik_ctrl}.RollStraightAngle",f"{legRollStraightAngle_rmv}.inputMax")
+
+        legRollStraightAngle_rev = quick_node("reverse", "legRollStraight", "Angle")
+        cmds.connectAttr(f"{legRollStraightAngle_rmv}.outValue",f"{legRollStraightAngle_rev}.inputX")
+
+        legLiftAngle_mdn = quick_node("multiplyDivide", "legLift", "Angle")
+        cmds.connectAttr(f"{legRollStraightAngle_rmv}.outValue",f"{legLiftAngle_mdn}.input1X")
+        cmds.connectAttr(f"{ik_ctrl}.Roll",f"{legLiftAngle_mdn}.input2X")
+
+        tip_sdk = foot_tip_gen.replace("_GRP", "_SDK")
+        cmds.connectAttr(f"{legLiftAngle_mdn}.outputX",f"{tip_sdk}.rotateX")
+   
+        legRollStraightAngleBallRange_mdn = quick_node("multiplyDivide", "legRollStraightAngle", "BallRange")
+        cmds.connectAttr(f"{legRollStraightAngle_rev}.outputX",f"{legRollStraightAngleBallRange_mdn}.input1X")
+        cmds.connectAttr(f"{legLiftAngle_rmv}.outValue",f"{legRollStraightAngleBallRange_mdn}.input2X")
+
+        legRollStraightAngleBall_mdn = quick_node("multiplyDivide", "legRollStraightAngle", "Ball")
+        cmds.connectAttr(f"{legRollStraightAngleBallRange_mdn}.outputX",f"{legRollStraightAngleBall_mdn}.input1X")
+        cmds.connectAttr(f"{ik_ctrl}.Roll", f"{legRollStraightAngleBall_mdn}.input2X")
+        ball_sdk = foot_ball_gen.replace("_GRP", "_SDK")
+        cmds.connectAttr(f"{legRollStraightAngleBall_mdn}.outputX", f"{ball_sdk}.rotateX")
+
+         
+
+
+
+
+
+
+        #foot_pma = quick_node("plusMinusAverage", "foot", "totalRoll")
+
+ 
+
+
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):

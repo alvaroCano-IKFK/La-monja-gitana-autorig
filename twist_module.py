@@ -146,6 +146,17 @@ class TwistModule(object):
 
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        aim_value = axis_map.get(aim_axis.lower(), 0)
+        up_value = axis_map.get(up_axis.lower(), 1)
+
+        vector_map = {
+            "x": (1.0, 0.0, 0.0),
+            "y": (0.0, 1.0, 0.0),
+            "z": (0.0, 0.0, 1.0)
+        }
+        up_vector = vector_map.get(up_axis.lower(), (0.0, 1.0, 0.0))
+
         for crv in [self.upper_curve, self.lower_curve]:
             
             crv_shape = cmds.listRelatives(crv, shapes=True)[0]
@@ -163,8 +174,13 @@ class TwistModule(object):
                 cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
                 cmds.setAttr(f"{motion_path_node}.fractionMode", True)
 
-                cmds.setAttr(f"{motion_path_node}.frontAxis", aim_axis)
-                cmds.setAttr(f"{motion_path_node}.upAxis", up_axis)
+                cmds.setAttr(f"{motion_path_node}.frontAxis", aim_value)
+                cmds.setAttr(f"{motion_path_node}.upAxis", up_value)
+
+                cmds.setAttr(f"{motion_path_node}.worldUpType", 1)
+                cmds.setAttr(f"{motion_path_node}.worldUpVector", up_vector[0], up_vector[1], up_vector[2])
+
+                cmds.connectAttr(f"{non_roll_object}.worldMatrix[0]", f"{motion_path_node}.worldUpMatrix")
 
                 u_value = 0.01 + ((i / 4.0) * 0.98)
                 cmds.setAttr(f"{motion_path_node}.uValue", u_value)

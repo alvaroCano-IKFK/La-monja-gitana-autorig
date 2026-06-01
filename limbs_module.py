@@ -7,6 +7,7 @@ import nodeCreator_module
 import build_module
 import rigRoot_module
 from nodeCreator_module import NodeCreator
+import twist_module
 
 class LimbModule(object):
 
@@ -293,7 +294,23 @@ class LimbModule(object):
             cmds.connectAttr(f"{pbl}.outTranslate", f"{bnd_jnt}.translate")
             cmds.connectAttr(f"{pbl}.outRotate", f"{bnd_jnt}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
-            
+
+        # =====================================================================
+        # 7.5 SISTEMA DE TWIST
+        # =====================================================================
+
+        shoulder_jnt = self.bind_chain[0]  
+        elbow_jnt    = self.bind_chain[1]  
+        wrist_jnt    = self.bind_chain[2]  
+
+        arm_twist = twist_module.TwistModule(name="arm", side=self.side)
+
+        arm_twist.create_basic_curve(shoulder_jnt, elbow_jnt, wrist_jnt)
+
+        cmds.parent(f"{self.side}_armBaseDriver_CRV", self.arm_grp)
+        cmds.parent(f"{self.side}_armUpperSegment_CRV", self.arm_grp)
+        cmds.parent(f"{self.side}_armLowerSegment_CRV", self.arm_grp)
+        
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):

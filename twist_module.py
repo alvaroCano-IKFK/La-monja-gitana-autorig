@@ -22,6 +22,9 @@ class TwistModule(object):
         self.upper_curve = None
         self.lower_curve = None
 
+        self.upper_motion_paths = []
+        self.lower_motion_paths = []
+
     def create_basic_curve(self, start_joint, mid_joint, end_joint):
         self.start_joint = start_joint
         self.mid_joint = mid_joint

@@ -5,7 +5,7 @@ import groups_module
 import spine_module
 import hip_module
 import leg_module
-import right_leg_module
+
 
 class BodyModule(object): 
     """Este módulo se encarga de construir el cuerpo del rig, incluyendo la columna vertebral, cadera y piernas."""  
@@ -48,4 +48,7 @@ class BodyModule(object):
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(body_joint, rig_grp)
 
+        if self.root_instance:
+            self.root_instance.body_ctl = bodyControl  # ← expones el ctl al root_rig
+            
         print("Body module built successfully.")

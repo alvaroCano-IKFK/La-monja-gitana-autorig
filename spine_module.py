@@ -3,6 +3,8 @@ import controls_module
 import rigRoot_module
 import hip_module
 import chest_module
+import body_module
+import controlsLibrary
 from groups_module import ControlsGroups 
 
 class SpineModule(object):
@@ -17,7 +19,7 @@ class SpineModule(object):
         self.chest_guide = chest_guide
         self.rig_name = rig_name
         
-        self.ctrl_maker = controls_module.Controls(scale=2, color=6)
+        self.styles = {"mainFk": "circleControl"}
         
         self.group_maker = ControlsGroups()
         
@@ -80,9 +82,13 @@ class SpineModule(object):
             cmds.parent(cluster_handle, self.spine_grp)
 
             # 2. Crear primero el Control (Para que la variable 'ctrl' exista)
+
             name = f"{self.rig_name}_spine_{i}_CTL"
-            ctrl = self.ctrl_maker.circle_ctl_builder(name=name, radius=2)
-            
+            ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"], 
+                final_name=name
+            )
+
             # 3. Crear la jerarquía de grupos (Pasándole el control ya creado)
             # El método create_rig_hierarchy devuelve el nombre del grupo raíz (GRP)
             spine_grp_root = self.group_maker.create_rig_hierarchy(ctrl, cluster_handle) 
@@ -91,6 +97,16 @@ class SpineModule(object):
             ctrl_data[i] = {'ctrl': ctrl, 'top': spine_grp_root, 'cluster': cluster_handle}
             self.controls.append(ctrl)
         cmds.parent(self.joints[0], self.spine_grp)
+
+        
+        for i in ctrl_data:
+            ctrl = ctrl_data[i]['ctrl']
+            pivot = cmds.xform(ctrl, q=True, ws=True, rp=True)
+            shapes = cmds.listRelatives(ctrl, s=True)
+            for shape in shapes:
+                num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+                cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
+                cmds.rotate(0, 0, 90, cvs, r=True, p=pivot, ws=True)
 
         # 2. SECCIÓN DE JERARQUÍA
         # spine_0 es el top, va al grupo de controles
@@ -136,14 +152,12 @@ class SpineModule(object):
         
         chest_ctl_name = f"{self.rig_name}_chestFix_CTL"
         hip_ctl_name = f"{self.rig_name}_localHip_CTL"
-        
-        
 
         
         # --- SECCIÓN DE ORGANIZACIÓN FINAL ---
         
         rig_name = self.root_instance.rig_name if self.root_instance else "Character"
-        local_ctl = self.root_instance.localCtl if self.root_instance else None
+        body_ctl = self.root_instance.body_ctl if self.root_instance else None
         
         # 1. Emparentar la estructura de joints/IK al grupo de rig
         rig_system_grp = f"{rig_name}_rig_GRP"
@@ -152,16 +166,16 @@ class SpineModule(object):
         
         # 2. Emparentar los controles de la espina al LOCAL CONTROL
         # En lugar de emparentar 'top', emparentamos el contenedor de la espina
-        if local_ctl and cmds.objExists(local_ctl):
-            cmds.parent(self.ctrl_grp, local_ctl)
-            print(f"DEBUG: Espina emparentada a control local: {local_ctl}")
+        if body_ctl and cmds.objExists(body_ctl):
+            cmds.parent(self.ctrl_grp, body_ctl)
+            print(f"DEBUG: Espina emparentada a control local: {body_ctl}")
         else:
             # Si no hay local_ctl, lo mandamos al grupo de controles global como backup
             global_controls_grp = f"{rig_name}_controls_GRP"
             if cmds.objExists(global_controls_grp):
                 cmds.parent(self.ctrl_grp, global_controls_grp)
-                
-        print("DEBUG: local_ctl no encontrado, emparentado a global_controls_GRP")
+     
+
         print(f"Spine para {self.rig_name} creada con éxito.")
         return self
         

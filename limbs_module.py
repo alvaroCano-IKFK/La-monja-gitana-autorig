@@ -6,6 +6,7 @@ import rigRoot_module
 import nodeCreator_module
 import build_module
 import rigRoot_module
+import chest_module
 from nodeCreator_module import NodeCreator
 
 class LimbModule(object):
@@ -220,7 +221,11 @@ class LimbModule(object):
             fk_gens.append(gen)
             
         
-        cmds.parent(switch_gen,clav_gen, ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
+        cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
+        cmds.parent(clav_gen, self.main_rig_grp)
+        cmds.parent(switch_gen, self.main_rig_grp)
+
+
         cmds.matchTransform(clav_gen,    cl_ctrl_target)
         cmds.matchTransform(ik_root_gen, sh_ctrl_target)
         cmds.matchTransform(ik_ctrl_gen, wr_ctrl_target)

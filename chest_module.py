@@ -107,7 +107,9 @@ class ChestModule(object):
         # METER LOS CONTROLADORES DENTRO DEL LOCAL CONTROL            
         local_ctl = self.root_instance.localCtl if self.root_instance else None
 
-        if local_ctl and cmds.objExists(local_ctl):
-            cmds.parent(chestContol_off, local_ctl)
-             
+        spine_top_ctrl = f"{self.rig_name}_spine_4_CTL"
+        if cmds.objExists(spine_top_ctrl):
+            cmds.parent(chestContol_off, spine_top_ctrl)
+        elif local_ctl and cmds.objExists(local_ctl):
+            cmds.parent(chestContol_off, local_ctl)  # fallback por si la spine no existe
         

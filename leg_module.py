@@ -396,17 +396,6 @@ class LegModule(object):
         ball_sdk = foot_ball_gen.replace("_GRP", "_SDK")
         cmds.connectAttr(f"{legRollStraightAngleBall_mdn}.outputX", f"{ball_sdk}.rotateX")
 
-         
-
-
-
-
-
-
-        #foot_pma = quick_node("plusMinusAverage", "foot", "totalRoll")
-
- 
-
 
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None

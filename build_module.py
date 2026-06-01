@@ -33,7 +33,15 @@ class BuildRig(object):
         self.root_rig = rigRoot_module.RigRoot(rig_name="Character")
         self.root_rig.build()
         #self.root_rig.mirrorControls()
-            
+
+        # 0. CONSTRUIR BODY
+        self.body_rig = body_module.BodyModule(
+                rig_name="Character",
+                root_instance=self.root_rig
+            )    
+        self.body_rig.build()   
+
+
         # 1. CONSTRUIR ESPINA
         self.spine_rig = spine_module.SpineModule(
                 root_guide="root", 
@@ -134,12 +142,6 @@ class BuildRig(object):
             )
         self.mirror_leg_rig.build() 
 
-        
-        self.body_rig = body_module.BodyModule(
-                rig_name="Character",
-                root_instance=self.root_rig
-            )    
-        self.body_rig.build()
 
         # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(

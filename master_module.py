@@ -20,6 +20,7 @@ import skinning_module
 import build_module
 import body_module
 import limbModule
+import twist_module
 
 #import clavicule_module
 
@@ -46,6 +47,7 @@ def run():
     importlib.reload(build_module)
     importlib.reload(body_module)
     importlib.reload(limbs_module)
+    importlib.reload(twist_module)
     
     ui = ui_module.UI()
     ui.main_UI()

@@ -75,6 +75,8 @@ class TwistModule(object):
         cmds.parent(ik_hdl_lower_twist, end_joint)
         cmds.parent(self.lower_twist_start, self.nonroll_lower_start)
 
+        return [self.nonroll_upper_start, self.nonroll_lower_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
+
 
     def create_basic_curve(self, start_joint, mid_joint, end_joint):
         self.start_joint = start_joint

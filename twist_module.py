@@ -35,8 +35,8 @@ class TwistModule(object):
 
         detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=True)
 
-        self.upper_curve = cmds.rename(detatch_result[0], f"{self.name}UpperSegment_CRV")
-        self.lower_curve = cmds.rename(detatch_result[1], f"{self.name}LowerSegment_CRV")
+        self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
+        self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")
 
         history = cmds.listHistory(self.upper_curve)
         node_detach = cmds.ls(history, type="detachCurve")[0]
@@ -45,6 +45,27 @@ class TwistModule(object):
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
         print(f"[Twist {self.name.upper()}] Sistema de curvas creado con éxito para {start_joint}.")
+
+for obj in ["jnt_TEST_A", "jnt_TEST_B", "jnt_TEST_C", "L_armUpperSegment_CRV", "L_armLowerSegment_CRV", "L_armBaseDriver_CRV"]:
+if cmds.objExists(obj): cmds.delete(obj)
+
+# 2. Creamos 3 joints en una escena vacía simulando un brazo real flexionado
+cmds.select(clear=True)
+j_start = cmds.joint(name="jnt_TEST_A", p=(0, 10, 0))
+cmds.select(clear=True)
+j_mid   = cmds.joint(name="jnt_TEST_B", p=(5, 8, -2)) # Codo metido hacia adentro
+cmds.select(clear=True)
+j_end   = cmds.joint(name="jnt_TEST_C", p=(10, 8, 0))
+
+cmds.parent(j_mid, j_start)
+cmds.parent(j_end, j_mid)
+
+# 3. Instanciamos tu clase TwistModule y ejecutamos la función pasándole estos joints
+test_twist = TwistModule(name="arm", side="L")
+test_twist.create_basic_curve(j_start, j_mid, j_end)
+
+# Extra para el test: seleccionamos las curvas nuevas para que las veas resaltadas en el viewport
+cmds.select([test_twist.upper_curve, test_twist.lower_curve])
 
 
 

@@ -9,27 +9,26 @@ import leg_module
 
 class TwistModule(object):  
     def __init__(self, name, side, parent=None):
+        self.name = name
         self.side = side
         self.parent = parent
+
         self.start_joint = None
         self.mid_joint = None
         self.end_joint = None
+
         self.upper_non_roll = None
         self.lower_non_roll = None
-        self.shoulder_joint = self.bind_chain[0]
-        self.elbow_joint = self.bind_chain[1]
-        self.wrist_joint = self.bind_chain[2]
 
-    def create_basic_curve(self):
-        pos_shoulder = cmds.xform(self.shoulder_joint, q=True, ws=True, t=True)
-        pos_elbow = cmds.xform(self.elbow_joint, q=True, ws=True, t=True)
-        pos_wrist = cmds.xform(self.wrist_joint, q=True, ws=True, t=True)
+    def create_basic_curve(self, start_joint, mid_joint, end_joint):
+        pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
+        pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
+        pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
 
-        upper_curve = cmds.curve(degree =1, bezier=2, p=[(pos_shoulder, pos_elbow)], knot=[0, 1])
-        lower_curve = cmds.curve(degree =1, bezier=2, p=[(pos_elbow, pos_wrist)], knot=[0, 1])
+        self.base_curve = cmds.curve(degree =1, bezier=2, p=[(pos_start_joint, pos_mid_joint, pos_end_joint)], knot=[0, 1])
 
-        detatch_result = cmds.detachCurve("{}.u[0.5]".format(base_curve), ch=True, ko=True)
+        detatch_result = cmds.detachCurve("{}.u[0.5]".format(self.base_curve), ch=True, ko=True)
 
 twist=TwistModule("arm", "L")
 twist.create_basic_curve()

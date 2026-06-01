@@ -66,4 +66,4 @@ class TwistModule(object):
              #   cmds.setAttr(f"{motion_path_node}.fractionMode", True)
              #   target_list.append(motion_path_node)
 
-             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
+            print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")

@@ -62,7 +62,7 @@ class TwistModule(object):
         cmds.pointConstraint(start_joint, self.upper_twist_start, mo=False)
 
         ik_hdl_upper_twist = cmds.ikHandle(sj=self.upper_twist_start, ee=self.upper_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}UpperTwist_HDL")[0]
-        cmds.parent(ik_hdl_upper_twist, mid_joint)
+        cmds.parentConstraint(ik_hdl_upper_twist, mid_joint)
         cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
 
 
@@ -72,7 +72,7 @@ class TwistModule(object):
         cmds.pointConstraint(mid_joint, self.lower_twist_start, mo=False)
 
         ik_hdl_lower_twist = cmds.ikHandle(sj=self.lower_twist_start, ee=self.lower_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}LowerTwist_HDL")[0]
-        cmds.parent(ik_hdl_lower_twist, end_joint)
+        cmds.parentConstraint(ik_hdl_lower_twist, end_joint)
         cmds.parent(self.lower_twist_start, self.nonroll_lower_start)
 
         return [self.nonroll_upper_start, self.nonroll_lower_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]

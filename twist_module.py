@@ -41,69 +41,69 @@ class TwistModule(object):
         # NON ROLL
         # =====================================================================
         # Forcem la selecció de l'hombro abans de duplicar
-        cmds.select(start_joint, r=True) 
-        self.nonroll_upper_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperNonRollStart_JNT")[0]
-        
-        # Forcem la selecció del colze
-        cmds.select(mid_joint, r=True) 
-        self.nonroll_upper_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperNonRollEnd_JNT")[0]
-        cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
+            cmds.select(start_joint, r=True) 
+            self.nonroll_upper_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperNonRollStart_JNT")[0]
+            
+            # Forcem la selecció del colze
+            cmds.select(mid_joint, r=True) 
+            self.nonroll_upper_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperNonRollEnd_JNT")[0]
+            cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
 
-        ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikRPsolver", name=f"{self.side}_{self.name}UpperNonRollIk_HDL")[0]
+            ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikRPsolver", name=f"{self.side}_{self.name}UpperNonRollIk_HDL")[0]
 
-        cmds.pointConstraint(start_joint, self.nonroll_upper_start, mo=False)
-        cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
+            cmds.pointConstraint(start_joint, self.nonroll_upper_start, mo=False)
+            cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
 
-        # SECCIÓ CRÍTICA (Línia 42): Forcem selecció del colze de bind de nou
-        cmds.select(mid_joint, r=True) 
-        self.nonroll_lower_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerNonRollStart_JNT")[0]
-        
-        # Forcem la selecció del canell
-        cmds.select(end_joint, r=True) 
-        self.nonroll_lower_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerNonRollEnd_JNT")[0]
-        cmds.parent(self.nonroll_lower_end, self.nonroll_lower_start)
+            # SECCIÓ CRÍTICA (Línia 42): Forcem selecció del colze de bind de nou
+            cmds.select(mid_joint, r=True) 
+            self.nonroll_lower_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerNonRollStart_JNT")[0]
+            
+            # Forcem la selecció del canell
+            cmds.select(end_joint, r=True) 
+            self.nonroll_lower_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerNonRollEnd_JNT")[0]
+            cmds.parent(self.nonroll_lower_end, self.nonroll_lower_start)
 
-        # Ajuntem la cadena Non-Roll pura
-        cmds.parent(self.nonroll_lower_start, self.nonroll_upper_end)
+            # Ajuntem la cadena Non-Roll pura
+            cmds.parent(self.nonroll_lower_start, self.nonroll_upper_end)
 
-        ik_hdl_lower = cmds.ikHandle(sj=self.nonroll_lower_start, ee=self.nonroll_lower_end, sol="ikRPsolver", name=f"{self.side}_{self.name}LowerNonRollIk_HDL")[0]
+            ik_hdl_lower = cmds.ikHandle(sj=self.nonroll_lower_start, ee=self.nonroll_lower_end, sol="ikRPsolver", name=f"{self.side}_{self.name}LowerNonRollIk_HDL")[0]
 
-        cmds.pointConstraint(mid_joint, self.nonroll_lower_start, mo=False)
-        cmds.pointConstraint(end_joint, ik_hdl_lower, mo=False)
-        
-        # =====================================================================
-        # TWIST
-        # =====================================================================
-        cmds.select(start_joint, r=True) 
-        self.upper_twist_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperTwistStart_JNT")[0]
-        
-        cmds.select(mid_joint, r=True) 
-        self.upper_twist_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperTwistEnd_JNT")[0]
-        cmds.parent(self.upper_twist_end, self.upper_twist_start)
-        cmds.pointConstraint(start_joint, self.upper_twist_start, mo=False)
+            cmds.pointConstraint(mid_joint, self.nonroll_lower_start, mo=False)
+            cmds.pointConstraint(end_joint, ik_hdl_lower, mo=False)
+            
+            # =====================================================================
+            # TWIST
+            # =====================================================================
+            cmds.select(start_joint, r=True) 
+            self.upper_twist_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperTwistStart_JNT")[0]
+            
+            cmds.select(mid_joint, r=True) 
+            self.upper_twist_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_upperTwistEnd_JNT")[0]
+            cmds.parent(self.upper_twist_end, self.upper_twist_start)
+            cmds.pointConstraint(start_joint, self.upper_twist_start, mo=False)
 
-        ik_hdl_upper_twist = cmds.ikHandle(sj=self.upper_twist_start, ee=self.upper_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}UpperTwist_HDL")[0]
-        
-        cmds.parent(ik_hdl_upper_twist, self.nonroll_upper_end)
-        cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
+            ik_hdl_upper_twist = cmds.ikHandle(sj=self.upper_twist_start, ee=self.upper_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}UpperTwist_HDL")[0]
+            
+            cmds.parent(ik_hdl_upper_twist, self.nonroll_upper_end)
+            cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
 
-        cmds.select(mid_joint, r=True) 
-        self.lower_twist_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerTwistStart_JNT")[0]
-        
-        cmds.select(end_joint, r=True) 
-        self.lower_twist_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerTwistEnd_JNT")[0]
-        cmds.parent(self.lower_twist_end, self.lower_twist_start)
-        cmds.pointConstraint(mid_joint, self.lower_twist_start, mo=False)
+            cmds.select(mid_joint, r=True) 
+            self.lower_twist_start = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerTwistStart_JNT")[0]
+            
+            cmds.select(end_joint, r=True) 
+            self.lower_twist_end = cmds.duplicate(po=True, n=f"{self.side}_{self.name}_lowerTwistEnd_JNT")[0]
+            cmds.parent(self.lower_twist_end, self.lower_twist_start)
+            cmds.pointConstraint(mid_joint, self.lower_twist_start, mo=False)
 
-        ik_hdl_lower_twist = cmds.ikHandle(sj=self.lower_twist_start, ee=self.lower_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}LowerTwist_HDL")[0]
-        
-        cmds.parent(ik_hdl_lower_twist, self.nonroll_lower_end)
-        cmds.parent(self.lower_twist_start, self.nonroll_lower_start)
+            ik_hdl_lower_twist = cmds.ikHandle(sj=self.lower_twist_start, ee=self.lower_twist_end, sol="ikRPsolver", name=f"{self.side}_{self.name}LowerTwist_HDL")[0]
+            
+            cmds.parent(ik_hdl_lower_twist, self.nonroll_lower_end)
+            cmds.parent(self.lower_twist_start, self.nonroll_lower_start)
 
-        # Netegem la selecció final al acabar tot el procés per elegància
-        cmds.select(cl=True)
+            # Netegem la selecció final al acabar tot el procés per elegància
+            cmds.select(cl=True)
 
-        return [self.nonroll_upper_start, self.nonroll_lower_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
+            return [self.nonroll_upper_start, self.nonroll_lower_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
 
 
     def create_basic_curve(self, start_joint, mid_joint, end_joint):

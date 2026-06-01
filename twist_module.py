@@ -41,6 +41,7 @@ class TwistModule(object):
         self.nonroll_upper_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperNonRollStart_JNT")[0]
         cmds.parent(self.upper_twist_start, w=True)
         cmds.parent(self.nonroll_upper_start, w=True)
+        cmds.select(cl=True)
         self.nonroll_upper_end = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_upperNonRollEnd_JNT")[0]
         cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
 

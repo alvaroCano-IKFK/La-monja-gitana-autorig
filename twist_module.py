@@ -83,6 +83,8 @@ class TwistModule(object):
         self.mid_joint = mid_joint
         self.end_joint = end_joint
 
+        base_twist= self.basic_twist_setup(start_joint, mid_joint, end_joint)
+
         pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
         pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)

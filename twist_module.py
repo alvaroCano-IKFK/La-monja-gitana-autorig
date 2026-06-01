@@ -49,6 +49,7 @@ class TwistModule(object):
         cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
 
         self.nonroll_lower_start = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerNonRollStart_JNT")[0]
+        cmds.parent(self.nonroll_lower_start, w=True)
         self.nonroll_lower_end = cmds.duplicate(end_joint, po=True, n=f"{self.side}_{self.name}_lowerNonRollEnd_JNT")[0]
         cmds.parent(self.nonroll_lower_end, self.nonroll_lower_start)
 
@@ -70,6 +71,7 @@ class TwistModule(object):
 
 
         self.lower_twist_start = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerTwistStart_JNT")[0]
+        cmds.parent(self.lower_twist_start, w=True)
         self.lower_twist_end = cmds.duplicate(end_joint, po=True, n=f"{self.side}_{self.name}_lowerTwistEnd_JNT")[0]
         cmds.parent(self.lower_twist_end, self.lower_twist_start)
         cmds.pointConstraint(mid_joint, self.lower_twist_start, mo=False)

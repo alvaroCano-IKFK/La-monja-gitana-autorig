@@ -31,7 +31,7 @@ class TwistModule(object):
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
 
-        self.base_curve = cmds.curve(degree =1, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2])
+        self.base_curve = cmds.curve(degree =2, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2])
 
         detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=True)
 
@@ -45,28 +45,3 @@ class TwistModule(object):
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
         print(f"[Twist {self.name.upper()}] Sistema de curvas creado con éxito para {start_joint}.")
-
-for obj in ["jnt_TEST_A", "jnt_TEST_B", "jnt_TEST_C", "L_armUpperSegment_CRV", "L_armLowerSegment_CRV", "L_armBaseDriver_CRV"]:
-if cmds.objExists(obj): cmds.delete(obj)
-
-# 2. Creamos 3 joints en una escena vacía simulando un brazo real flexionado
-cmds.select(clear=True)
-j_start = cmds.joint(name="jnt_TEST_A", p=(0, 10, 0))
-cmds.select(clear=True)
-j_mid   = cmds.joint(name="jnt_TEST_B", p=(5, 8, -2)) # Codo metido hacia adentro
-cmds.select(clear=True)
-j_end   = cmds.joint(name="jnt_TEST_C", p=(10, 8, 0))
-
-cmds.parent(j_mid, j_start)
-cmds.parent(j_end, j_mid)
-
-# 3. Instanciamos tu clase TwistModule y ejecutamos la función pasándole estos joints
-test_twist = TwistModule(name="arm", side="L")
-test_twist.create_basic_curve(j_start, j_mid, j_end)
-
-# Extra para el test: seleccionamos las curvas nuevas para que las veas resaltadas en el viewport
-cmds.select([test_twist.upper_curve, test_twist.lower_curve])
-
-
-
-

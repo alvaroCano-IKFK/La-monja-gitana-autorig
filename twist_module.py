@@ -175,10 +175,12 @@ class TwistModule(object):
                 cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
                 cmds.setAttr(f"{motion_path_node}.fractionMode", True)
 
+                cmds.setAttr(f"{motion_path_node}.follow", True)
+
                 cmds.setAttr(f"{motion_path_node}.frontAxis", aim_value)
                 cmds.setAttr(f"{motion_path_node}.upAxis", up_value)
 
-                cmds.setAttr(f"{motion_path_node}.worldUpType", 1)
+                cmds.setAttr(f"{motion_path_node}.worldUpType", 2)
                 cmds.setAttr(f"{motion_path_node}.worldUpVector", up_vector[0], up_vector[1], up_vector[2])
 
                 cmds.connectAttr(f"{non_roll_object}.worldMatrix[0]", f"{motion_path_node}.worldUpMatrix")

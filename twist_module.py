@@ -203,7 +203,7 @@ class TwistModule(object):
                 mdl_node = mdl_path.create()
 
                 twist_source_jnt = self.upper_twist_start if segment_name == "upper" else self.lower_twist_start
-                cmds.connectAttr(f"{twist_source_jnt}.rotateX", f"{mdl_node}.input1")
+                #cmds.connectAttr(f"{twist_source_jnt}.rotateX", f"{mdl_node}.input1")
                 cmds.connectAttr(f"{motion_path_node}.uValue", f"{mdl_node}.input2")
                 cmds.connectAttr(f"{mdl_node}.output", f"{motion_path_node}.frontTwist")
 

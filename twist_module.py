@@ -34,7 +34,7 @@ class TwistModule(object):
 
         self.base_curve = cmds.curve(degree =2, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2, 2])
 
-        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=True)
+        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=[True, True])
 
         self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
         self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")

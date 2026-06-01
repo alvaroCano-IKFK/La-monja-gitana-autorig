@@ -6,7 +6,7 @@ from groups_module import ControlsGroups
 import rigRoot_module
 import nodeCreator_module
 from nodeCreator_module import NodeCreator
-import limbs_module
+import twist_module
 
 
 class LegModule(object):

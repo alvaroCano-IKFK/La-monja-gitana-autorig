@@ -164,6 +164,7 @@ class TwistModule(object):
             if crv == self.upper_curve:
                 segment_name = "upper"
                 target_list = self.upper_motion_paths
+                non_roll_object = self.nonroll_upper_start
             else:
                 segment_name = "lower"
                 target_list = self.lower_motion_paths

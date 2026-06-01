@@ -325,5 +325,16 @@ class LimbModule(object):
         if local_ctl and cmds.objExists(local_ctl):
             if self.side == "L":
                 cmds.parent(self.main_rig_grp, local_ctl)
-                
+
+        # Cambia las últimas líneas de limbs_module.py por esto:
+        chestControl = "Character_chestFix_CTL"
+        
+        if cmds.objExists(chestControl):
+            # Es mejor restringir el grupo de la clavícula manteniendo el offset
+            cmds.parentConstraint(chestControl, clav_gen, mo=True)
+            print(f"Conectada la clavícula {self.prefix} al pecho con éxito.")
+        else:
+            # Si entra aquí, es porque el pecho no se ha creado todavía en la escena
+            print(f"ADVERTENCIA: No se pudo encontrar {chestControl}. Asegúrate de construir el ChestModule ANTES que los Limbs.")
+
         print(f"Build {self.prefix} completo.")

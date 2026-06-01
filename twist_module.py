@@ -219,7 +219,5 @@ class TwistModule(object):
 
 
             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
-        
-        self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
-        self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
+
         return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist

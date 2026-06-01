@@ -29,3 +29,8 @@ class TwistModule(object):
 
         upper_curve = cmds.curve(degree =1, bezier=2, p=[(pos_shoulder, pos_elbow)], knot=[0, 1])
         lower_curve = cmds.curve(degree =1, bezier=2, p=[(pos_elbow, pos_wrist)], knot=[0, 1])
+
+        detatch_result = cmds.detachCurve("{}.u[0.5]".format(base_curve), ch=True, ko=True)
+
+twist=TwistModule("arm", "L")
+twist.create_basic_curve()

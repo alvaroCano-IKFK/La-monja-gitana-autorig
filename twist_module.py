@@ -21,6 +21,10 @@ class TwistModule(object):
         self.lower_non_roll = None
 
     def create_basic_curve(self, start_joint, mid_joint, end_joint):
+        self.start_joint = start_joint
+        self.mid_joint = mid_joint
+        self.end_joint = end_joint
+
         pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
         pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
@@ -37,13 +41,32 @@ class TwistModule(object):
         node_detach = cmds.ls(history, type="detachCurve")[0]
         cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
 
-joint_inicio = "L_shoulder_bind_JNT"
-joint_medio  = "L_elbow_bind_JNT"
-joint_final  = "L_wrist_bind_JNT"
+        cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
-if cmds.objExists(joint_inicio) and cmds.objExists(joint_medio) and cmds.objExists(joint_final):
-    twist = TwistModule("arm", "L")
-    # ¡AQUÍ ESTÁ EL TRUCO! Ahora sí le pasamos los 3 argumentos obligatorios:
-    twist.create_basic_curve(joint_inicio, joint_medio, joint_final)
-else:
-    print("Módulo guardado con éxito. Para probar el test al final del script, crea 3 joints en tu escena.")
+
+        def probar_modulo_en_escena():
+            # 1. Limpieza rápida por si repites la ejecución del script
+            objetos_test = ["test_start_JNT", "test_mid_JNT", "test_end_JNT", 
+                            "L_armUpperSegment_CRV", "L_armLowerSegment_CRV", "L_armBaseDriver_CRV"]
+            for obj in objetos_test:
+                if cmds.objExists(obj): cmds.delete(obj)
+
+            # 2. Creamos 3 joints simulando la posición de tu bind_chain (Bíceps largo, antebrazo corto)
+            cmds.select(clear=True)
+            j1 = cmds.joint(name="test_start_JNT", p=(0, 6, 0))
+            cmds.select(clear=True)
+            j2 = cmds.joint(name="test_mid_JNT", p=(8, 4, 0))
+            cmds.select(clear=True)
+            j3 = cmds.joint(name="test_end_JNT", p=(12, 4, 0))
+            
+            # Los emparentamos para que visualmente parezca un brazo real
+            cmds.parent(j2, j1)
+            cmds.parent(j3, j2)
+
+            # 3. Instanciamos tu TwistModule y lo ejecutamos pasando los joints de test
+            twist = TwistModule(name="arm", side="L")
+            twist.create_basic_curve(start_joint=j1, mid_joint=j2, end_joint=j3)
+
+# Lanzamos la prueba automática
+probar_modulo_en_escena()
+

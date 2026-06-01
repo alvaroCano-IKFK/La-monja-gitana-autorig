@@ -119,7 +119,7 @@ class TwistModule(object):
         cmds.select(cl=True)
 
         return [self.nonroll_upper_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
-
+    
 
     def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y"):
         self.start_joint = start_joint
@@ -131,7 +131,6 @@ class TwistModule(object):
         pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
         pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
-
 
         self.base_curve = cmds.curve(degree =1, p=[pos_start_joint, pos_mid_joint, pos_end_joint])
 
@@ -157,6 +156,11 @@ class TwistModule(object):
         }
         up_vector = vector_map.get(up_axis.lower(), (0.0, 1.0, 0.0))
 
+        self.upper_motion_paths = []
+        self.lower_motion_paths = []
+        self.upper_twist_joints = []
+        self.lower_twist_joints = []
+
         for crv in [self.upper_curve, self.lower_curve]:
             
             crv_shape = cmds.listRelatives(crv, shapes=True)[0]
@@ -164,10 +168,15 @@ class TwistModule(object):
             if crv == self.upper_curve:
                 segment_name = "upper"
                 target_list = self.upper_motion_paths
+                target_jnt_list = self.upper_twist_joints
                 non_roll_object = self.nonroll_upper_start
+                twist_source_jnt = self.upper_twist_start
             else:
                 segment_name = "lower"
                 target_list = self.lower_motion_paths
+                target_jnt_list = self.lower_twist_joints
+                non_roll_object = self.nonroll_lower_start
+                twist_source_jnt = self.lower_twist_start
 
             for i in range(5):
                 motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MPA")
@@ -190,5 +199,27 @@ class TwistModule(object):
 
                 target_list.append(motion_path_node)
 
+                mdl_path = NodeCreator(side=self.side, node_type="multDoubleLinear", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix=f"MDL")
+                mdl_node = mdl_path.create()
+
+                twist_source_jnt = self.upper_twist_start if segment_name == "upper" else self.lower_twist_start
+                cmds.connectAttr(f"{twist_source_jnt}.rotateX", f"{mdl_node}.input1")
+                cmds.connectAttr(f"{motion_path_node}.uValue", f"{mdl_node}.input2")
+                cmds.connectAttr(f"{mdl_node}.output", f"{motion_path_node}.frontTwist")
+
+                cmds.select(cl=True)
+                joint_name = f"{self.side}_{self.name}_{segment_name}Twist_{i+1}_JNT"
+                twist_joint = cmds.joint(name=joint_name)
+
+                cmds.connectAttr(f"{motion_path_node}.allCoordinates", f"{twist_joint}.translate")
+                cmds.connectAttr(f"{motion_path_node}.rotate", f"{twist_joint}.rotate")
+
+                target_jnt_list.append(twist_joint)
+
+
+
             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
+        
+        self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
+        self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
         return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist

@@ -59,9 +59,11 @@ class TwistModule(object):
                 segment_name = "Lower"
                 target_list = self.lower_motion_paths
 
-            for i in range(5):
-                motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag=str(i+1), parent=None, custom_suffix="MPA")
-                motion_path_node = motion_path.create()
-                cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
-                cmds.setAttr(f"{motion_path_node}.fractionMode", True)
-                target_list.append(motion_path_node)
+            #for i in range(5):
+             #   motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag=str(i+1), parent=None, custom_suffix="MPA")
+              #  motion_path_node = motion_path.create()
+              #  cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
+             #   cmds.setAttr(f"{motion_path_node}.fractionMode", True)
+             #   target_list.append(motion_path_node)
+
+             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")

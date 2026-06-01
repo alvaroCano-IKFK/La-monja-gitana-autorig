@@ -37,7 +37,10 @@ class TwistModule(object):
 
     def basic_twist_setup(self, start_joint, mid_joint, end_joint):
         #NON ROLL
+        cmds.select(cl=True)
         self.nonroll_upper_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperNonRollStart_JNT")[0]
+        cmds.parent(self.upper_twist_start, w=True)
+        cmds.parent(self.nonroll_upper_start, w=True)
         self.nonroll_upper_end = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_upperNonRollEnd_JNT")[0]
         cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
 
@@ -56,6 +59,7 @@ class TwistModule(object):
         cmds.pointConstraint(end_joint, ik_hdl_lower, mo=False)
         
         #TWIST
+        cmds.select(cl=True)
         self.upper_twist_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperTwistStart_JNT")[0]
         self.upper_twist_end = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_upperTwistEnd_JNT")[0]
         cmds.parent(self.upper_twist_end, self.upper_twist_start)
@@ -75,7 +79,7 @@ class TwistModule(object):
         cmds.parentConstraint(ik_hdl_lower_twist, end_joint)
         cmds.parent(self.lower_twist_start, self.nonroll_lower_start)
 
-        return [self.nonroll_upper_start, self.nonroll_lower_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
+        return [self.nonroll_upper_start, ik_hdl_upper, ik_hdl_lower]
 
 
     def create_basic_curve(self, start_joint, mid_joint, end_joint):

@@ -31,9 +31,9 @@ class TwistModule(object):
         pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
 
-        self.base_curve = cmds.curve(degree =1, bezier=2, p=[(pos_start_joint, pos_mid_joint, pos_end_joint)], knot=[0, 1])
+        self.base_curve = cmds.curve(degree =1, p=[pos_start_joint, pos_mid_joint, pos_end_joint], knot=[0, 1, 2])
 
-        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, ko=True)
+        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=True)
 
         self.upper_curve = cmds.rename(detatch_result[0], f"{self.name}UpperSegment_CRV")
         self.lower_curve = cmds.rename(detatch_result[1], f"{self.name}LowerSegment_CRV")
@@ -46,6 +46,6 @@ class TwistModule(object):
 
         print(f"[Twist {self.name.upper()}] Sistema de curvas creado con éxito para {start_joint}.")
 
-create_twist_module = partial(TwistModule, name="ArmTwist", side="L")
+
 
 

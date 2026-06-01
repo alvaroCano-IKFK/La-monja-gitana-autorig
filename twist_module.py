@@ -37,5 +37,13 @@ class TwistModule(object):
         node_detach = cmds.ls(history, type="detachCurve")[0]
         cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
 
-twist=TwistModule("arm", "L")
-twist.create_basic_curve()
+joint_inicio = "L_shoulder_bind_JNT"
+joint_medio  = "L_elbow_bind_JNT"
+joint_final  = "L_wrist_bind_JNT"
+
+if cmds.objExists(joint_inicio) and cmds.objExists(joint_medio) and cmds.objExists(joint_final):
+    twist = TwistModule("arm", "L")
+    # ¡AQUÍ ESTÁ EL TRUCO! Ahora sí le pasamos los 3 argumentos obligatorios:
+    twist.create_basic_curve(joint_inicio, joint_medio, joint_final)
+else:
+    print("Módulo guardado con éxito. Para probar el test al final del script, crea 3 joints en tu escena.")

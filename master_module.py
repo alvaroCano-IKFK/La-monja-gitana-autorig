@@ -14,14 +14,13 @@ import groups_module
 import reorient_module
 import controlsLibrary
 import rigRoot_module
-#import arm_right_module
 import right_leg_module
 import skinning_module
 import build_module
 import body_module
 import limbModule
+import spaceSwitching_module
 
-#import clavicule_module
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez
@@ -40,7 +39,7 @@ def run():
     importlib.reload(reorient_module)
     importlib.reload(controlsLibrary)
     importlib.reload(rigRoot_module)
-    #importlib.reload(arm_right_module)
+    importlib.reload(spaceSwitching_module)
     importlib.reload(right_leg_module)
     importlib.reload(skinning_module)
     importlib.reload(build_module)

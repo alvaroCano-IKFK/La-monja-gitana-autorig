@@ -14,12 +14,11 @@ import foot_module
 import groups_module
 import rigRoot_module
 import mirror_module
-#import arm_right_module
-#import right_leg_module
 import skinning_module
 import guides_module
 import build_module
 import body_module
+import spaceSwitching_module
 
 
 class BuildRig(object):
@@ -152,4 +151,107 @@ class BuildRig(object):
             )
         skn.build()
                         
-        print("Build completo: Spine, Arm y Leg construidos desde build_module.")
+        print("Build completo desde build_module.")
+        
+        # =========================================================================
+        # CONFIGURACIÓN DE SPACES (DYNAMIC PARENTS) - ANTES DEL SKINNING
+        # =========================================================================
+        print("[Spaces] Iniciando la creación de sistemas Dynamic Parent (_SPC)...")
+
+        # 2. Espacios para las Manos IK (Brazos)
+        # Recorremos ambos lados para aplicar los espacios a los controles IK de las manos
+        for side in ["L", "R"]:
+            # Cambia 'armIk_CTRL' por el sufijo exacto que use tu limbs_module.py para el control IK de la mano
+            arm_ik_ctrl = f"{side}_Arm_armIk_CTRL"
+            leg_ik_ctrl = f"{side}_Leg_legIk_CTRL"
+            arm_pv_ctrl = f"{side}_Arm_poleVector_CTRL"
+            leg_pv_ctrl = f"{side}_Leg_poleVector_CTRL"
+            arm_fk_ctrl = f"{side}_Arm_shoulder_fk_CTRL"
+            leg_fk_ctrl = f"{side}_Leg_thigh_fk_CTRL"
+            
+            
+            
+            if cmds.objExists(arm_ik_ctrl):
+                hand_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=arm_ik_ctrl,
+                    space_dict={
+                        "MasterWalk":  "Character_global_CTL",
+                        "Chest":  "Character_chestFix_CTL",
+                        "Body": "Character_body_CTL",
+                        "Hip": "Character_localHip_CTL",
+                        "Head": "Character_head_CTRL"
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                hand_space_setup.build()
+                
+            else:
+                print(f"[Spaces] ADVERTENCIA: No se encontró el control {arm_ik_ctrl} en la escena.")
+                
+            if cmds.objExists(leg_ik_ctrl):
+                leg_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=leg_ik_ctrl,
+                    space_dict={
+                        "MasterWalk":  "Character_global_CTL",
+                        "Body": "Character_body_CTL",
+                        "Hip": "Character_localHip_CTL",
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                leg_space_setup.build()
+                
+            if cmds.objExists(arm_pv_ctrl):
+                arm_pv_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=arm_pv_ctrl,
+                    space_dict={
+                        "MasterWalk":  "Character_global_CTL",
+                        "Body": "Character_body_CTL",
+                        "Chest": "Character_chestFix_CTL",
+                        "ArmIk": f"{side}_Arm_armIk_CTRL",
+                        "Clavicule": f"{side}_Arm_clavicule_CTRL"
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                arm_pv_space_setup.build()
+                
+            if cmds.objExists(leg_pv_ctrl):
+                leg_pv_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=leg_pv_ctrl,
+                    space_dict={
+                        "MasterWalk":  "Character_global_CTL",
+                        "Body": "Character_body_CTL",
+                        "LegIk": f"{side}_Leg_legIk_CTRL"
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                leg_pv_space_setup.build()
+                
+            if cmds.objExists(arm_fk_ctrl):
+                shoulder_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=arm_fk_ctrl,
+                    space_dict={
+                        "Clavicule": f"{side}_Arm_clavicule_CTRL",
+                        "Chest":  "Character_chestFix_CTL",
+                        "Body": "Character_body_CTL"
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                shoulder_space_setup.build()
+                
+            if cmds.objExists(leg_fk_ctrl):
+                thigh_space_setup = spaceSwitching_module.SpaceModule(
+                    target_control=leg_fk_ctrl,
+                    space_dict={
+                        "MasterWalk":  "Character_global_CTL",
+                        "Hip": "Character_localHip_CTL",
+                        "Body": "Character_body_CTL"
+                    },
+                    attr_name="Space_Switch",
+                    rig_name="Character"
+                )
+                thigh_space_setup.build()

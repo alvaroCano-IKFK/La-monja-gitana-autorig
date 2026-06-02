@@ -120,7 +120,27 @@ class TwistModule(object):
 
         return [self.nonroll_upper_start, ik_hdl_upper, ik_hdl_lower, ik_hdl_upper_twist, ik_hdl_lower_twist]
     
+    def create_twist_joints(self, motion_paths_list, segment_name):
 
+        twist_joints = []
+        
+        for i, mpa_node in enumerate(motion_paths_list):
+            # Netegem selecció per evitar que un joint neixi com a fill de l'anterior
+            cmds.select(cl=True)
+
+            joint_name = f"{self.side}_{self.name}_{segment_name}TwistSub_{i}_JNT"
+            sub_jnt = cmds.joint(n=joint_name)
+            
+
+            cmds.setAttr(f"{sub_jnt}.radius", 0.5)
+
+            cmds.connectAttr(f"{mpa_node}.allCoordinates", f"{sub_jnt}.translate")
+            
+            cmds.connectAttr(f"{mpa_node}.rotate", f"{sub_jnt}.rotate")
+            
+            twist_joints.append(sub_jnt)
+            
+        return twist_joints
     def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y"):
         self.start_joint = start_joint
         self.mid_joint = mid_joint

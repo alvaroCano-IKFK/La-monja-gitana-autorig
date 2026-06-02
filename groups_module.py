@@ -32,3 +32,46 @@ class ControlsGroups(object):
             cmds.matchTransform(grp, target, pos=True, rot=match_rotation)
             
         return grp
+    
+    def create_space_tracking_hierarchy(self, space_base_name, target_joint, parent_group=None):
+        """
+        Crea una estructura de espacio duplicada (_OFF y _TRN) alineada a un joint objetivo.
+        
+        :param space_base_name: Nombre personalizado base (ej: 'C_headMasterWalkFollowSpace')
+        :param target_joint: El joint al que se alinearán los transformadores (ej: el joint de la cabeza)
+        :param parent_group: Un grupo opcional donde emparentar el _OFF resultante (ej: 'spaces_GRP')
+        :return: Una tupla con los nombres creados (off_group, trn_group)
+        """
+        # 1. Definir nombres definitivos
+        off_name = f"{space_base_name}_OFF"
+        trn_name = f"{space_base_name}_TRN"
+        
+        # Limpieza previa por seguridad
+        for node in [trn_name, off_name]:
+            if cmds.objExists(node):
+                cmds.delete(node)
+                
+        # 2. Validar que el joint objetivo exista para poder obtener su posición
+        if not cmds.objExists(target_joint):
+            cmds.error(f"[Groups] El joint objetivo '{target_joint}' no existe en la escena. No se puede alinear.")
+            return None
+            
+        # 3. Crear los grupos vacíos (Transforms nativos)
+        off_group = cmds.group(em=True, n=off_name)
+        trn_group = cmds.group(em=True, n=trn_name, p=off_group) # Emparentar TRN a OFF automáticamente
+        
+        # 4. Alinear AMBOS grupos a la posición y orientación exacta del Joint de destino
+        # Al alinear el OFF, el TRN se mueve con él, pero aplicamos match al TRN también para asegurar ceros limpios
+        cmds.matchTransform(off_group, target_joint, pos=True, rot=True)
+        cmds.matchTransform(trn_group, target_joint, pos=True, rot=True)
+        
+        # 5. Organizar bajo un grupo padre si se especifica (como 'spaces_GRP')
+        if parent_group:
+            # Si el grupo padre no existe en la escena, lo creamos automáticamente
+            if not cmds.objExists(parent_group):
+                parent_group = cmds.group(em=True, n=parent_group)
+            cmds.parent(off_group, parent_group)
+            
+        print(f"[Groups] Creada estructura de espacio: {off_group} -> {trn_group} alineada a {target_joint}")
+        return off_group, trn_group
+        

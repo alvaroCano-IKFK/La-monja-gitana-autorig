@@ -255,3 +255,5 @@ class BuildRig(object):
                     rig_name="Character"
                 )
                 thigh_space_setup.build()
+                
+

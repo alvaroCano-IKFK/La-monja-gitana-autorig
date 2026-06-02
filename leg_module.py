@@ -7,6 +7,7 @@ import rigRoot_module
 import nodeCreator_module
 import hip_module
 from nodeCreator_module import NodeCreator
+import twist_module
 
 
 class LegModule(object):
@@ -344,6 +345,7 @@ class LegModule(object):
             cmds.connectAttr(f"{pbl}.outTranslate",           f"{self.bind_chain[i]}.translate")
             cmds.connectAttr(f"{pbl}.outRotate",              f"{self.bind_chain[i]}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK",          f"{pbl}.weight")
+            
 
         # ---- FOOT REVERSE ----
         #Separator
@@ -441,5 +443,17 @@ class LegModule(object):
             print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {hipControl}")
         else:
             cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
+            
+        # Instanciem el mòdul de Twist apuntant a la cama ("leg")
+        leg_twist_inst = twist_module.TwistModule(name="leg", side=self.side, parent=self)
 
+        # Cridem la funció passant els teus joints de la cuixa, genoll i ancle de bind
+        leg_twist_elements = leg_twist_inst.create_basic_curve(self.bind_chain[0], self.bind_chain[1], self.bind_chain[2])
+
+        # Fiquem la corba i l'arrel dels joints de twist a dins del teu grup "_leg_GRP"
+        if self.leg_grp and cmds.objExists(self.leg_grp):
+            cmds.parent(leg_twist_elements[0], self.leg_grp)  # La corba BaseDriver
+            cmds.parent(leg_twist_elements[3], self.leg_grp)  # L'os upperNonRollStart
+
+        print(f"Build {self.prefix} leg completo.")
         print(f"Leg Module {self.side} construido con éxito.")

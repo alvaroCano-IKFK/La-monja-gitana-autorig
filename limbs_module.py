@@ -8,6 +8,7 @@ import build_module
 import rigRoot_module
 import chest_module
 from nodeCreator_module import NodeCreator
+import twist_module
 
 class LimbModule(object):
     """Módulo para construir los brazos, con setup IK/FK y switch."""
@@ -319,6 +320,29 @@ class LimbModule(object):
             cmds.connectAttr(f"{pbl}.outRotate",     f"{bnd_jnt}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
             
+        # =====================================================================
+        # 7.5 SISTEMA DE TWIST
+        # =====================================================================
+
+        shoulder_jnt = self.bind_chain[0]  
+        elbow_jnt    = self.bind_chain[1]  
+        wrist_jnt    = self.bind_chain[2]  
+
+        arm_twist = twist_module.TwistModule(name="arm", side=self.side)
+
+        creaciones_twist = arm_twist.create_basic_curve(shoulder_jnt, elbow_jnt, wrist_jnt)
+        
+        if cmds.objExists(self.arm_grp) and creaciones_twist:
+            for objecte in creaciones_twist:
+                if cmds.objExists(objecte):
+                    pare_actual = cmds.listRelatives(objecte, parent=True)
+                    if not pare_actual or pare_actual[0] != self.arm_grp:
+                        try:
+                            cmds.parent(objecte, self.arm_grp)
+                        except RuntimeError:
+                            pass
+                        
+                            
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):

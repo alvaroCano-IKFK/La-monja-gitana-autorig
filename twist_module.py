@@ -196,6 +196,14 @@ class TwistModule(object):
                 non_roll_object = self.nonroll_lower_start
                 twist_start_joint = self.lower_twist_start
 
+            md_path = NodeCreator(side=self.side, node_type="multiplyDivide", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MDN")
+            md_node = md_path.create()
+
+            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1X")
+            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Y")
+            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Z")
+
+
             for i in range(5):
                 motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MPA")
                 motion_path_node = motion_path.create()
@@ -216,18 +224,18 @@ class TwistModule(object):
 
                 target_list.append(motion_path_node)
 
-                md_path = NodeCreator(side=self.side, node_type="multiplyDivide", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MDN")
-                md_node = md_path.create()
-
-                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1X")
-                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Y")
-                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Z")
-                cmds.setAttr(f"{md_node}.input2X", 0.25)
-                cmds.setAttr(f"{md_node}.input2Y", 0.5)
-                cmds.setAttr(f"{md_node}.input2Z", 0.75)
-
-
-            
+                if i == 1:    
+                    cmds.setAttr(f"{md_node}.input2X", u_value)
+                    cmds.connectAttr(f"{md_node}.outputX", f"{motion_path_node}.frontTwist")
+                    
+                elif i == 2:  
+                    cmds.setAttr(f"{md_node}.input2Y", u_value)
+                    cmds.connectAttr(f"{md_node}.outputY", f"{motion_path_node}.frontTwist")
+                    
+                elif i == 3:  
+                    cmds.setAttr(f"{md_node}.input2Z", u_value)
+                    cmds.connectAttr(f"{md_node}.outputZ", f"{motion_path_node}.frontTwist")
+      
             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
         self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
         self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")

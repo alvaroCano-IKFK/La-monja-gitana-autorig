@@ -128,7 +128,7 @@ class TwistModule(object):
             # Netegem selecció per evitar que un joint neixi com a fill de l'anterior
             cmds.select(cl=True)
 
-            joint_name = f"{self.side}_{self.name}_{segment_name}Twist_{i}_JNT"
+            joint_name = f"{self.side}_{self.name}_{segment_name}Twist_0{i+1}_JNT"
             sub_jnt = cmds.joint(n=joint_name)
 
             cmds.connectAttr(f"{mpa_node}.allCoordinates", f"{sub_jnt}.translate")

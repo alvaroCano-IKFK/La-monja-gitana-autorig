@@ -46,7 +46,10 @@ class NeckModule(object):
             self.joints.append(jnt)
 
         cmds.joint(self.joints[0], e=True, oj="yzx", sao="zup", ch=True, zso=True)
-
+        last = self.joints[-1]
+        for attr in ["jointOrientX","jointOrientY","jointOrientZ","rotateX","rotateY","rotateZ"]:
+            cmds.setAttr(f"{last}.{attr}", 0)
+            
         # 2. CURVA Y CLUSTERS
         # IMPORTANTE: la curva se queda en world space hasta el final.
         # Emparentarla antes de terminar con los clusters rompe los handles.
@@ -101,7 +104,7 @@ class NeckModule(object):
             lib_name=self.styles["mainIk"],
             final_name=name02
         )
-        head_gen = self.group_maker.create_rig_hierarchy(head_ctl, self.joints[-1])
+        head_gen = self.group_maker.create_rig_hierarchy(head_ctl, self.joints[-1],match_rotation=False)
 
         # =================================================================
         # 6. ORGANIZACIÓN EN EL OUTLINER (¡VA PRIMERO!)
@@ -123,10 +126,10 @@ class NeckModule(object):
         cmds.parentConstraint(head_ctl, cls_head, mo=True)
         
         # El control del cuello maneja al joint raíz del cuello
-        cmds.parentConstraint(neck_ctl, self.joints[0], mo=True)
+        cmds.parentConstraint(neck_ctl, self.joints[0],  mo=True)
         
         # El cuello lidera jerárquicamente al grupo de la cabeza
-        cmds.parentConstraint(neck_ctl, head_gen, mo=True)
+        cmds.parentConstraint(neck_ctl, head_gen, mo=True,sr = ["x","y","z"])
 
 
         # =================================================================

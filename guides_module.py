@@ -83,7 +83,10 @@ class NeckGuides(object):
             return
         
         cmds.joint(neck_root, e=True, oj="yzx", sao="zup", ch=True, zso=True)
-
+        cmds.setAttr(f"{neck_end}.jointOrientX", 0)
+        cmds.setAttr(f"{neck_end}.jointOrientY", 0)
+        cmds.setAttr(f"{neck_end}.jointOrientZ", 0)
+        
         #Crea el grup de les guies del coll
         self.guides_group = cmds.group(neck_root, n="neck_guides_GRP")
         if self.guides_group is None:
@@ -186,7 +189,7 @@ class ArmGuides(LimbGuides):
             cmds.parent(root, hierarchy_root)
 
             cmds.joint(hierarchy_root, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
-            cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)  
+            #cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)  
 
             cmds.parent(root, world=True)
             cmds.delete(self.guides_group)

@@ -110,6 +110,7 @@ class LegModule(object):
             ball_ctrl_target = self.ball_guide.replace("R_", "L_")
             tip_ctrl_target = self.tip_guide.replace("R_", "L_")
             heel_ctrl_target = self.heel_guide.replace("R_", "L_")
+            switch_ctrl_target = self.thigh_guide.replace("R_", "L_")
             
         else:
             th_ctrl_target = self.thigh_guide
@@ -118,6 +119,7 @@ class LegModule(object):
             ball_ctrl_target = self.ball_guide
             tip_ctrl_target = self.tip_guide
             heel_ctrl_target = self.heel_guide
+            switch_ctrl_target = self.thigh_guide
 
         # 2. BIND CHAIN (Usa posiciones reales)
         cmds.select(clear=True)
@@ -236,9 +238,11 @@ class LegModule(object):
         switch_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["switch"],
             final_name=f"{self.prefix}_switch_CTRL")
-        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, an_ctrl_target)
+        switch_gen = self.group_maker.create_rig_hierarchy(switch_ctrl, switch_ctrl_target)
         switch_offset_x = 14 if self.side == "L" else -14
         cmds.xform(switch_gen, r=True, t=(switch_offset_x, 0, 0))     
+        #cmds.xform(switch_gen, r = True,t=(14,0,0) )
+        
            
         pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
         pv_ctrl = controlsLibrary.create_control_from_lib(
@@ -274,7 +278,14 @@ class LegModule(object):
                 cmds.parent(fk_gens[i], self.fk_grp)
             else:
                 cmds.parent(fk_gens[i], fk_ctrls[i - 1])
-            
+        if fk_ctrls[-1]:
+            pivot = cmds.xform(fk_ctrls[-1], q=True, ws=True, rp = True)
+            shapes = cmds.listRelatives(fk_ctrls[-1], s=True)
+            for shape in shapes:
+                num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+                cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
+                cmds.rotate(0, 90, 0, cvs, r=True, p=pivot, ws=True)    
+                            
         # ---- ESTRUCTURA DEL MIRROR (LADO R) ----
         if self.side == "R":
             mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
@@ -307,6 +318,7 @@ class LegModule(object):
 
         # ---- SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
+        cmds.parentConstraint(ik_root_ctrl,switch_gen, mo = True )
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
@@ -425,7 +437,7 @@ class LegModule(object):
         if hipControl and cmds.objExists(hipControl):
             # Restringimos el grupo principal de controles de la pierna (main_rig_grp) a la cadera
             cmds.parentConstraint(hipControl, ik_root_gen, mo=True)
-            cmds.parentConstraint(hipControl,fk_ctrls[0], mo= True )
+            cmds.parentConstraint(hipControl,fk_gens[0], mo= True )
             print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {hipControl}")
         else:
             cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")

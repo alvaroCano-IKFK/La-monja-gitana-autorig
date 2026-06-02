@@ -98,13 +98,14 @@ class LimbModule(object):
             sh_ctrl_target = self.shoulder_guide.replace("R_", "L_")
             el_ctrl_target = self.elbow_guide.replace("R_", "L_")
             wr_ctrl_target = self.wrist_guide.replace("R_", "L_")
-            sw_ctrl_target = self.wrist_guide.replace("R_", "L_") 
+            sw_ctrl_target = self.shoulder_guide.replace("R_", "L_") 
         else:
             cl_ctrl_target = self.clavicule_guide
             sh_ctrl_target = self.shoulder_guide
             el_ctrl_target = self.elbow_guide
             wr_ctrl_target = self.wrist_guide
-            sw_ctrl_target = self.wrist_guide 
+            sw_ctrl_target = self.shoulder_guide 
+            
 
         # 2. BIND CHAIN (usa posiciones reales del lado correcto)
         cmds.select(clear=True)
@@ -264,6 +265,7 @@ class LimbModule(object):
         # Pole Vector
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
+
         # IK constraints
         cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
         cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)
@@ -281,7 +283,8 @@ class LimbModule(object):
 
         # Switch
         cmds.xform(switch_gen, r=True, os=True, t=(0, 10, 0)) 
-        cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
+        cmds.parentConstraint(clavicule_ctl, switch_gen, mo = True)
+        cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1,dv = 1, k=True)
 
         # 6. SWITCH & VISIBILIDAD
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")

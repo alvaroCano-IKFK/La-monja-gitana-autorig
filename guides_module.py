@@ -282,8 +282,10 @@ class HandGuides(object):
             "L_middle": [(1,0,0),(2,0,0),(3,0,0),(4,0,0),(5,0,0)],
             "L_ring":   [(1,0,-1),(2,0,-1),(3,0,-1),(4,0,-1),(5,0,-1)],
             "L_pinky":  [(1,0,-2),(2,0,-2),(3,0,-2),(4,0,-2),(5,0,-2)],
-            "L_thumb":  [(1,-1,2),(2,-1,2),(3,-1,2)]
+            "L_thumb":  [(1,0,1),(1,-1,2),(2,-1,2),(3,-1,2)]
         }
+        
+
 
         #Crea les guies dels dits a partir de les dades definides
         for name, offsets in finger_data.items():
@@ -291,7 +293,35 @@ class HandGuides(object):
             finger = FingerGuides(wrist, name, offsets)
             finger.finger_guides()
             self.fingers.append(finger)
-
+            
+        # =========================================================================
+        # RE-ORIENTACIÓN ANATÓMICA DEL PULGAR (Para comodidad del animador)
+        # =========================================================================
+        
+        # --- LADO IZQUIERDO (L) ---
+        # Asegúrate de que estos nombres coinciden con los que genera tu rig de guías
+        thumb_l_root = "L_thumb_01"   # O "L_thumb_1", revisa tu Outliner
+        thumb_l_med  = "L_thumb_02"   # O "L_thumb_2"
+        
+        if cmds.objExists(thumb_l_root) and cmds.objExists(thumb_l_med):
+            # 1. Almacenamos el abuelo (wrist) para no perder la jerarquía superior
+            parent_wrist = cmds.listRelatives(thumb_l_root, parent=True)[0]
+            
+            # 2. Desemparentamos el hijo temporalmente para que no se mueva de su posición en el espacio
+            cmds.parent(thumb_l_med, world=True)
+            
+            # 3. Forzamos la orientación base del eje X hacia donde estaba el hijo
+            cmds.joint(thumb_l_root, edit=True, oj="xyz", sao="yup", zso=True)
+            
+            # 4. Metemos el TWIST en el Joint Orient X para encarar el eje de flexión hacia la palma
+            # Ajusta este valor (ej. 30, 45, 60) hasta que veas que el eje Z o Y apunta hacia donde se cierra el puño
+            cmds.setAttr(f"{thumb_l_root}.jointOrientY", -90)
+            
+            # 5. Volvemos a emparentar la cadena del pulgar
+            cmds.parent(thumb_l_med, thumb_l_root)
+            
+            # 6. Limpiamos al hijo para que su orientación mire recta hacia la punta del pulgar
+            cmds.joint(thumb_l_med, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
         #Agrupa les guies de la ma
         #self.group = cmds.group(wrist, n="hand_guides_GRP")
         

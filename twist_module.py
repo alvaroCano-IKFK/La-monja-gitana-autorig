@@ -217,7 +217,12 @@ class TwistModule(object):
 
                 target_list.append(motion_path_node)
 
-                if i == 1:    
+                if i == 0:
+                    pass
+                elif i == 4:
+                    cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{motion_path_node}.frontTwist")
+
+                elif i == 1:    
                     cmds.setAttr(f"{md_node}.input2X", u_value)
                     cmds.connectAttr(f"{md_node}.outputX", f"{motion_path_node}.frontTwist")
                     

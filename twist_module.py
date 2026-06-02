@@ -128,11 +128,8 @@ class TwistModule(object):
             # Netegem selecció per evitar que un joint neixi com a fill de l'anterior
             cmds.select(cl=True)
 
-            joint_name = f"{self.side}_{self.name}_{segment_name}TwistSub_{i}_JNT"
+            joint_name = f"{self.side}_{self.name}_{segment_name}Twist_{i}_JNT"
             sub_jnt = cmds.joint(n=joint_name)
-            
-
-            cmds.setAttr(f"{sub_jnt}.radius", 0.5)
 
             cmds.connectAttr(f"{mpa_node}.allCoordinates", f"{sub_jnt}.translate")
             
@@ -141,6 +138,7 @@ class TwistModule(object):
             twist_joints.append(sub_jnt)
             
         return twist_joints
+    
     def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y"):
         self.start_joint = start_joint
         self.mid_joint = mid_joint
@@ -224,10 +222,12 @@ class TwistModule(object):
 
                 cmds.setAttr(f"{mdl_node}.input1", 30.0)
                 
-                cmds.connectAttr(f"{motion_path_node}.uValue", f"{mdl_node}.input2")
+                cmds.setAttr(f"{mdl_node}.input2", u_value)
                 cmds.connectAttr(f"{mdl_node}.output", f"{motion_path_node}.frontTwist")
 
-
+            
             print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
+        self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
+        self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
 
         return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist

@@ -19,6 +19,8 @@ import guides_module
 import build_module
 import body_module
 import spaceSwitching_module
+import headSpaces_module
+
 
 
 class BuildRig(object):
@@ -257,3 +259,18 @@ class BuildRig(object):
                 thigh_space_setup.build()
                 
 
+        # =============================================================================
+        # EJEMPLO DE USO — añadir en build_module.py justo después de self.neck_rig.build()
+        # =============================================================================
+        #
+        #
+        self.head_spaces = headSpaces_module.HeadSpacesModule(
+             rig_name         = "Character",
+             head_ctrl        = "Character_head_CTRL",
+             neck_ctrl        = "Character_neck_CTRL",
+             chest_ctrl       = "Character_chestFix_CTL",
+             body_ctrl        = "Character_body_CTL",
+             master_walk_ctrl = "Character_global_CTL",
+             root_instance    = self.root_rig,
+         )
+        self.head_spaces.build()

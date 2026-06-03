@@ -48,6 +48,8 @@ class TwistModule(object):
         
         cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
         cmds.select(cl=True)
+        cmds.parentConstraint(start_joint, self.nonroll_upper_start)
+
         ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikSCsolver", name=f"{self.side}_{self.name}UpperNonRollIk_HDL")[0]
         cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
 
@@ -102,146 +104,145 @@ class TwistModule(object):
         return twist_joints
     
     def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y", front_axis_idx=None, up_axis_idx=None):
-        self.start_joint = start_joint
-        self.mid_joint = mid_joint
-        self.end_joint = end_joint
+            self.start_joint = start_joint
+            self.mid_joint = mid_joint
+            self.end_joint = end_joint
 
-        base_twist = self.basic_twist_setup(start_joint, mid_joint, end_joint)
+            base_twist = self.basic_twist_setup(start_joint, mid_joint, end_joint)
 
-        pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
-        pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
-        pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
+            pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
+            pos_mid_joint = cmds.xform(mid_joint, q=True, ws=True, t=True)
+            pos_end_joint = cmds.xform(end_joint, q=True, ws=True, t=True)
 
-        self.base_curve = cmds.curve(degree=2, p=[pos_start_joint, pos_mid_joint, pos_end_joint])
-        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=[True, True])
+            self.base_curve = cmds.curve(degree=2, p=[pos_start_joint, pos_mid_joint, pos_end_joint])
+            detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=[True, True])
 
-        self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
-        self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")
+            self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
+            self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")
 
-        history = cmds.listHistory(self.upper_curve)
-        node_detach = cmds.ls(history, type="detachCurve")[0]
-        cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
-
-        cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
-
-        axis_map = {"x": 0, "y": 1, "z": 2, "xneg": 0, "yneg": 1, "zneg": 2}
-        
-        if front_axis_idx is None:
-            front_axis_idx = axis_map.get(aim_axis.lower(), 0)
-        if up_axis_idx is None:
-            up_axis_idx = axis_map.get(up_axis.replace("neg","").lower(), 1)
-
-        vector_map = {
-            "x": (1.0, 0.0, 0.0),
-            "y": (0.0, 1.0, 0.0),
-            "z": (0.0, 0.0, 1.0),
-            "xneg": (-1.0,  0.0,  0.0),
-            "yneg": ( 0.0, -1.0,  0.0),
-            "zneg": ( 0.0,  0.0, -1.0),
-        }
-        
-        raw_up = vector_map.get(up_axis.lower(), (0.0, 1.0, 0.0))
-        
-        # --- CORRECCIÓN ESPEJO: Invertir el World Up Vector si es el lado R ---
-        if self.side == "R":
-            up_vector = (-raw_up[0], -raw_up[1], -raw_up[2])
-        else:
-            up_vector = raw_up
-
-        self.upper_motion_paths = []
-        self.lower_motion_paths = []
-        self.upper_twist_joints = []
-        self.lower_twist_joints = []
-
-        for crv in [self.upper_curve, self.lower_curve]:
-            crv_shape = cmds.listRelatives(crv, shapes=True)[0]
+            history = cmds.listHistory(self.upper_curve)
+            node_detach = cmds.ls(history, type="detachCurve")[0]
+            cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
             
-            if crv == self.upper_curve:
-                segment_name = "upper"
-                target_list = self.upper_motion_paths
-                twist_start_joint = self.upper_twist_start
-            else:
-                segment_name = "lower"
-                target_list = self.lower_motion_paths
-                twist_start_joint = self.lower_twist_start
 
-            if segment_name == "upper":
-                pma_twist = NodeCreator(
-                    side=self.side, node_type="plusMinusAverage",
-                    base_name=self.name, name=segment_name,
-                    tag="twistExtract", parent=None, custom_suffix=None
-                )
-                pma_node = pma_twist.create()
-                cmds.setAttr(f"{pma_node}.operation", 2)  # Subtract
+            cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
 
-                # En el lado R, las rotaciones pueden venir invertidas dependiendo de tus joints base.
-                # Conectamos de forma estándar:
-                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{pma_node}.input1D[0]")
-                cmds.connectAttr(f"{self.nonroll_upper_start}.rotateX", f"{pma_node}.input1D[1]")
+            axis_map = {"x": 0, "y": 1, "z": 2, "xneg": 0, "yneg": 1, "zneg": 2}
+            
+            if front_axis_idx is None:
+                front_axis_idx = axis_map.get(aim_axis.lower(), 0)
+            if up_axis_idx is None:
+                up_axis_idx = axis_map.get(up_axis.replace("neg","").lower(), 1)
 
-                twist_source = f"{pma_node}.output1D"
-            else:
-                twist_source = f"{twist_start_joint}.rotateX"
+            vector_map = {
+                "x": (1.0, 0.0, 0.0),
+                "y": (0.0, 1.0, 0.0),
+                "z": (0.0, 0.0, 1.0),
+                "xneg": (-1.0,  0.0,  0.0),
+                "yneg": ( 0.0, -1.0,  0.0),
+                "zneg": ( 0.0,  0.0, -1.0),
+            }
+            
+            # El vector se obtiene de forma pura según lo que dictaminó el módulo padre
+            up_vector = vector_map.get(up_axis.lower(), (0.0, 1.0, 0.0))
 
-            # --- CORRECCIÓN ESPEJO: Inversión del valor de frontTwist para el lado R ---
-            if self.side == "R":
-                md_mirror = NodeCreator(
-                    side=self.side, node_type="multiplyDivide", 
-                    base_name=self.name, name=f"{segment_name}Mirror", 
-                    tag="invert", parent=None, custom_suffix="MDN"
-                )
-                md_mirror_node = md_mirror.create()
-                cmds.connectAttr(twist_source, f"{md_mirror_node}.input1X")
-                cmds.setAttr(f"{md_mirror_node}.input2X", -1.0)
-                final_twist_source = f"{md_mirror_node}.outputX"
-            else:
-                final_twist_source = twist_source
+            self.upper_motion_paths = []
+            self.lower_motion_paths = []
+            self.upper_twist_joints = []
+            self.lower_twist_joints = []
 
-            md_path = NodeCreator(side=self.side, node_type="multiplyDivide", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MDN")
-            md_node = md_path.create()
-
-            cmds.connectAttr(final_twist_source, f"{md_node}.input1X")
-            cmds.connectAttr(final_twist_source, f"{md_node}.input1Y")
-            cmds.connectAttr(final_twist_source, f"{md_node}.input1Z")
-
-            for i in range(5):
-                motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MPA")
-                motion_path_node = motion_path.create()
-                cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
+            for crv in [self.upper_curve, self.lower_curve]:
+                crv_shape = cmds.listRelatives(crv, shapes=True)[0]
                 
-                cmds.setAttr(f"{motion_path_node}.fractionMode", True)
-                cmds.setAttr(f"{motion_path_node}.follow", True)
+                if crv == self.upper_curve:
+                    segment_name = "upper"
+                    target_list = self.upper_motion_paths
+                    twist_start_joint = self.upper_twist_start
+                else:
+                    segment_name = "lower"
+                    target_list = self.lower_motion_paths
+                    twist_start_joint = self.lower_twist_start
 
-                cmds.setAttr(f"{motion_path_node}.frontAxis", front_axis_idx)
-                cmds.setAttr(f"{motion_path_node}.upAxis", up_axis_idx)
+                if segment_name == "upper":
+                    pma_twist = NodeCreator(
+                        side=self.side, node_type="plusMinusAverage",
+                        base_name=self.name, name=segment_name,
+                        tag="twistExtract", parent=None, custom_suffix=None
+                    )
+                    pma_node = pma_twist.create()
+                    cmds.setAttr(f"{pma_node}.operation", 2)  # Subtract
 
-                cmds.setAttr(f"{motion_path_node}.worldUpType", 2) # Vector tipo World Up
-                cmds.setAttr(f"{motion_path_node}.worldUpVector", up_vector[0], up_vector[1], up_vector[2])
+                    cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{pma_node}.input1D[0]")
+                    cmds.connectAttr(f"{self.nonroll_upper_start}.rotateX", f"{pma_node}.input1D[1]")
 
-                u_value = 0.01 + ((i / 4.0) * 0.98)
-                cmds.setAttr(f"{motion_path_node}.uValue", u_value)
+                    twist_source = f"{pma_node}.output1D"
+                else:
+                    twist_source = f"{twist_start_joint}.rotateX"
 
-                target_list.append(motion_path_node)
+                # Inversión matemática del valor de rotación frontTwist para comportamiento de espejo en R
+                if self.side == "R":
+                    md_mirror = NodeCreator(
+                        side=self.side, node_type="multiplyDivide", 
+                        base_name=self.name, name=f"{segment_name}Mirror", 
+                        tag="invert", parent=None, custom_suffix="MDN"
+                    )
+                    md_mirror_node = md_mirror.create()
+                    cmds.connectAttr(twist_source, f"{md_mirror_node}.input1X")
+                    cmds.setAttr(f"{md_mirror_node}.input2X", -1.0)
+                    final_twist_source = f"{md_mirror_node}.outputX"
+                else:
+                    final_twist_source = twist_source
 
-                if i == 0:
-                    pass
-                elif i == 4:
-                    cmds.connectAttr(final_twist_source, f"{motion_path_node}.frontTwist")
-                elif i == 1:    
-                    cmds.setAttr(f"{md_node}.input2X", u_value)
-                    cmds.connectAttr(f"{md_node}.outputX", f"{motion_path_node}.frontTwist")
-                elif i == 2:  
-                    cmds.setAttr(f"{md_node}.input2Y", u_value)
-                    cmds.connectAttr(f"{md_node}.outputY", f"{motion_path_node}.frontTwist")
-                elif i == 3:  
-                    cmds.setAttr(f"{md_node}.input2Z", u_value)
-                    cmds.connectAttr(f"{md_node}.outputZ", f"{motion_path_node}.frontTwist")
-      
-            print(f"La curva de {segment_name} funciona perfectamente hasta aquí.")
+                md_path = NodeCreator(side=self.side, node_type="multiplyDivide", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MDN")
+                md_node = md_path.create()
+
+                cmds.connectAttr(final_twist_source, f"{md_node}.input1X")
+                cmds.connectAttr(final_twist_source, f"{md_node}.input1Y")
+                cmds.connectAttr(final_twist_source, f"{md_node}.input1Z")
+
+                for i in range(5):
+                    motion_path = NodeCreator(side=self.side, node_type="motionPath", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MPA")
+                    motion_path_node = motion_path.create()
+                    cmds.connectAttr(f"{crv_shape}.worldSpace[0]", f"{motion_path_node}.geometryPath")
+                    
+                    cmds.setAttr(f"{motion_path_node}.fractionMode", True)
+                    cmds.setAttr(f"{motion_path_node}.follow", True)
+
+                    cmds.setAttr(f"{motion_path_node}.frontAxis", front_axis_idx)
+                    cmds.setAttr(f"{motion_path_node}.upAxis", up_axis_idx)
+
+                    # Método estable usando el vector calculado
+                    cmds.setAttr(f"{motion_path_node}.worldUpType", 2)
+                    cmds.setAttr(f"{motion_path_node}.worldUpVector", up_vector[0], up_vector[1], up_vector[2])
+                    
+                    if self.side == "R":
+                        cmds.setAttr(f"{motion_path_node}.inverseUp", 1)
+                        cmds.setAttr(f"{motion_path_node}.inverseFront", 1)
+
+                    u_value = 0.01 + ((i / 4.0) * 0.98)
+                    cmds.setAttr(f"{motion_path_node}.uValue", u_value)
+
+                    target_list.append(motion_path_node)
+
+                    if i == 0:
+                        pass
+                    elif i == 4:
+                        cmds.connectAttr(final_twist_source, f"{motion_path_node}.frontTwist")
+                    elif i == 1:    
+                        cmds.setAttr(f"{md_node}.input2X", u_value)
+                        cmds.connectAttr(f"{md_node}.outputX", f"{motion_path_node}.frontTwist")
+                    elif i == 2:  
+                        cmds.setAttr(f"{md_node}.input2Y", u_value)
+                        cmds.connectAttr(f"{md_node}.outputY", f"{motion_path_node}.frontTwist")
+                    elif i == 3:  
+                        cmds.setAttr(f"{md_node}.input2Z", u_value)
+                        cmds.connectAttr(f"{md_node}.outputZ", f"{motion_path_node}.frontTwist")
+
+                
+            self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
+            self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
+
+            cmds.parentConstraint(start_joint, self.upper_curve, mo = True)
+            cmds.parentConstraint(mid_joint, self.lower_curve, mo = True)
             
-        self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
-        self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
-
-        # --- CORRECCIÓN ESPEJO: Si es R y quedan emparentados bajo un grupo espejo negativo, 
-        # opcionalmente se puede corregir la jerarquía final aquí para evitar doble negativo.
-        return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist
+            return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist

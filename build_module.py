@@ -147,11 +147,11 @@ class BuildRig(object):
 
 
         # Importamos el módulo de skinning
-        skn = skinning_module.SkinningModule(
-                rig_name="Character",
-                root_instance=self.root_rig
-            )
-        skn.build()
+        #skn = skinning_module.SkinningModule(
+                #rig_name="Character",
+                #root_instance=self.root_rig
+            #)
+        #skn.build()
                         
         print("Build completo desde build_module.")
         

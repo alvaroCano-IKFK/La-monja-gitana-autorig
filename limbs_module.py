@@ -54,7 +54,7 @@ class LimbModule(object):
         self.fk_chain   = []
 
 
-    def define_poleVector(self, shoulder, elbow, wrist, distance=5):
+    def define_poleVector(self, shoulder, elbow, wrist, distance=15):
         """Calcula la posición del pole vector basándose en la posición de los joints."""
         sh_p = cmds.xform(shoulder, q=True, ws=True, t=True)
         el_p = cmds.xform(elbow,    q=True, ws=True, t=True)
@@ -238,8 +238,8 @@ class LimbModule(object):
         cmds.matchTransform(switch_gen,  sw_ctrl_target)
 
         # Pole Vector
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
-        cmds.xform(pv_gen, ws=True, t=pv_pos)
+        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], distance=15)
+        cmds.xform(pv_gen, ws=True, t=pv_pos )
         if self.side == "R":
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)

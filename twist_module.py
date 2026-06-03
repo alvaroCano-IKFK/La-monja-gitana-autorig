@@ -189,12 +189,40 @@ class TwistModule(object):
                 non_roll_object = self.nonroll_lower_start
                 twist_start_joint = self.lower_twist_start
 
+            # =============================================================
+            # TWIST EXTRACTION
+            # Para el upper: el twist_start_joint hereda la rotación completa
+            # del shoulder (incluido el roll). Restando el rotateX del non_roll
+            # obtenemos solo el twist puro que debe llegar hasta el codo,
+            # sin que se propague al lower segment.
+            # Para el lower no es necesario porque el non_roll_lower ya está
+            # aislado jerárquicamente del shoulder.
+            # =============================================================
+            if segment_name == "upper":
+                pma_twist = NodeCreator(
+                    side=self.side, node_type="plusMinusAverage",
+                    base_name=self.name, name=segment_name,
+                    tag="twistExtract", parent=None, custom_suffix=None
+                )
+                pma_node = pma_twist.create()
+                cmds.setAttr(f"{pma_node}.operation", 2)  # Subtract
+
+                # Rotación total del shoulder (roll incluido)
+                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{pma_node}.input1D[0]")
+                # Rotación del non-roll (la parte que NO queremos distribuir al codo)
+                cmds.connectAttr(f"{non_roll_object}.rotateX",   f"{pma_node}.input1D[1]")
+
+                twist_source = f"{pma_node}.output1D"
+            else:
+                # Lower segment: el lower_twist_start ya está aislado, usamos directo
+                twist_source = f"{twist_start_joint}.rotateX"
+
             md_path = NodeCreator(side=self.side, node_type="multiplyDivide", base_name=self.name, name=segment_name, tag="segment", parent=None, custom_suffix="MDN")
             md_node = md_path.create()
 
-            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1X")
-            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Y")
-            cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{md_node}.input1Z")
+            cmds.connectAttr(twist_source, f"{md_node}.input1X")
+            cmds.connectAttr(twist_source, f"{md_node}.input1Y")
+            cmds.connectAttr(twist_source, f"{md_node}.input1Z")
 
 
             for i in range(5):
@@ -220,7 +248,8 @@ class TwistModule(object):
                 if i == 0:
                     pass
                 elif i == 4:
-                    cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{motion_path_node}.frontTwist")
+                    # Último joint del segmento: recibe el twist completo extraído
+                    cmds.connectAttr(twist_source, f"{motion_path_node}.frontTwist")
 
                 elif i == 1:    
                     cmds.setAttr(f"{md_node}.input2X", u_value)

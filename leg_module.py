@@ -67,7 +67,7 @@ class LegModule(object):
             world_space=world_space
     )
     
-    def define_poleVector(self, start, mid, end, distance=5):
+    def define_poleVector(self, start, mid, end, distance=15):
         """Calcula la posición del pole vector basándose en la posición de los joints."""
         # NO TOCADO: Tu método original exacto
         sh_p = cmds.xform(start, q=True, ws=True, t=True)
@@ -248,7 +248,7 @@ class LegModule(object):
         #cmds.xform(switch_gen, r = True,t=(14,0,0) )
         
            
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2])
+        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], distance=15)
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
             final_name=f"{self.prefix}_poleVector_CTRL")

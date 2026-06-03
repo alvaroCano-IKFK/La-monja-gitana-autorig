@@ -19,7 +19,7 @@ import guides_module
 import build_module
 import body_module
 import spaceSwitching_module
-import headSpaces_module
+import headSpace_module
 
 
 
@@ -264,7 +264,7 @@ class BuildRig(object):
         # =============================================================================
         #
         #
-        self.head_spaces = headSpaces_module.HeadSpacesModule(
+        self.head_spaces = headSpace_module.HeadSpacesModule(
              rig_name         = "Character",
              head_ctrl        = "Character_head_CTRL",
              neck_ctrl        = "Character_neck_CTRL",

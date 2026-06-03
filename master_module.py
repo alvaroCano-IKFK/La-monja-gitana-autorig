@@ -21,6 +21,7 @@ import body_module
 import limbModule
 import twist_module
 import spaceSwitching_module
+import headSpace_module
 
 
 def run():
@@ -47,6 +48,7 @@ def run():
     importlib.reload(body_module)
     importlib.reload(limbs_module)
     importlib.reload(twist_module)
+    importlib.reload(headSpace_module)
     
     ui = ui_module.UI()
     ui.main_UI()

@@ -148,6 +148,10 @@ class LimbModule(object):
             
         self.fk_chain = duplicate_chain("fk")
         self.ik_chain = duplicate_chain("ik")
+        
+        cmds.setAttr(f"{self.ik_chain[0]}.visibility",0)
+        cmds.setAttr(f"{self.fk_chain[0]}.visibility",0)
+
 
         # 3. GRUPOS DE RIG
         self.main_rig_grp = cmds.group(em=True, n=f"{self.prefix}_armControls_GRP")

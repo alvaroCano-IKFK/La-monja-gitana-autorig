@@ -451,7 +451,11 @@ class LegModule(object):
         leg_twist_inst = twist_module.TwistModule(name="leg", side=self.side, parent=self)
 
         # Cridem la funció passant els teus joints de la cuixa, genoll i ancle de bind
-        leg_twist_elements = leg_twist_inst.create_basic_curve(self.bind_chain[0], self.bind_chain[1], self.bind_chain[2])
+        leg_twist_elements = leg_twist_inst.create_basic_curve(self.bind_chain[0], self.bind_chain[1], self.bind_chain[2],
+                                                               aim_axis ="x", 
+                                                               up_axis="zneg",    
+                                                               front_axis_idx=0,   
+                                                               up_axis_idx=2 )
 
         # Fiquem la corba i l'arrel dels joints de twist a dins del teu grup "_leg_GRP"
         if self.leg_grp and cmds.objExists(self.leg_grp):

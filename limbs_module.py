@@ -196,6 +196,8 @@ class LimbModule(object):
             lib_name=self.styles["mainIk"], 
             final_name=f"{self.prefix}_armIk_CTRL"
         )
+        
+        
         ik_ctrl_gen = self.group_maker.create_rig_hierarchy(ik_ctrl, wr_ctrl_target)
 
         # Pole Vector
@@ -285,6 +287,9 @@ class LimbModule(object):
                 cmds.parent(fk_gens[i], fk_ctrls[i-1])
 
         cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)
+        
+        cmds.addAttr(ik_ctrl, ln="ExtraAttr", nn="EXTRA_ATTR", at="enum", en="------", k=True)
+        cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
 
         # Switch
         cmds.xform(switch_gen, r=True, os=True, t=(0, 10, 0)) 

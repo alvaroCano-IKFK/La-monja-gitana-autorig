@@ -20,7 +20,7 @@ import build_module
 import body_module
 import spaceSwitching_module
 import headSpace_module
-import curvature_module
+
 
 
 class BuildRig(object):
@@ -155,36 +155,6 @@ class BuildRig(object):
                         
         print("Build completo desde build_module.")
         
-        # =========================================================================
-        # INTERVENCION: CREACIÓN DE SISTEMAS DE CURVATURA (TEST)
-        # =========================================================================
-        print("[Curvature] Creando curvas de deformación...")
-        
-        # Ojo: He usado las nomenclaturas que aparecen en tu código ("Arm_L_shoulder_bind_JNT", etc.)
-        # Si tus módulos usan otra estructura de nombre para los joints finales, cámbialos aquí abajo.
-        
-        # Curvatura Brazo Izquierdo
-        if cmds.objExists("Arm_L_shoulder_bind_JNT"):
-            self.L_arm_curve = curvature_module.CurvatureModule(name="Arm", side="L", root_instance=self.root_rig)
-            self.L_arm_curve.create_curve("Arm_L_shoulder_bind_JNT", "Arm_L_elbow_bind_JNT", "Arm_L_wrist_bind_JNT")
-            
-        # Curvatura Brazo Derecho
-        if cmds.objExists("Arm_R_shoulder_bind_JNT"):
-            self.R_arm_curve = curvature_module.CurvatureModule(name="Arm", side="R", root_instance=self.root_rig)
-            self.R_arm_curve.create_curve("Arm_R_shoulder_bind_JNT", "Arm_R_elbow_bind_JNT", "Arm_R_wrist_bind_JNT")
-
-        # Curvatura Pierna Izquierda
-        if cmds.objExists("Leg_L_thigh_bind_JNT"): # O "Leg_L_hip_bind_JNT" según tus guías
-            self.L_leg_curve = curvature_module.CurvatureModule(name="Leg", side="L", root_instance=self.root_rig)
-            self.L_leg_curve.create_curve("Leg_L_thigh_bind_JNT", "Leg_L_knee_bind_JNT", "Leg_L_ankle_bind_JNT")
-
-        # Curvatura Pierna Derecha
-        if cmds.objExists("Leg_R_thigh_bind_JNT"):
-            self.R_leg_curve = curvature_module.CurvatureModule(name="Leg", side="R", root_instance=self.root_rig)
-            self.R_leg_curve.create_curve("Leg_R_thigh_bind_JNT", "Leg_R_knee_bind_JNT", "Leg_R_ankle_bind_JNT")
-
-
-        print("Build completo desde build_module.")
         # =========================================================================
         # CONFIGURACIÓN DE SPACES (DYNAMIC PARENTS) - ANTES DEL SKINNING
         # =========================================================================

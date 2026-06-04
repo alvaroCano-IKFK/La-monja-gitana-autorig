@@ -365,6 +365,7 @@ class LegModule(object):
         #Roll Straight Angle
         cmds.addAttr(ik_ctrl, ln ="RollStraightAngle", k=True, at="float", min = 0, dv =90 ) 
 
+        cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
         
         def quick_node(node_type, name, tag, side="L", base_name="leg", parent=None):
             """Simplifica la instanciación de NodeCreator para evitar código repetitivo."""

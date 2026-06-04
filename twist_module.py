@@ -6,7 +6,8 @@ import json
 import guides_module
 import limbs_module
 import leg_module
-import rigRoot_module
+#import rigRoot_module
+import curvature_module
 from nodeCreator_module import NodeCreator
 
 class TwistModule(object):  
@@ -50,7 +51,7 @@ class TwistModule(object):
         
         cmds.parent(self.nonroll_upper_end, self.nonroll_upper_start)
         cmds.select(cl=True)
-        cmds.parentConstraint(start_joint, self.nonroll_upper_start)
+        cmds.pointConstraint(start_joint, self.nonroll_upper_start)
 
         ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikSCsolver", name=f"{self.side}_{self.name}UpperNonRollIk_HDL")[0]
         cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
@@ -244,9 +245,11 @@ class TwistModule(object):
                 
             self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
             self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
+            
+            #cmds.parent(self.upper_twist_joints,start_joint )
 
-            cmds.parentConstraint(start_joint, self.upper_curve, mo=True)
-            cmds.parentConstraint(mid_joint, self.lower_curve, mo=True)
+            #cmds.parentConstraint(start_joint, self.upper_curve, mo=True)
+            #cmds.parentConstraint(mid_joint, self.lower_curve, mo=True)
 
             # ---- ORGANIZACIÓN ----
             # general_twist_GRP: singleton — se crea solo si no existe todavía.

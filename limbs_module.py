@@ -336,15 +336,7 @@ class LimbModule(object):
 
         creaciones_twist = arm_twist.create_basic_curve(shoulder_jnt, elbow_jnt, wrist_jnt)
         
-        if cmds.objExists(self.arm_grp) and creaciones_twist:
-            for objecte in creaciones_twist:
-                if cmds.objExists(objecte):
-                    pare_actual = cmds.listRelatives(objecte, parent=True)
-                    if not pare_actual or pare_actual[0] != self.arm_grp:
-                        try:
-                            cmds.parent(objecte, self.arm_grp)
-                        except RuntimeError:
-                            pass
+
                         
                             
         # 8. ORGANIZACIÓN FINAL

@@ -6,13 +6,15 @@ import json
 import guides_module
 import limbs_module
 import leg_module
+import rigRoot_module
 from nodeCreator_module import NodeCreator
 
 class TwistModule(object):  
-    def __init__(self, name, side, parent=None):
+    def __init__(self, name, side, parent=None, root_instance = None):
         self.name = name
         self.side = side
         self.parent = parent
+        self.root_instance = root_instance
 
         self.start_joint = None
         self.mid_joint = None
@@ -101,6 +103,7 @@ class TwistModule(object):
             cmds.connectAttr(f"{mpa_node}.rotate", f"{twist_jnt}.rotate")
             
             twist_joints.append(twist_jnt)
+
         return twist_joints
     
     def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y", front_axis_idx=None, up_axis_idx=None):
@@ -242,7 +245,60 @@ class TwistModule(object):
             self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
             self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
 
-            cmds.parentConstraint(start_joint, self.upper_curve, mo = True)
-            cmds.parentConstraint(mid_joint, self.lower_curve, mo = True)
+            cmds.parentConstraint(start_joint, self.upper_curve, mo=True)
+            cmds.parentConstraint(mid_joint, self.lower_curve, mo=True)
+
+            # ---- ORGANIZACIÓN ----
+            # general_twist_GRP: singleton — se crea solo si no existe todavía.
+            # La primera extremidad lo crea; las siguientes lo reutilizan.
+            general_twist_grp_name = "C_twist_GRP"
+            if not cmds.objExists(general_twist_grp_name):
+                self.general_twist_GRP = cmds.group(em=True, n=general_twist_grp_name)
+            else:
+                self.general_twist_GRP = general_twist_grp_name
+
+            # twist_GRP individual por extremidad: recoge TODO excepto lowerTwistStart,
+            # que debe quedarse emparentado bajo el bind mid_joint.
+            twist_GRP = cmds.group(em=True, n=f"{self.side}_{self.name}_twist_GRP")
+
+            # BaseDriver_CRV (la curva original renombrada, puede estar suelta)
+            base_driver_crv = f"{self.side}_{self.name}BaseDriver_CRV"
+            if cmds.objExists(base_driver_crv):
+                if not cmds.listRelatives(base_driver_crv, parent=True):
+                    cmds.parent(base_driver_crv, twist_GRP)
+
+            # Curvas de segmento upper y lower
+            cmds.parent(self.upper_curve, self.lower_curve, twist_GRP)
+
+            # Joints de twist (creados por create_twist_joints, nacen sueltos)
+            for jnt in self.upper_twist_joints + self.lower_twist_joints:
+                if cmds.objExists(jnt) and not cmds.listRelatives(jnt, parent=True):
+                    cmds.parent(jnt, twist_GRP)
+
+            # nonroll_upper_start ya lleva dentro:
+            #   - nonroll_upper_end
+            #   - upper_twist_start (con upper_twist_end)
+            nonroll_start = base_twist[0]  # nonroll_upper_start
+            ik_handles    = base_twist[1:] # ik_hdl_upper, ik_hdl_upper_twist, ik_hdl_lower_twist
+
+            if cmds.objExists(nonroll_start):
+                if not cmds.listRelatives(nonroll_start, parent=True):
+                    cmds.parent(nonroll_start, twist_GRP)
+
+            # IK handles sueltos
+            for hdl in ik_handles:
+                if cmds.objExists(hdl):
+                    if not cmds.listRelatives(hdl, parent=True):
+                        cmds.parent(hdl, twist_GRP)
+
+            # Emparentar el grupo individual bajo el general
+            cmds.parent(twist_GRP, self.general_twist_GRP)
+
+            self.twist_GRP = twist_GRP
             
-            return [f"{self.side}_{self.name}BaseDriver_CRV"] + base_twist
+            rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
+            if rig_grp and cmds.objExists(rig_grp):
+                cmds.parent(self.general_twist_GRP, rig_grp)
+                
+            
+            #return self.general_twist_GRP

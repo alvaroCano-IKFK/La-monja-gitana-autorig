@@ -457,17 +457,6 @@ class LegModule(object):
                                                                front_axis_idx=0,   
                                                                up_axis_idx=2 )
 
-        # Metemos de forma segura todos los elementos del twist (curva y raíces de joints) en el grupo de la pierna
-        if self.leg_grp and cmds.objExists(self.leg_grp):
-            for elemento in leg_twist_elements:
-                if cmds.objExists(elemento):
-                    # Evitamos re-emparentar si ya está en el grupo correcto
-                    padre_actual = cmds.listRelatives(elemento, parent=True)
-                    if not padre_actual or padre_actual[0] != self.leg_grp:
-                        try:
-                            cmds.parent(elemento, self.leg_grp)
-                        except RuntimeError:
-                            print(f"[{self.prefix}] No se pudo emparentar {elemento} en {self.leg_grp}")
 
         print(f"Build {self.prefix} leg completo.")
         print(f"Leg Module {self.side} construido con éxito.")

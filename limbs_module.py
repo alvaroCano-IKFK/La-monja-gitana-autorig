@@ -363,6 +363,10 @@ class LimbModule(object):
             self.bind_chain[0],
             self.bind_chain[1],
             self.bind_chain[2],
+            aim_axis="y",
+             up_axis       = "z",
+             front_axis_idx= 0,
+             up_axis_idx   = 2,
             source_curve = arm_curvature.degree2_curve
         )
 

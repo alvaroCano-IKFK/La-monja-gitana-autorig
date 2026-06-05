@@ -107,42 +107,51 @@ class TwistModule(object):
 
         return twist_joints
     
-    def create_basic_curve(self, start_joint, mid_joint, end_joint, aim_axis="x", up_axis="y", 
-                        front_axis_idx=None, up_axis_idx=None, source_curve=None):  # ← NUEVO
+    def create_basic_curve(self, start_joint, mid_joint, end_joint,
+                        aim_axis="x", up_axis="y",
+                        front_axis_idx=None, up_axis_idx=None,
+                        source_curve=None):   # ← parámetros nuevos
+        
         self.start_joint = start_joint
         self.mid_joint   = mid_joint
         self.end_joint   = end_joint
 
         base_twist = self.basic_twist_setup(start_joint, mid_joint, end_joint)
 
-        pos_start_joint = cmds.xform(start_joint, q=True, ws=True, t=True)
-        pos_mid_joint   = cmds.xform(mid_joint,   q=True, ws=True, t=True)
-        pos_end_joint   = cmds.xform(end_joint,   q=True, ws=True, t=True)
-
         # ==============================================================
-        # CURVA BASE: usa la degree2 del CurvatureModule si se pasa,
-        # si no, crea una nueva como antes
+        # CURVAS DE SEGMENTO
         # ==============================================================
         if source_curve and cmds.objExists(source_curve):
-            # Duplicamos para no destruir la curva original del CurvatureModule
-            self.base_curve = cmds.duplicate(source_curve, 
-                                            name=f"{self.side}_{self.name}BaseDriver_CRV")[0]
-            print(f"[TwistModule] Usando curva de CurvatureModule: '{source_curve}'")
+            # Usamos la degree2_curve del CurvatureModule directamente.
+            # NO se duplica — el detach se hace sobre ella misma.
+            self.base_curve = source_curve
+            print(f"[TwistModule] Usando degree2_curve de CurvatureModule: '{source_curve}'")
         else:
-            # Comportamiento original
-            self.base_curve = cmds.curve(degree=2, p=[pos_start_joint, pos_mid_joint, pos_end_joint])
-            cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
-            self.base_curve = f"{self.side}_{self.name}BaseDriver_CRV"
-            print(f"[TwistModule] Curva base creada internamente.")
+            # Fallback: crea una curva propia
+            pos_start = cmds.xform(start_joint, q=True, ws=True, t=True)
+            pos_mid   = cmds.xform(mid_joint,   q=True, ws=True, t=True)
+            pos_end   = cmds.xform(end_joint,   q=True, ws=True, t=True)
+            self.base_curve = cmds.curve(
+                degree=2, p=[pos_start, pos_mid, pos_end],
+                name=f"{self.side}_{self.name}BaseDriver_CRV"
+            )
+            print(f"[TwistModule] Curva base creada internamente (fallback).")
 
-        detatch_result = cmds.detachCurve((f"{self.base_curve}.u[0.5]"), ch=True, k=[True, True])
+        # El detach SIEMPRE se hace aquí sobre self.base_curve
+        detach_result = cmds.detachCurve(
+            f"{self.base_curve}.u[0.5]",
+            ch=True,
+            k=[True, True],
+            rpo=False   # keepOriginal=True, no destruye la degree2_curve
+        )
+        self.upper_curve = cmds.rename(detach_result[0],
+                                    f"{self.side}_{self.name}UpperSegment_CRV")
+        self.lower_curve = cmds.rename(detach_result[1],
+                                    f"{self.side}_{self.name}LowerSegment_CRV")
 
-        self.upper_curve = cmds.rename(detatch_result[0], f"{self.side}_{self.name}UpperSegment_CRV")
-        self.lower_curve = cmds.rename(detatch_result[1], f"{self.side}_{self.name}LowerSegment_CRV")
-
-        history = cmds.listHistory(self.upper_curve)
-        node_detach = cmds.ls(history, type="detachCurve")[0]
-        cmds.setAttr(f"{node_detach}.parameter[0]", 0.5)
+        history     = cmds.listHistory(self.upper_curve)
+        detach_node = cmds.ls(history, type="detachCurve")[0]
+        cmds.setAttr(f"{detach_node}.parameter[0]", 0.5)
             
 
         cmds.rename(self.base_curve, f"{self.side}_{self.name}BaseDriver_CRV")
@@ -285,9 +294,10 @@ class TwistModule(object):
         if cmds.objExists(base_driver_crv):
             if not cmds.listRelatives(base_driver_crv, parent=True):
                 cmds.parent(base_driver_crv, twist_GRP)
-
-            # Curvas de segmento upper y lower
-        cmds.parent(self.upper_curve, self.lower_curve, twist_GRP)
+        # Las curvas upper/lower solo se emparentan al twist_GRP si son propias de este módulo.
+        # Si vienen del CurvatureModule (source_curve), ya viven en su propio grupo.
+        if not source_curve:
+            cmds.parent(self.upper_curve, self.lower_curve, twist_GRP)
 
             # Joints de twist (creados por create_twist_joints, nacen sueltos)
         for jnt in self.upper_twist_joints + self.lower_twist_joints:

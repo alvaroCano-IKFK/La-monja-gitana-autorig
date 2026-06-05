@@ -77,11 +77,6 @@ class CurvatureModule(NodeCreator):
         self.degree2_curve = self._create_degree2_from_linear()
         print(f"[CurvatureModule] Degree2: '{self.degree2_curve}'")
 
-        # ==============================================================
-        # 4. DETACH → upper_curve + lower_curve (para el TwistModule)
-        #    La degree2_curve original se conserva con keepOriginal=True
-        # ==============================================================
-        self._create_twist_curves()
 
         # ==============================================================
         # 5. LOCATORS EN TANGENTES BEZIER
@@ -137,35 +132,7 @@ class CurvatureModule(NodeCreator):
                           rebuildType=0, keepEndPoints=True, keepTangents=False)
         return d2
 
-    # ------------------------------------------------------------------
-    def _create_twist_curves(self):
-        """
-        Hace un detachCurve a u=0.5 sobre la degree2_curve con keepOriginal=True.
-        La curva original se conserva intacta con todas sus conexiones a controlPoints.
-        Las dos curvas resultantes se guardan en self.upper_curve y self.lower_curve
-        para que el TwistModule las consuma directamente.
-        """
-        detach_results = cmds.detachCurve(
-            f"{self.degree2_curve}.u[0.5]",
-            ch=True,
-            k=[True, True],
-            rpo=False          # rpo=False → keepOriginal=True, NO reemplaza la curva original
-        )
 
-        # detachCurve devuelve [upperCurve, lowerCurve, detachNode] cuando ch=True
-        self.upper_curve = cmds.rename(detach_results[0],
-                                       f"{self.side}_{self.name}_upperSegment_CRV")
-        self.lower_curve = cmds.rename(detach_results[1],
-                                       f"{self.side}_{self.name}_lowerSegment_CRV")
-
-        # Aseguramos que el parámetro de corte esté exactamente en 0.5
-        history      = cmds.listHistory(self.upper_curve)
-        detach_node  = cmds.ls(history, type="detachCurve")
-        if detach_node:
-            cmds.setAttr(f"{detach_node[0]}.parameter[0]", 0.5)
-
-        print(f"[CurvatureModule] Twist curves: '{self.upper_curve}' / '{self.lower_curve}'")
-        print(f"[CurvatureModule] degree2_curve original conservada: '{self.degree2_curve}'")
 
     # ------------------------------------------------------------------
     # MÉTODO: CREAR LOCATORS Y DUPLICAR EL CV 2 Y CV 4

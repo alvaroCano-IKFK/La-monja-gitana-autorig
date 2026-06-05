@@ -333,46 +333,38 @@ class LimbModule(object):
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
             
             
-        # =========================================================================
-        # SISTEMA DE CURVATURA AUTOMÁTICA (Instanciado internamente)
-        # =========================================================================
+        # =========================================================
+        # CURVATURA
+        # =========================================================
         import curvature_module
-        print(f"[{self.prefix}] Instanciando módulo de curvatura para el brazo...")
-        
-        # Creamos el nombre dinámico del módulo usando el prefijo de la extremidad
-        curvature_name = f"{self.prefix}_Arm_Curvature"
-        
-        arm_curvature_inst = curvature_module.CurvatureModule(
-            name=curvature_name, 
-            side=self.side, 
-            guide_data=None, 
+
+        arm_curvature = curvature_module.CurvatureModule(
+            name=f"{self.prefix}_Arm_Curvature",
+            side=self.side,
+            guide_data=None,
             root_instance=self.root_instance
         )
-        
-        # Extraemos dinámicamente el switch control guardado en la instancia
-        switch_ctrl_for_curvature = f"{self.prefix}_switch_CTRL"
-        
-        # Ejecutamos pasando la cadena bind_chain de la propia instancia
-        arm_curvature_inst.create_basic_curve(
-            start_joint    = self.bind_chain[0], 
-            mid_joint      = self.bind_chain[1], 
-            end_joint      = self.bind_chain[2], 
-            switch_control = switch_ctrl_for_curvature
+        arm_curvature.create_basic_curve(
+            start_joint    = self.bind_chain[0],
+            mid_joint      = self.bind_chain[1],
+            end_joint      = self.bind_chain[2],
+            switch_control = f"{self.prefix}_switch_CTRL"
         )
-        
-            
-        # =====================================================================
-        # 7.5 SISTEMA DE TWIST
-        # =====================================================================
 
-        shoulder_jnt = self.bind_chain[0]  
-        elbow_jnt    = self.bind_chain[1]  
-        wrist_jnt    = self.bind_chain[2]  
-
-        arm_twist = twist_module.TwistModule(name="arm", side=self.side)
-
-        creaciones_twist = arm_twist.create_basic_curve(shoulder_jnt, elbow_jnt, wrist_jnt)
-        
+        # =========================================================
+        # TWIST  ← recibe las curvas ya detacheadas del Curvature
+        # =========================================================
+        arm_twist = twist_module.TwistModule(
+            name="arm",
+            side=self.side,
+            root_instance=self.root_instance
+        )
+        arm_twist.create_basic_curve(
+            self.bind_chain[0],
+            self.bind_chain[1],
+            self.bind_chain[2],
+            source_curve = arm_curvature.degree2_curve
+        )
 
                         
                             

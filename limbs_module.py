@@ -290,11 +290,14 @@ class LimbModule(object):
         
         cmds.addAttr(ik_ctrl, ln="ExtraAttr", nn="EXTRA_ATTR", at="enum", en="------", k=True)
         cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
+        
+
 
         # Switch
         cmds.xform(switch_gen, r=True, os=True, t=(0, 10, 0)) 
         cmds.parentConstraint(clavicule_ctl, switch_gen, mo = True)
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1,dv = 1, k=True)
+        cmds.addAttr(switch_ctrl, ln = "Curvature", at="float",min = 0, max=1, dv=0, k =True)
 
         # 6. SWITCH & VISIBILIDAD
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")

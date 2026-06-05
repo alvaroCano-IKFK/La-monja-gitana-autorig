@@ -322,6 +322,8 @@ class LegModule(object):
 
         # ---- SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
+        cmds.addAttr(switch_ctrl, ln = "Curvature", at="float",min = 0, max=1, dv=0, k =True)
+
         cmds.parentConstraint(ik_root_ctrl,switch_gen, mo = True )
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{vis_rev}.inputX")
@@ -349,7 +351,7 @@ class LegModule(object):
             cmds.connectAttr(f"{pbl}.outRotate",              f"{self.bind_chain[i]}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK",          f"{pbl}.weight")
             
-
+        
         # ---- FOOT REVERSE ----
         #Separator
         cmds.addAttr(ik_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
@@ -366,6 +368,7 @@ class LegModule(object):
         cmds.addAttr(ik_ctrl, ln ="RollStraightAngle", k=True, at="float", min = 0, dv =90 ) 
 
         cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
+        
         
         def quick_node(node_type, name, tag, side="L", base_name="leg", parent=None):
             """Simplifica la instanciación de NodeCreator para evitar código repetitivo."""

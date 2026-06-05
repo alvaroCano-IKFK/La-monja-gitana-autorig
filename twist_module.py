@@ -7,7 +7,7 @@ import guides_module
 import limbs_module
 import leg_module
 #import rigRoot_module
-import curvature_module
+#import curvature_module
 from nodeCreator_module import NodeCreator
 
 class TwistModule(object):  

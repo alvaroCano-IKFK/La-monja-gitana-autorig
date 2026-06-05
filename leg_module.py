@@ -7,6 +7,7 @@ import rigRoot_module
 import nodeCreator_module
 import hip_module
 from nodeCreator_module import NodeCreator
+import curvature_module
 import twist_module
 
 
@@ -451,6 +452,30 @@ class LegModule(object):
         else:
             cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
             
+        # =========================================================================
+        # SISTEMA DE CURVATURA AUTOMÁTICA (Instanciado internamente)
+        # =========================================================================
+        import curvature_module
+        print(f"[{self.prefix}] Instanciando módulo de curvatura para la pierna...")
+        
+        curvature_name = f"{self.prefix}_Leg_Curvature"
+        
+        leg_curvature_inst = curvature_module.CurvatureModule(
+            name=curvature_name, 
+            side=self.side, 
+            guide_data=None, 
+            root_instance=self.root_instance
+        )
+        
+        switch_ctrl_for_curvature = f"{self.prefix}_switch_CTRL"
+        
+        leg_curvature_inst.create_basic_curve(
+            start_joint    = self.bind_chain[0], 
+            mid_joint      = self.bind_chain[1], 
+            end_joint      = self.bind_chain[2], 
+            switch_control = switch_ctrl_for_curvature
+        )
+            
         # Instanciem el mòdul de Twist apuntant a la cama ("leg")
         leg_twist_inst = twist_module.TwistModule(name="leg", side=self.side, parent=self)
 
@@ -459,7 +484,8 @@ class LegModule(object):
                                                                aim_axis ="x", 
                                                                up_axis="zneg",    
                                                                front_axis_idx=0,   
-                                                               up_axis_idx=2 )
+                                                               up_axis_idx=2,
+                                                               )
 
 
         print(f"Build {self.prefix} leg completo.")

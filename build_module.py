@@ -154,36 +154,7 @@ class BuildRig(object):
             #)
         #skn.build()
                         
-        print("Build completo desde build_module.")
         
-        # =========================================================================
-        # CONSTRUCCIÓN DE CURVATURA (NUEVO)
-        # =========================================================================
-        print("[Curvature] Creando sistema de curvas...")
-        
-        # 1. Definimos los joints de entrada (Asegúrate de que estos nombres coincidan con tu rig)
-        start_jnt = "L_Arm_shoulder_bind_JNT" # O el joint de inicio que requieras
-        mid_jnt   = "L_Arm_elbow_bind_JNT"
-        end_jnt   = "L_Arm_wrist_bind_JNT"
-        switch_ctrl_name = "L_Arm_switch_CTRL"
-        
-        # 2. Instanciamos el módulo pasando los datos que pide el __init__
-        # (name, side, guide_data, root_instance)
-        self.curvature_rig = curvature_module.CurvatureModule(
-            name="L_Arm_Curvature",
-            side="L",
-            guide_data=None, # Cambia esto si manejas un diccionario de guías
-            root_instance=self.root_rig
-        )
-        
-        # 3. Ejecutamos la función encargada de generar las curvas
-        self.curvature_rig.create_basic_curve(
-            start_joint=start_jnt, 
-            mid_joint=mid_jnt, 
-            end_joint=end_jnt,
-            switch_control=switch_ctrl_name
-        )
-
 
         # =========================================================================
         # CONFIGURACIÓN DE SPACES (DYNAMIC PARENTS) - ANTES DEL SKINNING

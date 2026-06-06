@@ -54,6 +54,7 @@ class NeckModule(object):
         # IMPORTANTE: la curva se queda en world space hasta el final.
         # Emparentarla antes de terminar con los clusters rompe los handles.
         self.curve = cmds.curve(d=1, p=[pos_root, pos_head], n=f"{self.rig_name}_neck_CRV")
+        cmds.setAttr(f"{self.curve}.inheritsTransform", 0) # La curva no hereda transformaciones
 
         cls_base = cmds.cluster(f"{self.curve}.cv[0]", n=f"{self.rig_name}_neckBase_CLS")[1]
         cls_head = cmds.cluster(f"{self.curve}.cv[1]", n=f"{self.rig_name}_neckHead_CLS")[1]

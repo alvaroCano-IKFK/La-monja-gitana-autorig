@@ -64,6 +64,7 @@ class SpineModule(object):
 
         # Crear curva
         spine_curve = cmds.curve(d=3, p=cvs, n=f"{self.rig_name}_spine_CRV")
+        cmds.setAttr(f"{spine_curve}.inheritsTransform", 0) # La curva no hereda transformaciones
         cmds.parent(spine_curve, self.spine_grp)
 
         previous_joint = None

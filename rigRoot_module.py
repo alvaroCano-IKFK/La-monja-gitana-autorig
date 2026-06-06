@@ -63,7 +63,9 @@ class RigRoot(object):
         cmds.parent(skeleton, masterGroup)
         cmds.parent(guides,masterGroup)
         cmds.parent(controls,masterGroup)
-        cmds.parent(self.mirror_grp, self.localCtl)  
+        cmds.parent(self.mirror_grp, self.localCtl)
+        
+        cmds.scaleConstraint(globalCtl, rigGroup, mo=True)  
 
         self.groups.extend([masterGroup,
                            rigGroup,

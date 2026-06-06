@@ -325,9 +325,9 @@ class TwistModule(object):
 
         self.twist_GRP = twist_GRP
             
-        rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
-        if rig_grp and cmds.objExists(rig_grp):
-            cmds.parent(self.general_twist_GRP, rig_grp)
+        #rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
+        #if rig_grp and cmds.objExists(rig_grp):
+            #cmds.parent(self.general_twist_GRP, rig_grp)
                 
             
             #return self.general_twist_GRP

@@ -72,7 +72,7 @@ class TwistModule(object):
         cmds.select(cl=True)
         ik_hdl_upper_twist = cmds.ikHandle(sj=self.upper_twist_start, ee=self.upper_twist_end, sol="ikSCsolver", name=f"{self.side}_{self.name}UpperTwist_HDL")[0]
 
-        cmds.parentConstraint(mid_joint, ik_hdl_upper_twist, mo=True)
+        cmds.pointConstraint(mid_joint, ik_hdl_upper_twist, mo=False)
         cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
 
         self.lower_twist_start = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerTwistStart_JNT")[0]
@@ -105,8 +105,11 @@ class TwistModule(object):
             
             twist_joints.append(twist_jnt)
 
+        for jnt in twist_joints:
+            cmds.setAttr(f"{jnt}.inheritsTransform", 0) 
         return twist_joints
-    
+
+        
     def create_basic_curve(self, start_joint, mid_joint, end_joint,
                         aim_axis="x", up_axis="y",
                         front_axis_idx=None, up_axis_idx=None,
@@ -136,6 +139,8 @@ class TwistModule(object):
                 name=f"{self.side}_{self.name}BaseDriver_CRV"
             )
             print(f"[TwistModule] Curva base creada internamente (fallback).")
+        cmds.setAttr(f"{self.base_curve}.inheritsTransform", 0)
+
 
         # El detach SIEMPRE se hace aquí sobre self.base_curve
         detach_result = cmds.detachCurve(
@@ -148,6 +153,9 @@ class TwistModule(object):
                                     f"{self.side}_{self.name}UpperSegment_CRV")
         self.lower_curve = cmds.rename(detach_result[1],
                                     f"{self.side}_{self.name}LowerSegment_CRV")
+        
+        cmds.setAttr(f"{self.upper_curve}.inheritsTransform", 0)
+        cmds.setAttr(f"{self.lower_curve}.inheritsTransform", 0)
 
         history     = cmds.listHistory(self.upper_curve)
         detach_node = cmds.ls(history, type="detachCurve")[0]
@@ -243,10 +251,19 @@ class TwistModule(object):
                     # Método estable usando el vector calculado
                 cmds.setAttr(f"{motion_path_node}.worldUpType", 2)
                 cmds.setAttr(f"{motion_path_node}.worldUpVector", up_vector[0], up_vector[1], up_vector[2])
+                
+                if segment_name == "upper":
+                    # Conectamos la matriz mundial del joint nonroll al worldUpMatrix del motionPath
+                    cmds.connectAttr(f"{self.nonroll_upper_start}.worldMatrix[0]", f"{motion_path_node}.worldUpMatrix")
+                else:
+                    # Conectamos la matriz mundial del codo/rodilla (mid_joint) al worldUpMatrix del motionPath
+                    cmds.connectAttr(f"{mid_joint}.worldMatrix[0]", f"{motion_path_node}.worldUpMatrix")
+                # ==============================================================
                     
-                if self.side == "R":
-                    cmds.setAttr(f"{motion_path_node}.inverseUp", 1)
-                    cmds.setAttr(f"{motion_path_node}.inverseFront", 1)
+                                  
+                #if self.side == "R":
+                    #cmds.setAttr(f"{motion_path_node}.inverseUp", 1)
+                    #cmds.setAttr(f"{motion_path_node}.inverseFront", 1)
 
                 u_value = 0.01 + ((i / 4.0) * 0.98)
                 cmds.setAttr(f"{motion_path_node}.uValue", u_value)
@@ -271,32 +288,32 @@ class TwistModule(object):
         self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
         self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
             
-            #cmds.parent(self.upper_twist_joints,start_joint )
+        #cmds.parent(self.upper_twist_joints,start_joint )
 
-            #cmds.parentConstraint(start_joint, self.upper_curve, mo=True)
-            #cmds.parentConstraint(mid_joint, self.lower_curve, mo=True)
+        #cmds.parentConstraint(start_joint, self.upper_curve, mo=True)
+        #cmds.parentConstraint(mid_joint, self.lower_curve, mo=True)
 
-            # ---- ORGANIZACIÓN ----
-            # general_twist_GRP: singleton — se crea solo si no existe todavía.
-            # La primera extremidad lo crea; las siguientes lo reutilizan.
+        # ---- ORGANIZACIÓN ----
+        # general_twist_GRP: singleton — se crea solo si no existe todavía.
+        # La primera extremidad lo crea; las siguientes lo reutilizan.
         general_twist_grp_name = "C_twist_GRP"
         if not cmds.objExists(general_twist_grp_name):
             self.general_twist_GRP = cmds.group(em=True, n=general_twist_grp_name)
         else:
             self.general_twist_GRP = general_twist_grp_name
 
-            # twist_GRP individual por extremidad: recoge TODO excepto lowerTwistStart,
-            # que debe quedarse emparentado bajo el bind mid_joint.
+        # twist_GRP individual por extremidad: recoge todo excepto lowerTwistStart,
+        # que debe quedarse emparentado bajo el bind mid_joint.
         twist_GRP = cmds.group(em=True, n=f"{self.side}_{self.name}_twist_GRP")
 
-            # BaseDriver_CRV (la curva original renombrada, puede estar suelta)
+        # BaseDriver_CRV (la curva original renombrada, puede estar suelta)
         base_driver_crv = f"{self.side}_{self.name}BaseDriver_CRV"
         if cmds.objExists(base_driver_crv):
             if not cmds.listRelatives(base_driver_crv, parent=True):
                 cmds.parent(base_driver_crv, twist_GRP)
         # Las curvas upper/lower solo se emparentan al twist_GRP si son propias de este módulo.
         # Si vienen del CurvatureModule (source_curve), ya viven en su propio grupo.
-        if not source_curve:
+        if cmds.objExists(self.upper_curve) and cmds.objExists(self.lower_curve):
             cmds.parent(self.upper_curve, self.lower_curve, twist_GRP)
 
             # Joints de twist (creados por create_twist_joints, nacen sueltos)

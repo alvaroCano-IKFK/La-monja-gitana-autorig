@@ -85,6 +85,11 @@ class CurvatureModule(NodeCreator):
             self.bezier_curve, only_elbow_tangents=True
         )
 
+        # ==============================================================
+        # 6. ORGANIZAR OUTLINER
+        # ==============================================================
+        self.organize_outliner()
+
         cmds.select(cl=True)
 
     # ------------------------------------------------------------------
@@ -262,3 +267,78 @@ class CurvatureModule(NodeCreator):
 
         print(f"[CurvatureModule] Proceso de locators finalizado para {self.name}.")
         return originals, duplicates
+
+    # ------------------------------------------------------------------
+    # ORGANIZACIÓN DEL OUTLINER
+    # ------------------------------------------------------------------
+    def organize_outliner(self):
+
+        prefix = f"{self.side}_{self.name}"
+
+        # --- Grupo raíz del módulo ---
+        crv_grp = f"{prefix}_curvature_GRP"
+        if not cmds.objExists(crv_grp):
+            crv_grp = cmds.group(em=True, name=crv_grp)
+
+        # --- Sub-grupo de curvas ---
+        curves_grp = f"{prefix}_curves_GRP"
+        if not cmds.objExists(curves_grp):
+            curves_grp = cmds.group(em=True, name=curves_grp)
+        cmds.parent(curves_grp, crv_grp)
+
+        for crv in [self.linear_curve, self.bezier_curve, self.degree2_curve]:
+            if crv and cmds.objExists(crv):
+                current_parent = cmds.listRelatives(crv, parent=True)
+                if not current_parent or current_parent[0] != curves_grp:
+                    cmds.parent(crv, curves_grp)
+
+        # --- Sub-grupo de locators ---
+        locs_grp = f"{prefix}_locators_GRP"
+        if not cmds.objExists(locs_grp):
+            locs_grp = cmds.group(em=True, name=locs_grp)
+        cmds.parent(locs_grp, crv_grp)
+
+        # tangent_locators es (originals_dict, duplicates_dict)
+        if self.tangent_locators:
+            originals, duplicates = self.tangent_locators
+
+            # originals[3] es el padre de originals[2] y originals[4] (ya parentados en create_locators…)
+            # duplicates[2] y duplicates[4] son hijos de sus respectivos originals (via pointConstraint)
+            # Solo metemos en locs_grp el nodo raíz de la jerarquía de locators: originals[3]
+            root_loc = originals.get(3)
+            if root_loc and cmds.objExists(root_loc):
+                current_parent = cmds.listRelatives(root_loc, parent=True)
+                if not current_parent or current_parent[0] != locs_grp:
+                    cmds.parent(root_loc, locs_grp)
+
+            # Los duplicates NO están bajo originals, están sueltos → los metemos también
+            for dup_loc in duplicates.values():
+                if dup_loc and cmds.objExists(dup_loc):
+                    current_parent = cmds.listRelatives(dup_loc, parent=True)
+                    if not current_parent or current_parent[0] != locs_grp:
+                        cmds.parent(dup_loc, locs_grp)
+
+        # --- Meter el módulo dentro del rig_GRP del Character si existe ---
+        rig_name = None
+        if self.root_instance and hasattr(self.root_instance, "rig_name"):
+            rig_name = self.root_instance.rig_name
+
+        if rig_name:
+            rig_grp = f"{rig_name}_rig_GRP"
+            if cmds.objExists(rig_grp):
+                current_parent = cmds.listRelatives(crv_grp, parent=True)
+                if not current_parent or current_parent[0] != rig_grp:
+                    cmds.parent(crv_grp, rig_grp)
+                print(f"[CurvatureModule] '{crv_grp}' organizado bajo '{rig_grp}'.")
+            else:
+                cmds.warning(
+                    f"[CurvatureModule] '{rig_grp}' no existe. "
+                    f"'{crv_grp}' queda en el mundo hasta que el rig root esté construido."
+                )
+        else:
+            print(
+                f"[CurvatureModule] Sin root_instance. "
+                f"'{crv_grp}' queda en el mundo. Llama organize_outliner() después de build()."
+            )
+
+        print(f"[CurvatureModule] Outliner organizado: '{crv_grp}'.")

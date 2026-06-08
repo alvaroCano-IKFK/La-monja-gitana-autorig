@@ -76,8 +76,24 @@ class RigRoot(object):
                            skeleton])
         
         self.controls.extend([globalCtl,self.localCtl])
-        
-        
 
-            
-  
+    # ------------------------------------------------------------------
+    # HELPERS PÚBLICOS
+    # ------------------------------------------------------------------
+    def get_rig_grp(self):
+        """Devuelve el nombre del rig_GRP para que otros módulos puedan organizarse bajo él."""
+        return f"{self.rig_name}_rig_GRP"
+
+    def parent_to_rig(self, node):
+        """
+        Mete 'node' directamente bajo el rig_GRP.
+        Útil para que módulos externos llamen root.parent_to_rig(mi_grp).
+        """
+        rig_grp = self.get_rig_grp()
+        if not cmds.objExists(rig_grp):
+            cmds.warning(f"[RigRoot] '{rig_grp}' no existe todavía. Llama build() primero.")
+            return
+        current_parent = cmds.listRelatives(node, parent=True)
+        if not current_parent or current_parent[0] != rig_grp:
+            cmds.parent(node, rig_grp)
+            print(f"[RigRoot] '{node}' parentado bajo '{rig_grp}'.")

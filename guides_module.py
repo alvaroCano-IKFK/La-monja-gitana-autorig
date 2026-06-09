@@ -35,7 +35,7 @@ class SpineGuides(object):
 
     def spine_guides(self):
         #Crea el joint root de les guies de la spine
-        root_joint = cmds.joint(p=(0, 0, 0), name=self.spine_root)
+        root_joint = cmds.joint(p=(0, 3, -15), name=self.spine_root)
         if not root_joint:
             print(f"Error creando la joint: {self.spine_root}")
             return
@@ -114,8 +114,8 @@ class LimbGuides(object):
         self.limb_mid_pos = limb_mid_pos
         self.limb_end_pos = limb_end_pos
         
-        self.joint_orient = "xyz"   
-        self.up_axis      = "yup"  
+        self.joint_orient = "xzy"   
+        self.up_axis      = "zdown"  
         
         self.guides_group = None
     
@@ -147,58 +147,6 @@ class LimbGuides(object):
         
         return self.guides_group
 
-########################################################################
-#ARM
-########################################################################
-
-class ArmGuides(LimbGuides):
-    """
-    Hereda de la classe limbs i crea la clavicula, completant el brac
-    """
-    def __init__(self, limb_root, limb_mid, limb_end, clavicule_root,
-                 limb_root_pos, limb_mid_pos, limb_end_pos, clavicule_root_pos):
-
-        super(ArmGuides, self).__init__(
-            limb_root, limb_mid, limb_end,
-            limb_root_pos, limb_mid_pos, limb_end_pos
-        )
-
-        self.clavicule = clavicule_root
-        self.clavicule_pos = clavicule_root_pos
-        
-        self.shoulder_joint = self.limb_root
-        self.elbow_joint    = self.limb_mid
-        self.wrist_joint    = self.limb_end
-
-    def create_chain(self):
-        """
-        Crea la clavicula 
-
-        """
-        super(ArmGuides, self).create_chain()
-
-        root = self.limb_root
-        end  = self.limb_end
-
-        if self.clavicule:
-            cmds.select(clear=True)
-            #Crea el joint de la clavicula
-            hierarchy_root = cmds.joint(n=self.clavicule, p=self.clavicule_pos)
-
-            #Emparenta la clavicula amb el primer joint del brac
-            cmds.parent(root, hierarchy_root)
-
-            cmds.joint(hierarchy_root, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
-            #cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)  
-
-            cmds.parent(root, world=True)
-            cmds.delete(self.guides_group)
-
-            #Crea el grup de guies del brac 
-            cmds.parent(root, hierarchy_root)
-            self.guides_group = cmds.group(hierarchy_root, n="arm_guides_GRP")
-
-        return self.guides_group
 
 ############################################################################
 #LEG
@@ -208,127 +156,58 @@ class LegGuides(LimbGuides):
     """
     Hereda de la classe limbs i fa la cama
     """
-    def __init__(self, limb_root, limb_mid, limb_end,
-                 limb_root_pos, limb_mid_pos, limb_end_pos):
+    def __init__(self, clavicule_start,clavicule_root,limb_root, limb_mid, limb_end,
+                 clavicule_start_pos, clavicule_root_pos,limb_root_pos, limb_mid_pos, limb_end_pos):
         
         super(LegGuides, self).__init__(limb_root, limb_mid, limb_end, limb_root_pos, limb_mid_pos, limb_end_pos)
+                
+        self.shoulder_joint = self.limb_root
+        self.elbow_joint    = self.limb_mid
+        self.wrist_joint    = self.limb_end
+        
+        self.clavicule_start = clavicule_start
+        self.clavicule_start_pos = clavicule_start_pos
+        
+        self.clavicule = clavicule_root
+        self.clavicule_pos = clavicule_root_pos
         
         #Configura el grup, l’orientacio i el joint final de la cama
         self.group_name = "leg_guides_GRP"
         self.joint_orient = "xzy"
         self.up_axis = "zdown"
         self.ankle_joint = self.limb_end
-
-                                             
-########################################################################
-#FINGER
-########################################################################
-
-class FingerGuides(object):
-    """
-    Crea les guies dels dits. 
-
-    """
-
-    def __init__(self, parent_joint, name, offsets):
-        self.parent_joint = parent_joint
-        self.name = name
-        self.offsets = offsets
-        self.joints = []
-
-    def finger_guides(self):
-        #Agafa la posicio del joint del canell 
-        wrist_pos = cmds.xform(self.parent_joint, q=True, ws=True, t=True)
-    
+        
+    def create_chain(self):
+        """
+        Orden final: clavicule_start -> clavicule -> hip -> knee -> ankle
+        """
         cmds.select(clear=True)
-        
-        #Crea els joints dels dits a partir de les dades definides
-        for i, offset in enumerate(self.offsets):
-    
-            pos = (
-                wrist_pos[0] + offset[0],
-                wrist_pos[1] + offset[1],
-                wrist_pos[2] + offset[2]
-            )
-    
-            jnt_name = f"{self.name}_{i+1:02d}"
-            jnt = cmds.joint(n=jnt_name, p=pos)
-    
-            self.joints.append(jnt)
-    
-        #Emparentar el root del dit amb el canell
-        cmds.parent(self.joints[0], self.parent_joint)
 
-############################################################
-# HAND
-############################################################
+        # 1. Crea la cadena principal: hip -> knee -> ankle
+        hip   = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
+        knee  = cmds.joint(n=self.limb_mid,  p=self.limb_mid_pos)
+        ankle = cmds.joint(n=self.limb_end,  p=self.limb_end_pos)
 
-class HandGuides(object):
-    """
-    Crea les guies de la ma.
+        cmds.joint(hip, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
 
-    """
+        # 2. Crea clavicule y clavicule_start por encima
+        cmds.select(clear=True)
+        clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)
+        clav       = cmds.joint(n=self.clavicule,       p=self.clavicule_pos)
 
-    def __init__(self, arm_instance):
-        self.arm = arm_instance
-        self.fingers = []
-        self.group = None
+        # 3. Emparenta hip bajo clavicule
+        cmds.parent(hip, clav)
 
-    def hand_guides(self):
-        
-        #Agafa el joint del canel
-        wrist = self.arm.wrist_joint
+        # 4. Orienta toda la cadena desde la raíz
+        cmds.joint(clav_start, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
 
-        #Dades dels dits
-        finger_data = {
-            "L_index":  [(1,0,1),(2,0,1),(3,0,1),(4,0,1),(5,0,1)],
-            "L_middle": [(1,0,0),(2,0,0),(3,0,0),(4,0,0),(5,0,0)],
-            "L_ring":   [(1,0,-1),(2,0,-1),(3,0,-1),(4,0,-1),(5,0,-1)],
-            "L_pinky":  [(1,0,-2),(2,0,-2),(3,0,-2),(4,0,-2),(5,0,-2)],
-            "L_thumb":  [(1,0,1),(1,-1,2),(2,-1,2),(3,-1,2)]
-        }
-        
+        # 5. Grupo con clavicule_start como raíz
+        self.guides_group = cmds.group(clav_start, n="leg_guides_GRP")
 
+        return self.guides_group
 
-        #Crea les guies dels dits a partir de les dades definides
-        for name, offsets in finger_data.items():
-
-            finger = FingerGuides(wrist, name, offsets)
-            finger.finger_guides()
-            self.fingers.append(finger)
-            
-        # =========================================================================
-        # RE-ORIENTACIÓN ANATÓMICA DEL PULGAR (Para comodidad del animador)
-        # =========================================================================
-        
-        # --- LADO IZQUIERDO (L) ---
-        # Asegúrate de que estos nombres coinciden con los que genera tu rig de guías
-        thumb_l_root = "L_thumb_01"   # O "L_thumb_1", revisa tu Outliner
-        thumb_l_med  = "L_thumb_02"   # O "L_thumb_2"
-        
-        if cmds.objExists(thumb_l_root) and cmds.objExists(thumb_l_med):
-            # 1. Almacenamos el abuelo (wrist) para no perder la jerarquía superior
-            parent_wrist = cmds.listRelatives(thumb_l_root, parent=True)[0]
-            
-            # 2. Desemparentamos el hijo temporalmente para que no se mueva de su posición en el espacio
-            cmds.parent(thumb_l_med, world=True)
-            
-            # 3. Forzamos la orientación base del eje X hacia donde estaba el hijo
-            cmds.joint(thumb_l_root, edit=True, oj="xyz", sao="yup", zso=True)
-            
-            # 4. Metemos el TWIST en el Joint Orient X para encarar el eje de flexión hacia la palma
-            # Ajusta este valor (ej. 30, 45, 60) hasta que veas que el eje Z o Y apunta hacia donde se cierra el puño
-            cmds.setAttr(f"{thumb_l_root}.jointOrientY", -90)
-            
-            # 5. Volvemos a emparentar la cadena del pulgar
-            cmds.parent(thumb_l_med, thumb_l_root)
-            
-            # 6. Limpiamos al hijo para que su orientación mire recta hacia la punta del pulgar
-            cmds.joint(thumb_l_med, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
-        #Agrupa les guies de la ma
-        #self.group = cmds.group(wrist, n="hand_guides_GRP")
-        
-        
 ############################################################
 #FOOT
 ############################################################
@@ -408,35 +287,27 @@ class CharacterGuides(object):
 
         """
         #Crea les guies de la spine
-        spine_instance = SpineGuides("root", "chest", (0, 10, 0))
+        spine_instance = SpineGuides("root", "chest", (0, 3, 11))
         spine_instance.spine_guides()
 
         #Crea les guies del coll
-        neck_instance = NeckGuides("neck_root","neck_end",(0, 20, 0), (0, 23, 0.5))
+        neck_instance = NeckGuides("neck_root","neck_end",(0, 3, 11), (0, 20, 23))
         neck_instance.neck_guides()
 
-        #Crea les guies del brac
-        arm_instance = ArmGuides(
-            "L_shoulder", "L_elbow", "L_wrist","L_clavicule",
-            (3, 12, 0),
-            (13, 12, -0.1),
-            (23, 12, 0),
-            (0,12,0)
-        )
-        arm_instance.create_chain()
+
 
         #Crea les guies de la cama
         leg_instance = LegGuides(
-            "L_hip", "L_knee", "L_ankle",
-            (3, -10, 0),
-            (3, -20, 0.2),
-            (3, -30, 0)
+            "L_clavicule_start","L_clavicule","L_hip", "L_knee", "L_ankle",
+            (3.6,3,10),
+            (3.6,-2,14),
+            (3.6, -10, 12),
+            (3.6, -18, 12),
+            (3.6, -27, 12)
         )
         leg_instance.create_chain()
 
-        #Crea les guies de la ma a partir del brac
-        hand_instance = HandGuides(arm_instance)
-        hand_instance.hand_guides()
+
 
         #Crea les guies del peu a partir de la cama
         foot_instance = FootGuides(
@@ -444,9 +315,9 @@ class CharacterGuides(object):
             "L_ball",
             "L_toe_tip",
             "L_heel",
-            (0, -2, 3),
-            (0, -2, 6),
-            (0,-2,-3)
+            (0, -2, 1),
+            (0, -5, 3),
+            (0,-5,-3)
         )
         foot_instance.foot_guides()
        
@@ -454,9 +325,7 @@ class CharacterGuides(object):
         guide_groups = [
             spine_instance.guides_group,
             neck_instance.guides_group,
-            arm_instance.guides_group,
             leg_instance.guides_group,
-            hand_instance.group,
          ]
 
         # Filtra nomes els grups que existeixen

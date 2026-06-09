@@ -1,27 +1,54 @@
 import maya.cmds as cmds
 
 class Mirror(object):
-    def __init__(self, clavicule_guide="L_clavicule", thigh_guide="L_hip", rig_name="R_Character"):
+    def __init__(self, clavicule_guide="L_clavicule_start", 
+                 foot_joints=None, rig_name="R_Character"):
         self.clavicule_guide = clavicule_guide
-        self.thigh_guide = thigh_guide
+        # foot_joints: lista de joints L que están bajo L_ankle
+        # ej: ["L_ball", "L_toe_tip", "L_heel"]
+        self.foot_joints = foot_joints or []
         self.rig_name = rig_name
-        
-        # Variables para guardar los nombres de los joints creados
-        self.r_clavicule = None
-        self.r_hip = None
+        self.r_clavicule_start = None
 
     def mirror(self):
-        # mirrorJoint devuelve una lista. El primer elemento [0] es la raíz duplicada.
-        if cmds.objExists(self.clavicule_guide):
-            res_arm = cmds.mirrorJoint(self.clavicule_guide, myz=True, mb=True, sr=("L", "R"))
-            self.r_clavicule = res_arm[0]
-        
-        if cmds.objExists(self.thigh_guide):
-            res_leg = cmds.mirrorJoint(self.thigh_guide, myz=True, mb=True, sr=("L", "R"))
-            self.r_hip = res_leg[0]
-        
+        if not cmds.objExists(self.clavicule_guide):
+            cmds.warning(f"No existe: {self.clavicule_guide}")
+            return
 
+        # 1. Saca los joints del pie de la jerarquía ANTES del mirror
+        for jnt in self.foot_joints:
+            if cmds.objExists(jnt):
+                cmds.parent(jnt, world=True)
 
-# Ejecución
-#mirror = Mirror()
-#mirror.mirror()
+        # 2. Guarda el padre del grupo
+        original_parent = cmds.listRelatives(self.clavicule_guide, parent=True)
+
+        # 3. Saca L_clavicule_start al mundo
+        if original_parent:
+            cmds.parent(self.clavicule_guide, world=True)
+
+        # 4. Mirror — ahora solo mirroriza la cadena L sin el pie
+        mirrored = cmds.mirrorJoint(
+            self.clavicule_guide,
+            mirrorYZ=True,
+            mirrorBehavior=True,
+            searchReplace=("L_", "R_")
+        )
+        self.r_clavicule_start = mirrored[0]
+
+        # 5. Reemparenta L al grupo original
+        if original_parent:
+            cmds.parent(self.clavicule_guide, original_parent[0])
+
+        # 6. Reemparenta los joints del pie L de vuelta a L_ankle
+        ankle_l = "L_ankle"
+        for jnt in self.foot_joints:
+            if cmds.objExists(jnt):
+                cmds.parent(jnt, ankle_l)
+
+        # 7. Mete R al mismo grupo
+        if original_parent:
+            cmds.parent(self.r_clavicule_start, original_parent[0])
+
+        print(f"Mirror OK -> {self.r_clavicule_start}")
+        return self.r_clavicule_start

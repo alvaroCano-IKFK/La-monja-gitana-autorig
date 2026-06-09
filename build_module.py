@@ -59,45 +59,8 @@ class BuildRig(object):
             
         self.chest_rig.build()   
 
-        # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
-        self.arm_rig = limbs_module.LimbModule(
-                shoulder_guide="L_shoulder",
-                elbow_guide="L_elbow",
-                wrist_guide="L_wrist",
-                clavicule_guide="L_clavicule",
-                rig_name="Arm",
-                side="L",
-                root_instance=self.root_rig
-            )
-        self.arm_rig.build()
-        
-        self.mirror_arm_rig = limbs_module.LimbModule(
-                shoulder_guide="R_shoulder",
-                elbow_guide="R_elbow",
-                wrist_guide="R_wrist",
-                clavicule_guide="R_clavicule",
-                rig_name="Arm",
-                side="R",
-                root_instance=self.root_rig
-                    )
-        self.mirror_arm_rig.build()
-        
 
 
-        #4. CONSTRRUIR DEDOS
-        self.fingers_rig = fingers_module.FingersModule( 
-                wrist_guide="L_wrist", 
-                rig_name ="Arm",
-                side = "L",
-                root_instance=self.root_rig)
-        self.fingers_rig.build()
-        
-        self.mirror_fingers_rig = fingers_module.FingersModule(
-                wrist_guide="R_wrist",
-                rig_name="Arm",
-                side="R",
-                root_instance=self.root_rig)
-        self.mirror_fingers_rig.build()
             
         # Modifica LimbModule para que guarde self.b_sh al terminar build.
         shoulder_jnt = "L_Arm_shoulder_bind_JNT"

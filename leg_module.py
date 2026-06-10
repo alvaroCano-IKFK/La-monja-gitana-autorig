@@ -507,7 +507,7 @@ class LegModule(object):
         
         if cmds.objExists(chestControl):
             # Es mejor restringir el grupo de la clavícula manteniendo el offset
-            cmds.parentConstraint(chestControl, ik_root_gen, mo=True)
+            #cmds.parentConstraint(chestControl, ik_root_gen, mo=True)
             cmds.parentConstraint(chestControl, clavicule_start_gen, mo=True)
             print(f"Conectada la clavícula {self.prefix} al pecho con éxito.")
         else:

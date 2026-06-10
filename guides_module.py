@@ -339,7 +339,7 @@ class CharacterGuides(object):
             (3.6,3,10),
             (3.6,-2,14),
             (3.6, -10, 12),
-            (3.6, -18, 12),
+            (3.6, -18, 12.5),
             (3.6, -27, 12)
         )
         leg_instance.create_chain()

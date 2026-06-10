@@ -218,6 +218,8 @@ class LegModule(object):
         
         # IK Controls (Alineados con los targets corregidos)
         
+        clav_ctls = []
+        
         clavicule_start_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["clavicule"], 
             final_name=f"{self.prefix}_claviculeStart_CTRL"
@@ -230,6 +232,9 @@ class LegModule(object):
             final_name=f"{self.prefix}_clavicule_CTRL"
         )
         clavicule_gen = self.create_offset_group(clavicule_ctrl, clavicule_ctrl_target, orient=True)
+        
+        clav_ctls.append(clavicule_start_ctrl)
+        clav_ctls.append(clavicule_ctrl)
         
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footRoot"], 
@@ -345,6 +350,21 @@ class LegModule(object):
                 cmds.setAttr(f"{self.main_rig_grp}.rotateY", 0)
                 cmds.setAttr(f"{self.main_rig_grp}.rotateZ", 0)
 
+
+        #if self.side == "L":
+            #for ctrl in clav_ctls:
+                # Volvemos a pedir el pivote en World Space para tener la posición real absoluta
+                #pivot = cmds.xform(ctrl, q=True, ws=True, rp=True)
+                #shapes = cmds.listRelatives(ctrl, s=True)
+                
+                #if shapes:
+                    #for shape in shapes:
+                        #num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+                        #cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
+                        
+                        # REGLA DE ORO: Usamos el pivote del mundo (ws=True) para la posición, 
+                        # pero forzamos a que la orientación de la rotación use el Objeto (os=True)
+                        #cmds.rotate(0, 110, 0, cvs, r=True, p=pivot, os=True)
         # ---- JERARQUIA DEL PIE ----
         
         cmds.parent(clavicule_gen, clavicule_start_ctrl)

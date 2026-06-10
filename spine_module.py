@@ -107,7 +107,7 @@ class SpineModule(object):
             for shape in shapes:
                 num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
                 cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
-                cmds.rotate(0, 0, 90, cvs, r=True, p=pivot, ws=True)
+                cmds.rotate(0, 90, 0, cvs, r=True, p=pivot, ws=True)
 
         # 2. SECCIÓN DE JERARQUÍA
         # spine_0 es el top, va al grupo de controles

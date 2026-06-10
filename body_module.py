@@ -37,6 +37,15 @@ class BodyModule(object):
         bodyControl_off = self.group_maker.create_rig_hierarchy(bodyControl, self.root_guide)
         cmds.parentConstraint(bodyControl, body_joint)
 
+        if bodyControl and cmds.objExists(bodyControl):
+            pivot = cmds.xform(bodyControl, q=True, ws=True, rp = True)
+            shapes = cmds.listRelatives(bodyControl, s=True)
+            for shape in shapes:
+                num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+                cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
+                cmds.rotate(90, 0, 0, cvs, r=True, p=pivot, ws=True)  
+
+
         self.localCtl = (
             f"{self.root_instance.rig_name}_local_CTL"
             if self.root_instance else None

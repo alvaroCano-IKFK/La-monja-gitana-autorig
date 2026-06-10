@@ -75,7 +75,13 @@ class ChestModule(object):
         chestContol_off = self.group_maker.create_rig_hierarchy(chestControl, chestFix_joint)
         
         cmds.parentConstraint(chestControl, spineFix_joint, mo=False)
-        
+        if chestControl and cmds.objExists(chestControl):
+            pivot = cmds.xform(chestControl, q=True, ws=True, rp = True)
+            shapes = cmds.listRelatives(chestControl, s=True)
+            for shape in shapes:
+                num_cvs = cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+                cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
+                cmds.rotate(90, 0, 0, cvs, r=True, p=pivot, ws=True)  
         #Conexion con la spine
         
         cmds.aimConstraint(f"{self.rig_name}_spine_3_JNT",chestFix_joint,

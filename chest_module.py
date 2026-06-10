@@ -69,6 +69,7 @@ class ChestModule(object):
         chestControl = controlsLibrary.create_control_from_lib(
             lib_name=self.ctrl_style, 
             final_name=name)
+        self.chest_control_name = chestControl  # expuesto para otros módulos
         
         # Cambio aquí
         chestContol_off = self.group_maker.create_rig_hierarchy(chestControl, chestFix_joint)
@@ -112,4 +113,3 @@ class ChestModule(object):
             cmds.parent(chestContol_off, spine_top_ctrl)
         elif local_ctl and cmds.objExists(local_ctl):
             cmds.parent(chestContol_off, local_ctl)  # fallback por si la spine no existe
-        

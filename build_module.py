@@ -57,7 +57,8 @@ class BuildRig(object):
             
         self.chest_rig = chest_module.ChestModule(chest_guide = "chest",root_instance=self.root_rig)
             
-        self.chest_rig.build()   
+        self.chest_rig.build()
+        self.root_rig.chest_instance = self.chest_rig   
 
 
 

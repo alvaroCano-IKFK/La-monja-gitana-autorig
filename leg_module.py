@@ -115,8 +115,8 @@ class LegModule(object):
 
         # 1b. OBJETIVOS PARA ALINEAR CONTROLES (Si es R, usamos L para que el grupo espejo haga el cálculo)
         if self.side == "R":
-            clavicule_start_ctrl_target = self.clavicule_start_guide.replace("R_", "L_")
-            clavicule_ctrl_target = self.clavicule_guide.replace("R_", "L_")
+            clavicule_start_ctrl_target = self.clavicule_start_guide
+            clavicule_ctrl_target = self.clavicule_guide
             th_ctrl_target = self.thigh_guide.replace("R_", "L_")
             kn_ctrl_target = self.knee_guide.replace("R_", "L_")
             an_ctrl_target = self.ankle_guide.replace("R_", "L_")
@@ -301,7 +301,6 @@ class LegModule(object):
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
         cmds.parent(
-            clavicule_start_gen, clavicule_gen,
             ik_root_gen, ik_gen,
             foot_heel_gen, foot_ball_gen, foot_tip_gen,
             foot_bankIn_gen, foot_bankOut_gen, pv_gen,
@@ -347,6 +346,8 @@ class LegModule(object):
                 cmds.setAttr(f"{self.main_rig_grp}.rotateZ", 0)
 
         # ---- JERARQUIA DEL PIE ----
+        
+        cmds.parent(clavicule_gen, clavicule_start_ctrl)
         cmds.parent(foot_heel_gen,    ik_ctrl)
         cmds.parent(foot_bankIn_gen,  foot_heel_ctrl)
         cmds.parent(foot_bankOut_gen, foot_bankIn_ctrl)
@@ -356,6 +357,7 @@ class LegModule(object):
         # ---- FK CONSTRAINTS ----
         for i in range(4):
             cmds.parentConstraint(fk_ctrls[i], self.fk_chain[i])
+        cmds.parentConstraint(clavicule_ctrl, fk_gens[0], mo=True)
 
         # ---- CONSTRAINTS IK ----
         # ---- CONSTRAINTS CLAVICULE ----
@@ -366,6 +368,8 @@ class LegModule(object):
         cmds.parentConstraint(foot_ball_ctrl, ik_footBall,     mo=True)  # ball IK
         cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,      mo=True)  # tip IK
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
+        #cmds.parentConstraint(clavicule_start_gen, clavicule_ctrl, mo=True)
+        cmds.parentConstraint(clavicule_ctrl, ik_root_gen, mo=True)
 
         # ---- SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
@@ -498,16 +502,19 @@ class LegModule(object):
             #cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
         
         
-        chestControl = None
-        if hasattr(self.root_instance, 'chest_instance') and self.root_instance.chest_instance:
-            if hasattr(self.root_instance.chest_instance, 'chest_control_name'):
-                chestControl = self.root_instance.chest_instance.chest_control_name
-                
-        if chestControl and cmds.objExists(chestControl):
+
+        chestControl = "Character_chestFix_CTL"
+        
+        if cmds.objExists(chestControl):
+            # Es mejor restringir el grupo de la clavícula manteniendo el offset
             cmds.parentConstraint(chestControl, ik_root_gen, mo=True)
-            cmds.parentConstraint(chestControl,fk_gens[0], mo= True )
-            print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {chestControl}")
-            
+            cmds.parentConstraint(chestControl, clavicule_start_gen, mo=True)
+            print(f"Conectada la clavícula {self.prefix} al pecho con éxito.")
+        else:
+            # Si entra aquí, es porque el pecho no se ha creado todavía en la escena
+            print(f"ADVERTENCIA: No se pudo encontrar {chestControl}. Asegúrate de construir el ChestModule ANTES que los Limbs.")
+
+        print(f"Build {self.prefix} completo.")        
         # =========================================================
         # CURVATURA
         # =========================================================

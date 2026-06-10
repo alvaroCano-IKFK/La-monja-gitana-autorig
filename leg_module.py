@@ -9,12 +9,16 @@ import hip_module
 from nodeCreator_module import NodeCreator
 import curvature_module
 import twist_module
+import chest_module
 
 
 class LegModule(object):
     """Módulo para construir las piernas, con setup IK/FK y switch."""
 
-    def __init__(self, thigh_guide="hip", 
+    def __init__(self,
+                 clavicule_start_guide="L_clavicule_start",
+                 clavicule_guide="clavicule", 
+                 thigh_guide="hip", 
                  knee_guide="knee", 
                  ankle_guide="ankle",
                  ball_guide ="ball", 
@@ -24,7 +28,9 @@ class LegModule(object):
                  side = "L",
                  hip_instance= None,
                  root_instance= None):
-                     
+        
+        self.clavicule_start_guide = clavicule_start_guide
+        self.clavicule_guide = clavicule_guide             
         self.thigh_guide = thigh_guide
         self.knee_guide = knee_guide
         self.ankle_guide = ankle_guide
@@ -46,7 +52,8 @@ class LegModule(object):
                               "footBankOut": "footBankOutControl",
                               "footRoot": "rootControl",
                               "switch": "switchControl",
-                              "poleVector": "legPoleVectorControl"}
+                              "poleVector": "legPoleVectorControl",
+                              "clavicule":  "claviculeControl"}
         
         self.group_maker = ControlsGroups()
         self.leg_grp = None
@@ -97,6 +104,8 @@ class LegModule(object):
 
     def build(self):
         # 1. POSICIONES REALES (Para que los joints bind/ik/fk nazcan en el esqueleto real R)
+        pos_cl_start = cmds.xform(self.clavicule_start_guide, q=True, ws=True, t=True)
+        pos_cl = cmds.xform(self.clavicule_guide, q=True, ws=True, t=True)
         pos_th = cmds.xform(self.thigh_guide, q=True, ws=True, t=True)
         pos_kn = cmds.xform(self.knee_guide, q=True, ws=True, t=True)
         pos_an = cmds.xform(self.ankle_guide, q=True, ws=True, t=True)
@@ -106,6 +115,8 @@ class LegModule(object):
 
         # 1b. OBJETIVOS PARA ALINEAR CONTROLES (Si es R, usamos L para que el grupo espejo haga el cálculo)
         if self.side == "R":
+            clavicule_start_ctrl_target = self.clavicule_start_guide.replace("R_", "L_")
+            clavicule_ctrl_target = self.clavicule_guide.replace("R_", "L_")
             th_ctrl_target = self.thigh_guide.replace("R_", "L_")
             kn_ctrl_target = self.knee_guide.replace("R_", "L_")
             an_ctrl_target = self.ankle_guide.replace("R_", "L_")
@@ -115,6 +126,8 @@ class LegModule(object):
             switch_ctrl_target = self.thigh_guide.replace("R_", "L_")
             
         else:
+            clavicule_start_ctrl_target = self.clavicule_start_guide
+            clavicule_ctrl_target = self.clavicule_guide
             th_ctrl_target = self.thigh_guide
             kn_ctrl_target = self.knee_guide
             an_ctrl_target = self.ankle_guide
@@ -124,6 +137,14 @@ class LegModule(object):
             switch_ctrl_target = self.thigh_guide
 
         # 2. BIND CHAIN (Usa posiciones reales)
+        cmds.select(clear=True)
+        b_cl_start = cmds.joint(n=f"{self.prefix}_claviculeStart_bind_JNT", p=pos_cl_start)
+        cmds.matchTransform(b_cl_start, self.clavicule_start_guide, rot=True, pos=True)
+        
+        cmds.select(clear=True)
+        c_cl = cmds.joint(n=f"{self.prefix}_clavicule_bind_JNT", p=pos_cl)
+        cmds.matchTransform(c_cl, self.clavicule_guide, rot=True, pos=True)
+        
         cmds.select(clear=True)
         b_th = cmds.joint(n=f"{self.prefix}_{self.names[0]}_bind_JNT", p=pos_th)
         cmds.matchTransform(b_th, self.thigh_guide, rot=True, pos=False)
@@ -141,7 +162,10 @@ class LegModule(object):
         b_tip = cmds.joint(n=f"{self.prefix}_{self.names[4]}_bind_JNT", p=pos_tip)         
         cmds.matchTransform(b_tip, self.tip_guide, rot=True, pos=False)
         cmds.select(clear=True)        
-               
+        
+        
+        cmds.parent(b_th, c_cl)
+        cmds.parent(c_cl, b_cl_start)       
         cmds.parent(b_kn, b_th)
         cmds.parent(b_an, b_kn)
         cmds.parent(b_ba, b_an)
@@ -193,6 +217,20 @@ class LegModule(object):
         cmds.select(clear=True)
         
         # IK Controls (Alineados con los targets corregidos)
+        
+        clavicule_start_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name=self.styles["clavicule"], 
+            final_name=f"{self.prefix}_claviculeStart_CTRL"
+        )
+        
+        clavicule_start_gen = self.create_offset_group(clavicule_start_ctrl, clavicule_start_ctrl_target, orient=True)
+        
+        clavicule_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name=self.styles["clavicule"], 
+            final_name=f"{self.prefix}_clavicule_CTRL"
+        )
+        clavicule_gen = self.create_offset_group(clavicule_ctrl, clavicule_ctrl_target, orient=True)
+        
         ik_root_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["footRoot"], 
             final_name=f"{self.prefix}_legRoot_CTRL"
@@ -262,8 +300,13 @@ class LegModule(object):
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
-        cmds.parent(ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
-
+        cmds.parent(
+            clavicule_start_gen, clavicule_gen,
+            ik_root_gen, ik_gen,
+            foot_heel_gen, foot_ball_gen, foot_tip_gen,
+            foot_bankIn_gen, foot_bankOut_gen, pv_gen,
+            self.ik_grp
+        )
         # FK Setup (Alineado con targets corregidos y solucionado el desfase del toe_tip)
         fk_ctrls = []
         fk_gens = []
@@ -315,10 +358,13 @@ class LegModule(object):
             cmds.parentConstraint(fk_ctrls[i], self.fk_chain[i])
 
         # ---- CONSTRAINTS IK ----
-        cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
-        cmds.parentConstraint(foot_ball_ctrl, ik_h,          mo=True)
-        cmds.parentConstraint(foot_ball_ctrl, ik_footBall,   mo=True)
-        cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,    mo=True)
+        # ---- CONSTRAINTS CLAVICULE ----
+        cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)
+        cmds.parentConstraint(clavicule_ctrl,       c_cl,       mo=True)
+        cmds.pointConstraint(ik_root_ctrl,   self.ik_chain[0], mo=True)
+        cmds.parentConstraint(ik_ctrl,       ik_h,             mo=True)  # ✅ ankle IK
+        cmds.parentConstraint(foot_ball_ctrl, ik_footBall,     mo=True)  # ball IK
+        cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,      mo=True)  # tip IK
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
 
         # ---- SWITCH atributo + visibilidad ----
@@ -427,8 +473,7 @@ class LegModule(object):
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(self.leg_grp, rig_grp)
             cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
-            cmds.parent(self.ik_chain[0], self.fk_chain[0], self.bind_chain[0], self.leg_grp)
-            
+            cmds.parent(b_cl_start, self.leg_grp)            
         cmds.parent(switch_gen, self.main_rig_grp)    
             
         local_ctl = self.root_instance.localCtl if self.root_instance else None
@@ -438,24 +483,34 @@ class LegModule(object):
                 cmds.parent(self.main_rig_grp, local_ctl)
 
         # Buscar en la instancia del Hip y NO en el root_instance
-        hipControl = None
-        if hasattr(self, 'hip_instance') and self.hip_instance:
-            if hasattr(self.hip_instance, 'hip_control_name'):
-                hipControl = self.hip_instance.hip_control_name
+        #hipControl = None
+        #if hasattr(self, 'hip_instance') and self.hip_instance:
+            #if hasattr(self.hip_instance, 'hip_control_name'):
+                #hipControl = self.hip_instance.hip_control_name
 
         # APLICAR EL POINT CONSTRAINT AL HIP CONTROL
-        if hipControl and cmds.objExists(hipControl):
+        #if hipControl and cmds.objExists(hipControl):
             # Restringimos el grupo principal de controles de la pierna (main_rig_grp) a la cadera
-            cmds.parentConstraint(hipControl, ik_root_gen, mo=True)
-            cmds.parentConstraint(hipControl,fk_gens[0], mo= True )
-            print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {hipControl}")
-        else:
-            cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
+            #cmds.parentConstraint(hipControl, ik_root_gen, mo=True)
+            #cmds.parentConstraint(hipControl,fk_gens[0], mo= True )
+            #print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {hipControl}")
+        #else:
+            #cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
+        
+        
+        chestControl = None
+        if hasattr(self.root_instance, 'chest_instance') and self.root_instance.chest_instance:
+            if hasattr(self.root_instance.chest_instance, 'chest_control_name'):
+                chestControl = self.root_instance.chest_instance.chest_control_name
+                
+        if chestControl and cmds.objExists(chestControl):
+            cmds.parentConstraint(chestControl, ik_root_gen, mo=True)
+            cmds.parentConstraint(chestControl,fk_gens[0], mo= True )
+            print(f"[{self.prefix}] Vinculado exitosamente mediante pointConstraint a: {chestControl}")
             
         # =========================================================
         # CURVATURA
         # =========================================================
-        import curvature_module
 
         leg_curvature = curvature_module.CurvatureModule(
             name=f"{self.prefix}_Leg_Curvature",

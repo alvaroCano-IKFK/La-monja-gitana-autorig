@@ -83,6 +83,8 @@ class BuildRig(object):
 
         # En el método build de CharacterGuides
         self.leg_rig = leg_module.LegModule(
+                clavicule_start_guide="L_clavicule_start",
+                clavicule_guide="L_clavicule",
                 thigh_guide="L_hip",
                 knee_guide="L_knee",
                 ankle_guide="L_ankle",
@@ -96,6 +98,8 @@ class BuildRig(object):
         self.leg_rig.build()
 
         self.mirror_leg_rig = leg_module.LegModule(
+                clavicule_start_guide="R_clavicule_start",
+                clavicule_guide="R_clavicule",
                 thigh_guide="R_hip",
                 knee_guide="R_knee",
                 ankle_guide="R_ankle",

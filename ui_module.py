@@ -9,6 +9,8 @@ import limbs_module
 import reorient_module
 import mirror_module
 import build_module
+import importlib
+importlib.reload(mirror_module)
 
 
 class UI(object):
@@ -17,7 +19,12 @@ class UI(object):
         self.name = name
         self.character = guides_module.CharacterGuides()
         self.reorienter = reorient_module.Reorienter()
-        self.mirror_guides = mirror_module.Mirror()
+        self.mirror_guides = mirror_module.Mirror(
+            clavicule_guide="L_clavicule_start",
+            clavicule_guide_back="L_clavicule_start_back",
+            foot_joints=["L_ball", "L_toe_tip", "L_heel"],
+            foot_joints_back=["L_ball_back", "L_toe_tip_back", "L_heel_back"]
+        )
         self.builder = build_module.BuildRig()
 
     def main_UI(self):

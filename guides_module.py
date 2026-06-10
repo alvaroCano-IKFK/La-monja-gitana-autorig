@@ -207,7 +207,44 @@ class LegGuides(LimbGuides):
         self.guides_group = cmds.group(clav_start, n="leg_guides_GRP")
 
         return self.guides_group
+    
+class BackLegGuides(LegGuides): 
+    def __init__(self, clavicule_start, limb_root, limb_mid, limb_end,
+                 clavicule_start_pos, limb_root_pos, limb_mid_pos, limb_end_pos):
+        
+        super(BackLegGuides, self).__init__(
+            clavicule_start, clavicule_start,   # passa clavicule_start dos vegades per no trencar LegGuides
+            limb_root, limb_mid, limb_end,
+            clavicule_start_pos, clavicule_start_pos,  # idem amb la pos
+            limb_root_pos, limb_mid_pos, limb_end_pos
+        )
+        self.group_name = "back_leg_guides_GRP"
 
+    def create_chain(self):
+        """
+        Cadena sense clavicule: clavicule_start -> hip -> knee -> ankle
+        """
+        cmds.select(clear=True)
+
+        hip   = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
+        knee  = cmds.joint(n=self.limb_mid,  p=self.limb_mid_pos)
+        ankle = cmds.joint(n=self.limb_end,  p=self.limb_end_pos)
+
+        cmds.joint(hip, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
+
+        cmds.select(clear=True)
+        clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)
+
+        # Hip directament sota clavicule_start (sense clavicule intermedi)
+        cmds.parent(hip, clav_start)
+
+        cmds.joint(clav_start, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
+
+        self.guides_group = cmds.group(clav_start, n=self.group_name)
+
+        return self.guides_group
 ############################################################
 #FOOT
 ############################################################
@@ -306,6 +343,15 @@ class CharacterGuides(object):
             (3.6, -27, 12)
         )
         leg_instance.create_chain()
+        
+        back_leg_instance = BackLegGuides(
+            "L_clavicule_start_back","L_hip_back", "L_knee_back", "L_ankle_back",
+            (3.6,2,-17),
+            (3.6, -5, -14),
+            (3.6, -16.5, -19),
+            (3.6, -27, -19.5)
+        )
+        back_leg_instance.create_chain()
 
 
 
@@ -320,12 +366,24 @@ class CharacterGuides(object):
             (0,-5,-3)
         )
         foot_instance.foot_guides()
+        
+        back_foot_instance = FootGuides(
+            back_leg_instance,
+            "L_ball_back",
+            "L_toe_tip_back",
+            "L_heel_back",
+            (0, -2, 1),
+            (0, -5, 3),
+            (0, -5, -3)
+        )
+        back_foot_instance.foot_guides()
        
         #Llista amb tots els grups de guies creats       
         guide_groups = [
             spine_instance.guides_group,
             neck_instance.guides_group,
             leg_instance.guides_group,
+            back_leg_instance.guides_group,
          ]
 
         # Filtra nomes els grups que existeixen

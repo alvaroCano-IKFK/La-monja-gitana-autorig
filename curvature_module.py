@@ -187,18 +187,22 @@ class CurvatureModule(NodeCreator):
         # ------------------------------------------------------------------
         cmds.pointConstraint(originals[4], duplicates[4], maintainOffset=False)
         cmds.pointConstraint(originals[2], duplicates[2], maintainOffset=False)
+
+        # Guardar posiciones world ANTES de parentar para que la orientacion del padre
+        # (distinta en L vs R) no desplace los locators hijos al recalcular espacio local.
+        ws_pos2 = cmds.xform(originals[2], q=True, ws=True, t=True)
+        ws_pos4 = cmds.xform(originals[4], q=True, ws=True, t=True)
         cmds.parent(originals[2], originals[4], originals[3])
+        # Restaurar posiciones world tras el parent
+        cmds.xform(originals[2], ws=True, t=ws_pos2)
+        cmds.xform(originals[4], ws=True, t=ws_pos4)
 
         if self.mid_joint and cmds.objExists(self.mid_joint):
             if 3 in originals:
                 cmds.pointConstraint(self.mid_joint, originals[3], maintainOffset=True)
 
-        if self.mid_joint and self.start_joint and \
-           cmds.objExists(self.mid_joint) and cmds.objExists(self.start_joint):
-            orient = cmds.orientConstraint(
-                self.start_joint, self.mid_joint, originals[3], maintainOffset=True
-            )
-            cmds.setAttr(f"{orient[0]}.interpType", 2)
+        # orientConstraint eliminado: los locators solo necesitan posicion, no orientacion.
+        # El orientConstraint era la causa del flip en L al rotar originals[3] y desplazar sus hijos.
 
         # ------------------------------------------------------------------
         # CONEXIÓN MATRICIAL → degree2_curve controlPoints

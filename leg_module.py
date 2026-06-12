@@ -377,7 +377,10 @@ class LegModule(object):
         # ---- FK CONSTRAINTS ----
         for i in range(4):
             cmds.parentConstraint(fk_ctrls[i], self.fk_chain[i])
-        cmds.parentConstraint(clavicule_ctrl, fk_gens[0], mo=True)
+        # El OFF del thigh FK recibe el constraint de la clavicula.
+        # GRP/SPC son para posicionamiento, OFF es el nivel de constraint, SDK/ANIM para animacion.
+        thigh_fk_off = fk_gens[0].replace("_GRP", "_OFF")
+        cmds.parentConstraint(clavicule_ctrl, thigh_fk_off, mo=True)
 
         # ---- CONSTRAINTS IK ----
         # ---- CONSTRAINTS CLAVICULE ----

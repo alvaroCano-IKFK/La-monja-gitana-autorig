@@ -21,6 +21,7 @@ import body_module
 import spaceSwitching_module
 import headSpace_module
 import curvature_module
+import soft_module
 
 
 
@@ -153,7 +154,48 @@ class BuildRig(object):
                 root_instance=self.root_rig
             )
         skn.build()
-                        
+        
+        soft_leg_L = soft_module.SoftIkModule(side="L", prefix="Leg")
+        soft_leg_L.apply_soft_ik(
+            ik_ctrl="L_Leg_legIk_CTRL",
+            ik_handle="L_Leg_IKH",
+            root_ctrl="L_Leg_legRoot_CTRL",
+            root_jnt="L_Leg_thigh_ik_JNT",
+            mid_jnt="L_Leg_knee_ik_JNT",
+            global_ctrl="Character_global_CTL"
+        )
+        
+        soft_leg_R = soft_module.SoftIkModule(side="R", prefix="Leg")
+        soft_leg_R.apply_soft_ik(
+            ik_ctrl="R_Leg_legIk_CTRL",
+            ik_handle="R_Leg_IKH",
+            root_ctrl="R_Leg_legRoot_CTRL",
+            root_jnt="R_Leg_thigh_ik_JNT",
+            mid_jnt="R_Leg_knee_ik_JNT",
+            global_ctrl="Character_global_CTL"
+        )
+
+        soft_arm_L = soft_module.SoftIkModule(side="L", prefix="Arm")
+        soft_arm_L.apply_soft_ik(
+            ik_ctrl="L_Arm_armIk_CTRL",
+            ik_handle="L_Arm_IKH",
+            root_ctrl="L_Arm_armRoot_CTRL",
+            mid_jnt="L_Arm_elbow_ik_JNT",
+            root_jnt="L_Arm_shoulder_ik_JNT",
+            global_ctrl="Character_global_CTL"
+
+        )
+        
+        soft_arm_R = soft_module.SoftIkModule(side="R", prefix="Arm")
+        soft_arm_R.apply_soft_ik(
+            ik_ctrl="R_Arm_armIk_CTRL",
+            ik_handle="R_Arm_IKH",
+            root_ctrl="R_Arm_armRoot_CTRL",
+            mid_jnt="R_Arm_elbow_ik_JNT",
+            root_jnt="R_Arm_shoulder_ik_JNT",
+            global_ctrl="Character_global_CTL"
+            
+        )                
         
 
         # =========================================================================

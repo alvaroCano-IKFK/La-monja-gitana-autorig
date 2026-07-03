@@ -21,71 +21,83 @@ class SoftIkModule(object):
         )
         return creator.create()
 
-    def apply_soft_ik(self, ik_ctrl, ik_handle, root_jnt, bone1_len, bone2_len):
+    def apply_soft_ik(self, ik_ctrl, ik_handle, root_jnt, root_ctrl, mid_jnt, global_ctrl):
         """
         Crea las conexiones de nodos para el Soft IK.
-        
+
         Args:
             ik_ctrl (str): Nombre del control IK (donde está el atributo .Soft).
             ik_handle (str): Nombre del IK Handle a suavizar.
-            root_jnt (str): El joint inicial de la cadena (Thigh o Shoulder).
-            bone1_len (float): Longitud del primer hueso (p.ej. de Thigh a Knee).
-            bone2_len (float): Longitud del segundo hueso (p.ej. de Knee a Ankle).
+            root_jnt (str): El joint IK inicial de la cadena (Thigh o Shoulder).
+            mid_jnt (str): El joint IK intermedio (Knee o Elbow).
+
         """
         # Asegurar que el atributo Soft existe, si no, lo creamos
         if not cmds.attributeQuery("Soft", node=ik_ctrl, exists=True):
             cmds.addAttr(ik_ctrl, ln="Soft", at="double", min=0, max=1, dv=0, k=True)
 
-        # Total de la longitud de la cadena estirada (Dmax)
-        d_max = bone1_len + bone2_len
 
-        # 1. Medir la distancia real entre el Root y el Control IK
-        # Usamos un nodo distanceBetween para calcular la distancia dinámica en tiempo real
-        dist_node = self._create_node("distanceBetween", "softIk", "distance")
-        
-        # Para medir distancias de forma limpia, conectamos las matrices del mundo
-        # a través de nodos decomposeMatrix (o directo si usas locator/joints)
-        root_decomp = self._create_node("decomposeMatrix", "root", "matrix")
-        ctrl_decomp = self._create_node("decomposeMatrix", "ctrl", "matrix")
-        
-        cmds.connectAttr(f"{root_jnt}.worldMatrix[0]", f"{root_decomp}.inputMatrix")
-        cmds.connectAttr(f"{ik_ctrl}.worldMatrix[0]", f"{ctrl_decomp}.inputMatrix")
-        
-        cmds.connectAttr(f"{root_decomp}.outputTranslate", f"{dist_node}.point1")
-        cmds.connectAttr(f"{ctrl_decomp}.outputTranslate", f"{dist_node}.point2")
 
-        # --- RED DE NODOS MATEMÁTICOS PARA SOFT IK ---
-        # Formula básica: Si Distancia > (Dmax - Soft), aplicar descompresión exponencial.
+        # 1. Crear los dos multiplyDivide
+        #Saber que el nodo de multiplicación es para multiplicar la longitud de cada hueso por el valor del atributo Soft.
+        upperLenghtMult_node = self._create_node("floatMath", "upperLengthMult", "FLM")
+        lowerLenghtMult_node = self._create_node("floatMath", "lowerLengthMult", "FLM")
+        cmds.setAttr(f"{upperLenghtMult_node}.operation", 2)
+        cmds.setAttr(f"{lowerLenghtMult_node}.operation", 2)
         
-        # Nodo para pasar el valor estático Dmax a la red
-        pma_calc = self._create_node("plusMinusAverage", "softIk", "math")
+
+        # 2. Leer el translateX de cada joint IK y "pegarlo" como valor fijo en Float A
+        root_tx = cmds.getAttr(f"{root_jnt}.translateX")
+        mid_tx = cmds.getAttr(f"{mid_jnt}.translateX")
+
+        cmds.setAttr(f"{upperLenghtMult_node}.floatA", root_tx)
+        cmds.setAttr(f"{lowerLenghtMult_node}.floatA", mid_tx)
         
-        # Aquí crearías toda tu lógica matemática (Multiplicaciones, potencias o condicionales).
-        # Como el Soft IK puramente matemático por nodos puede volverse una "telaraña" enorme,
-        # una alternativa muy limpia y usada en la industria es usar una Expression Node temporalmente:
+        #Unir los FLM anteriores a un nuevo nodo de Float Math que sume sus resultados y los multiplique por el valor del atributo Soft.
+        fullLenght_node = self._create_node("floatMath", "FullLength", "FLM") #queda en dafault pq es Add
         
-        expr_name = f"{self.prefix}_softIK_EXPR"
+        cmds.connectAttr(f"{upperLenghtMult_node}.outFloat", f"{fullLenght_node}.floatA")
+        cmds.connectAttr(f"{lowerLenghtMult_node}.outFloat", f"{fullLenght_node}.floatB")
         
-        # Creamos la expresión de Maya que lee del distanceBetween y escribe en el IK Handle
-        # NOTA: Ajusta la fórmula a la variación matemática exacta que prefieras.
-        expression_string = (
-            f"float $d = {dist_node}.distance;\n"
-            f"float $da = {d_max};\n"
-            f"float $s = {ik_ctrl}.Soft;\n"
-            f"if ($s > 0.001) {{\n"
-            f"    float $ds = $da - $s;\n"
-            f"    if ($d > $ds) {{\n"
-            f"        {ik_handle}.translateX = $ds + $s * (1 - exp(-($d - $ds) / $s));\n"
-            f"    }} else {{\n"
-            f"        {ik_handle}.translateX = $d;\n"
-            f"    }}\n"
-            f"}} else {{\n"
-            f"    {ik_handle}.translateX = $d;\n"
-            f"}}"
-        )
+        # 4. Distancia REAL entre el Root y el Control IK (viva, se recalcula siempre)
+        distance_node = self._create_node("distanceBetween", "rootToIk", "DIST")
         
-        # Nota: La fórmula asume que el IK Handle se mueve en un eje local estirado. 
-        # Si tu IK Handle está metido en grupos intermedios, aplicas el output a la traslación de ese grupo.
+        cmds.connectAttr(f"{root_ctrl}.worldMatrix[0]", f"{distance_node}.inMatrix1", force=True)
+        cmds.connectAttr(f"{ik_ctrl}.worldMatrix[0]",  f"{distance_node}.inMatrix2", force=True)
         
-        cmds.expression(n=expr_name, s=expression_string, cat=True)
+        #5. Float math que divida la distancia total entre el global scale 
+        distanceToControlNormalized_node = self._create_node("floatMath", "distanceToControlNormalized", "FLM")
+        cmds.setAttr(f"{distanceToControlNormalized_node}.operation", 3) #Divide
+        cmds.connectAttr(f"{distance_node}.distance", f"{distanceToControlNormalized_node}.floatA")
+        cmds.connectAttr(f"{global_ctrl}.Global_Scale", f"{distanceToControlNormalized_node}.floatB")
+        #cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{distanceToControlNormalized_node}.floatB")
+        
+        #6. Conectar el soft a un remapValue
+        remapValue_node = self._create_node("remapValue", "softValue", "RMV")
+        cmds.connectAttr(f"{ik_ctrl}.Soft", f"{remapValue_node}.inputValue")
+        cmds.setAttr(f"{remapValue_node}.outputMin",0.001)
+        
+        #Conseguir la diferencia entre full lenght y la initial distance = soft max distance
+        outFullLenght_node = self._create_node("floatConstant", "outFullLenght", "FLC")
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{outFullLenght_node}.inFloat")
+        
+        outDistanceToControlNormalized_node = self._create_node("floatConstant", "outDistanceToControlNormalized", "FLC")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{outDistanceToControlNormalized_node}.inFloat")
+        
+        difference_node = self._create_node("floatMath", "difference", "FLM")
+        cmds.setAttr(f"{difference_node}.operation", 1) #Subtract
+        cmds.connectAttr(f"{outFullLenght_node}.outFloat", f"{difference_node}.floatB")
+        cmds.connectAttr(f"{outDistanceToControlNormalized_node}.outFloat", f"{difference_node}.floatA")
+        
+        #poner el valor de la  diferencia como outMax en el remapValue
+        difference_value = cmds.getAttr(f"{difference_node}.outFloat")
+        cmds.setAttr(f"{remapValue_node}.outputMax", difference_value)
+        
+        #7. Soft Max
+        
+        softMax_node = self._create_node("floatMath", "softMax", "FLM")
+        cmds.setAttr(f"{softMax_node}.operation", 1) #Substract
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{softMax_node}.floatA")
+        cmds.connectAttr(f"{remapValue_node}.outValue", f"{softMax_node}.floatB")
+
         print(f"[{self.prefix}] Sistema Soft IK conectado centralizadamente.")

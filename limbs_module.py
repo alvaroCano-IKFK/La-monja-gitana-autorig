@@ -274,7 +274,7 @@ class LimbModule(object):
 
 
         # IK constraints
-        cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
+        #cmds.parentConstraint(ik_ctrl, ik_h, mo=True)
         cmds.parentConstraint(clavicule_ctl, ik_root_gen, mo=True)
         cmds.parent(ik_h, self.arm_grp)
 

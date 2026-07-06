@@ -91,7 +91,7 @@ class NodeCreator(object):
         if cmds.objectType(node_name, isAType="dagNode"): #Aixo tambe lo del isAType
             
             #Si el pare existeix, deixa fer el parent
-            if cmds.objExists(self.parent):
+            if self.parent and cmds.objExists(self.parent):
                 cmds.parent(node_name, self.parent)
 
     def create(self):

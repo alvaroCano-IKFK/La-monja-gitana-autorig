@@ -22,7 +22,7 @@ class SoftIkModule(object):
         )
         return creator.create()
 
-    def apply_soft_ik(self, ik_ctrl, ik_handle, root_jnt, root_ctrl, mid_jnt, global_ctrl):
+    def apply_soft_ik(self, ik_ctrl, ik_handle, root_jnt, root_ctrl, mid_jnt, global_ctrl, ik_hdl):
         """
         Crea las conexiones de nodos para el Soft IK.
 
@@ -56,7 +56,6 @@ class SoftIkModule(object):
         
         #Unir los FLM anteriores a un nuevo nodo de Float Math que sume sus resultados y los multiplique por el valor del atributo Soft.
         fullLenght_node = self._create_node("floatMath", "FullLength", "FLM") #queda en dafault pq es Add
-        
         cmds.connectAttr(f"{upperLenghtMult_node}.outFloat", f"{fullLenght_node}.floatA")
         cmds.connectAttr(f"{lowerLenghtMult_node}.outFloat", f"{fullLenght_node}.floatB")
         
@@ -142,5 +141,54 @@ class SoftIkModule(object):
         softConstantAdd_node = self._create_node("floatMath", "softConstantAdd", "FLM")
         cmds.connectAttr(f"{oneMinusSoftExponentBySoftValue_node}.outFloat", f"{softConstantAdd_node}.floatA")
         cmds.connectAttr(f"{softDistanceSubstact_node}.outFloat", f"{softConstantAdd_node}.floatB")
+        
+        #14 soft ratio
+        softRatio_node = self._create_node("floatMath", "softRatio", "FLM")
+        cmds.setAttr(f"{softRatio_node}.operation", 3) #Divide
+        cmds.connectAttr(f"{softConstantAdd_node}.outFloat", f"{softRatio_node}.floatA")
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{softRatio_node}.floatB")
+        
+        #15 length ratio
+        lengthRatio_node = self._create_node("floatMath", "lengthRatio", "FLM")
+        cmds.setAttr(f"{lengthRatio_node}.operation", 3) #Divide
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{lengthRatio_node}.floatB")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{lengthRatio_node}.floatA")
+        
+        #16. distance to control under length ratio
+        distanceToControlUnderLengthRatio_node = self._create_node("floatMath", "distanceToControlUnderLengthRatio", "FLM")
+        cmds.setAttr(f"{distanceToControlUnderLengthRatio_node}.operation", 3) #Divide
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatA")
+        cmds.connectAttr(f"{lengthRatio_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatB")
+        
+        #17 multiply the two ratios
+        softEffectorDistance_node = self._create_node("floatMath", "softEffectorDistanceMult", "FLM")
+        cmds.setAttr(f"{softEffectorDistance_node}.operation", 2) #Multiply
+        cmds.connectAttr(f"{distanceToControlUnderLengthRatio_node}.outFloat", f"{softEffectorDistance_node}.floatA")
+        cmds.connectAttr(f"{softRatio_node}.outFloat", f"{softEffectorDistance_node}.floatB")
+        
+        #18 Rangos de afectacion del soft
+        condition_node = self._create_node("condition", "softCondition", "COND")
+        cmds.setAttr(f"{condition_node}.operation", 2) #Greater Than
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{condition_node}.firstTerm")
+        cmds.connectAttr(f"{softDistanceSubstact_node}.outFloat", f"{condition_node}.secondTerm")
+        cmds.connectAttr(f"{softEffectorDistance_node}.outFloat", f"{condition_node}.colorIfTrueR")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{condition_node}.colorIfFalseR")
+
+        #crear TRNS y posicionarlos en los joints de la cadena IK con las mismas posiciones y rotaciones, para que el soft IK se aplique a la cadena de joints.
+        softOffset_node = cmds.group(empty=True, name=f"{self.prefix}_softOffset_TRN")
+        softTransform_node = cmds.group(empty=True, name=f"{self.prefix}_softTransform_TRN")
+        cmds.parent(softTransform_node, softOffset_node)
+        cmds.matchTransform(softOffset_node, root_jnt, pos=True, rot=True)
+        
+        cmds.pointConstraint(root_ctrl, softOffset_node, mo=False)
+        
+        cmds.aimConstraint(ik_ctrl, softOffset_node, mo=False, aimVector=(1, 0, 0), upVector=(0, 1, 0), worldUpType="vector", worldUpVector=(0, 1, 0))
+        
+        #Conectar el resultado del condition al translateX del softTransform_node
+        cmds.connectAttr(f"{condition_node}.outColorR", f"{softTransform_node}.translateX")
+        
+        #Se elimina el parent constraint entre el ik hdl y el ik ctrl para sustituirlo por este constraint
+        cmds.pointConstraint(softTransform_node, ik_hdl, mo=False)
 
         print(f"[{self.prefix}] Sistema Soft IK conectado centralizadamente.")
+

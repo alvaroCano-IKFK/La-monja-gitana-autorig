@@ -316,7 +316,7 @@ class LegModule(object):
 
         # ---- CONSTRAINTS IK ----
         cmds.pointConstraint(ik_root_ctrl, self.ik_chain[0], mo=True)
-        cmds.parentConstraint(foot_ball_ctrl, ik_h,          mo=True)
+       # cmds.parentConstraint(foot_ball_ctrl, ik_h,          mo=True)
         cmds.parentConstraint(foot_ball_ctrl, ik_footBall,   mo=True)
         cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,    mo=True)
         cmds.poleVectorConstraint(pv_ctrl, ik_h)

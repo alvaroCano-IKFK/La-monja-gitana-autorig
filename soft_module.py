@@ -22,7 +22,7 @@ class SoftIkModule(object):
         )
         return creator.create()
 
-    def apply_soft_ik(self, ik_ctrl, ik_handle, root_jnt, root_ctrl, mid_jnt, global_ctrl, ik_hdl):
+    def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt):
         """
         Crea las conexiones de nodos para el Soft IK.
 
@@ -48,11 +48,11 @@ class SoftIkModule(object):
         
 
         # 2. Leer el translateX de cada joint IK y "pegarlo" como valor fijo en Float A
-        root_tx = cmds.getAttr(f"{root_jnt}.translateX")
+        low_tx = cmds.getAttr(f"{low_jnt}.translateX")
         mid_tx = cmds.getAttr(f"{mid_jnt}.translateX")
 
-        cmds.setAttr(f"{upperLenghtMult_node}.floatA", root_tx)
-        cmds.setAttr(f"{lowerLenghtMult_node}.floatA", mid_tx)
+        cmds.setAttr(f"{upperLenghtMult_node}.floatA", mid_tx)
+        cmds.setAttr(f"{lowerLenghtMult_node}.floatA", low_tx)
         
         #Unir los FLM anteriores a un nuevo nodo de Float Math que sume sus resultados y los multiplique por el valor del atributo Soft.
         fullLenght_node = self._create_node("floatMath", "FullLength", "FLM") #queda en dafault pq es Add
@@ -72,10 +72,7 @@ class SoftIkModule(object):
         cmds.connectAttr(f"{global_ctrl}.Global_Scale", f"{distanceToControlNormalized_node}.floatB")
         #cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{distanceToControlNormalized_node}.floatB")
         
-        #6. Conectar el soft a un remapValue
-        remapValue_node = self._create_node("remapValue", "softValue", "RMV")
-        cmds.connectAttr(f"{ik_ctrl}.Soft", f"{remapValue_node}.inputValue")
-        cmds.setAttr(f"{remapValue_node}.outputMin",0.001)
+
         
         #Conseguir la diferencia entre full lenght y la initial distance = soft max distance
         outFullLenght_node = self._create_node("floatConstant", "outFullLenght", "FLC")
@@ -86,11 +83,19 @@ class SoftIkModule(object):
         
         difference_node = self._create_node("floatMath", "difference", "FLM")
         cmds.setAttr(f"{difference_node}.operation", 1) #Subtract
-        cmds.connectAttr(f"{outFullLenght_node}.outFloat", f"{difference_node}.floatB")
-        cmds.connectAttr(f"{outDistanceToControlNormalized_node}.outFloat", f"{difference_node}.floatA")
+        cmds.connectAttr(f"{outFullLenght_node}.outFloat", f"{difference_node}.floatA")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{difference_node}.floatB")
+        
+        differenceValueConstant_node = self._create_node("floatConstant", "differenceValueConstant", "FLC")
+        cmds.connectAttr(f"{difference_node}.outFloat", f"{differenceValueConstant_node}.inFloat")
+        
+        #6. Conectar el soft a un remapValue
+        remapValue_node = self._create_node("remapValue", "softValue", "RMV")
+        cmds.connectAttr(f"{ik_ctrl}.Soft", f"{remapValue_node}.inputValue")
+        cmds.setAttr(f"{remapValue_node}.outputMin",0.001)
         
         #poner el valor de la  diferencia como outMax en el remapValue
-        difference_value = cmds.getAttr(f"{difference_node}.outFloat")
+        difference_value = cmds.getAttr(f"{differenceValueConstant_node}.outFloat")
         cmds.setAttr(f"{remapValue_node}.outputMax", difference_value)
         
         #7. Soft Max
@@ -104,7 +109,7 @@ class SoftIkModule(object):
         #Distance to control minus soft value
         distanceToControl_node = self._create_node("floatMath", "distanceToControlMinusSoftValue", "FLM")
         cmds.setAttr(f"{distanceToControl_node}.operation", 1) #Subtract
-        cmds.connectAttr(f"{outDistanceToControlNormalized_node}.outFloat", f"{distanceToControl_node}.floatA")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{distanceToControl_node}.floatA")
         cmds.connectAttr(f"{softDistanceSubstact_node}.outFloat", f"{distanceToControl_node}.floatB")
 
         #8 divide soft distance by soft value
@@ -158,7 +163,7 @@ class SoftIkModule(object):
         distanceToControlUnderLengthRatio_node = self._create_node("floatMath", "distanceToControlUnderLengthRatio", "FLM")
         cmds.setAttr(f"{distanceToControlUnderLengthRatio_node}.operation", 3) #Divide
         cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatA")
-        cmds.connectAttr(f"{lengthRatio_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatB")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatB")
         
         #17 multiply the two ratios
         softEffectorDistance_node = self._create_node("floatMath", "softEffectorDistanceMult", "FLM")

@@ -1,4 +1,5 @@
 import maya.cmds as cmds
+import math
 from nodeCreator_module import NodeCreator
 
 class SoftIkModule(object):
@@ -95,9 +96,51 @@ class SoftIkModule(object):
         
         #7. Soft Max
         
-        softMax_node = self._create_node("floatMath", "softMax", "FLM")
-        cmds.setAttr(f"{softMax_node}.operation", 1) #Substract
-        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{softMax_node}.floatA")
-        cmds.connectAttr(f"{remapValue_node}.outValue", f"{softMax_node}.floatB")
+        softDistanceSubstact_node = self._create_node("floatMath", "softDistanceSubstact_node", "FLM")
+        cmds.setAttr(f"{softDistanceSubstact_node}.operation", 1) #Substract
+        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{softDistanceSubstact_node}.floatA")
+        cmds.connectAttr(f"{remapValue_node}.outValue", f"{softDistanceSubstact_node}.floatB")
+        
+        
+        #Distance to control minus soft value
+        distanceToControl_node = self._create_node("floatMath", "distanceToControlMinusSoftValue", "FLM")
+        cmds.setAttr(f"{distanceToControl_node}.operation", 1) #Subtract
+        cmds.connectAttr(f"{outDistanceToControlNormalized_node}.outFloat", f"{distanceToControl_node}.floatA")
+        cmds.connectAttr(f"{softDistanceSubstact_node}.outFloat", f"{distanceToControl_node}.floatB")
+
+        #8 divide soft distance by soft value
+        softExponentDivision_node = self._create_node("floatMath", "softExponentDivision", "FLM")
+        cmds.setAttr(f"{softExponentDivision_node}.operation", 3) #Divide
+        cmds.connectAttr(f"{distanceToControl_node}.outFloat", f"{softExponentDivision_node}.floatA")
+        cmds.connectAttr(f"{remapValue_node}.outValue", f"{softExponentDivision_node}.floatB")
+        
+        #9 multiply by -1
+        softExponentDivisionNegate_node = self._create_node("floatMath", "softExponentDivisionNegate", "FLM")
+        cmds.setAttr(f"{softExponentDivisionNegate_node}.operation", 2) #Multiply
+        cmds.connectAttr(f"{softExponentDivision_node}.outFloat", f"{softExponentDivisionNegate_node}.floatB")
+        cmds.setAttr(f"{softExponentDivisionNegate_node}.floatA", -1)
+        
+        #10 potencia con el valor de e
+        softExponent_node = self._create_node("floatMath", "softExponent", "FLM")
+        cmds.setAttr(f"{softExponent_node}.operation", 6) #Power
+        cmds.connectAttr(f"{softExponentDivisionNegate_node}.outFloat", f"{softExponent_node}.floatB")
+        cmds.setAttr(f"{softExponent_node}.floatA", math.e)
+        
+        # 11. substract 1 to get the final soft value
+        oneMinusSoftExponent_node = self._create_node("floatMath", "oneMinusSoftExponent", "FLM")
+        cmds.setAttr(f"{oneMinusSoftExponent_node}.operation", 1) #Subtract
+        cmds.connectAttr(f"{softExponent_node}.outFloat", f"{oneMinusSoftExponent_node}.floatB")
+        cmds.setAttr(f"{oneMinusSoftExponent_node}.floatA", 1)
+        
+        #12. Multiply soft distance by the substraction result
+        oneMinusSoftExponentBySoftValue_node = self._create_node("floatMath", "oneMinusSoftExponentBySoftValue", "FLM")
+        cmds.setAttr(f"{oneMinusSoftExponentBySoftValue_node}.operation", 2) #Multiply
+        cmds.connectAttr(f"{remapValue_node}.outValue", f"{oneMinusSoftExponentBySoftValue_node}.floatA")
+        cmds.connectAttr(f"{oneMinusSoftExponent_node}.outFloat", f"{oneMinusSoftExponentBySoftValue_node}.floatB")
+        
+        #13 Soft constant
+        softConstantAdd_node = self._create_node("floatMath", "softConstantAdd", "FLM")
+        cmds.connectAttr(f"{oneMinusSoftExponentBySoftValue_node}.outFloat", f"{softConstantAdd_node}.floatA")
+        cmds.connectAttr(f"{softDistanceSubstact_node}.outFloat", f"{softConstantAdd_node}.floatB")
 
         print(f"[{self.prefix}] Sistema Soft IK conectado centralizadamente.")

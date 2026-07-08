@@ -48,8 +48,8 @@ class SoftIkModule(object):
         
 
         # 2. Leer el translateX de cada joint IK y "pegarlo" como valor fijo en Float A
-        low_tx = cmds.getAttr(f"{low_jnt}.translateX")
-        mid_tx = cmds.getAttr(f"{mid_jnt}.translateX")
+        low_tx = abs(cmds.getAttr(f"{low_jnt}.translateX"))
+        mid_tx = abs(cmds.getAttr(f"{mid_jnt}.translateX"))
 
         cmds.setAttr(f"{upperLenghtMult_node}.floatA", mid_tx)
         cmds.setAttr(f"{lowerLenghtMult_node}.floatA", low_tx)

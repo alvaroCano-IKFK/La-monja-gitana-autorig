@@ -186,6 +186,8 @@ class LegModule(object):
         # ---- 4. IK HANDLES ----
         ik_h, _        = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2],
                                         sol="ikRPsolver", n=f"{self.prefix}_IKH")
+        #cmds.setAttr(f"{ik_h}.tolerance", 1e-08)    
+
         ik_footBall, _ = cmds.ikHandle(sj=self.ik_chain[2], ee=self.ik_chain[3],
                                         sol="ikSCsolver", n=f"{self.prefix}_footBall_HDL")
         ik_footTip, _  = cmds.ikHandle(sj=self.ik_chain[3], ee=self.ik_chain[4],

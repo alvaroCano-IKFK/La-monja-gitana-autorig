@@ -172,6 +172,8 @@ class LimbModule(object):
             sol="ikRPsolver", n=f"{self.prefix}_IKH"
         )
         
+        #cmds.setAttr(f"{ik_h}.tolerance", 1e-08)    
+
         cmds.select(clear=True)
         cmds.parent(b_cl, self.arm_grp)
         
@@ -331,7 +333,6 @@ class LimbModule(object):
             cmds.connectAttr(f"{pbl}.outTranslate",  f"{bnd_jnt}.translate")
             cmds.connectAttr(f"{pbl}.outRotate",     f"{bnd_jnt}.rotate")
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
-            
             
         # =========================================================
         # CURVATURA

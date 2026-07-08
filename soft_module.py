@@ -162,8 +162,8 @@ class SoftIkModule(object):
         #16. distance to control under length ratio
         distanceToControlUnderLengthRatio_node = self._create_node("floatMath", "distanceToControlUnderLengthRatio", "FLM")
         cmds.setAttr(f"{distanceToControlUnderLengthRatio_node}.operation", 3) #Divide
-        cmds.connectAttr(f"{fullLenght_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatA")
-        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatB")
+        cmds.connectAttr(f"{distanceToControlNormalized_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatA")
+        cmds.connectAttr(f"{lengthRatio_node}.outFloat", f"{distanceToControlUnderLengthRatio_node}.floatB")
         
         #17 multiply the two ratios
         softEffectorDistance_node = self._create_node("floatMath", "softEffectorDistanceMult", "FLM")
@@ -194,6 +194,9 @@ class SoftIkModule(object):
         
         #Se elimina el parent constraint entre el ik hdl y el ik ctrl para sustituirlo por este constraint
         cmds.pointConstraint(softTransform_node, ik_hdl, mo=False)
-
+        
+        #Cambiamos la tolerancia del ik handle a un valor muy bajo para que el soft IK funcione correctamente(0.00000001)
+        cmds.setAttr("ikRPsolver.tolerance", 1e-08)
+        
         print(f"[{self.prefix}] Sistema Soft IK conectado centralizadamente.")
 

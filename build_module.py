@@ -22,6 +22,7 @@ import spaceSwitching_module
 import headSpace_module
 import curvature_module
 import soft_module
+import pvPin_module
 
 
 
@@ -156,7 +157,7 @@ class BuildRig(object):
         skn.build()
         
         soft_leg_L = soft_module.SoftIkModule(side="L", prefix="Leg")
-        soft_leg_L.apply_soft_ik(
+        soft_leg_L_result = soft_leg_L.apply_soft_ik(
             ik_ctrl="L_Leg_legIk_CTRL",
             ik_handle="L_Leg_IKH",
             root_ctrl="L_Leg_legRoot_CTRL",
@@ -166,9 +167,9 @@ class BuildRig(object):
             ik_hdl="L_Leg_IKH",
             root_jnt="L_Leg_thigh_ik_JNT"
         )
-        
+
         soft_leg_R = soft_module.SoftIkModule(side="R", prefix="Leg")
-        soft_leg_R.apply_soft_ik(
+        soft_leg_R_result = soft_leg_R.apply_soft_ik(
             ik_ctrl="R_Leg_legIk_CTRL",
             ik_handle="R_Leg_IKH",
             root_ctrl="R_Leg_legRoot_CTRL",
@@ -180,7 +181,7 @@ class BuildRig(object):
         )
 
         soft_arm_L = soft_module.SoftIkModule(side="L", prefix="Arm")
-        soft_arm_L.apply_soft_ik(
+        soft_arm_L_result = soft_arm_L.apply_soft_ik(
             ik_ctrl="L_Arm_armIk_CTRL",
             ik_handle="L_Arm_IKH",
             root_ctrl="L_Arm_armRoot_CTRL",
@@ -189,11 +190,10 @@ class BuildRig(object):
             global_ctrl="Character_global_CTL",
             ik_hdl="L_Arm_IKH",
             root_jnt="L_Arm_shoulder_ik_JNT"
-
         )
-        
+
         soft_arm_R = soft_module.SoftIkModule(side="R", prefix="Arm")
-        soft_arm_R.apply_soft_ik(
+        soft_arm_R_result = soft_arm_R.apply_soft_ik(
             ik_ctrl="R_Arm_armIk_CTRL",
             ik_handle="R_Arm_IKH",
             root_ctrl="R_Arm_armRoot_CTRL",
@@ -202,8 +202,55 @@ class BuildRig(object):
             global_ctrl="Character_global_CTL",
             ik_hdl="R_Arm_IKH",
             root_jnt="R_Arm_shoulder_ik_JNT"
-        )                
+        )     
         
+        #========================================================================
+        #PV PIN
+        #========================================================================
+        pv_pin_L = pvPin_module.Pv_pin(side="L", name="Arm")
+        pv_pin_leg_L = pvPin_module.Pv_pin(side="L", name="leg")
+        pv_pin_leg_L.setup_pole_vector_pin(
+            ik_control="L_Leg_legIk_CTRL",
+            root_control="L_Leg_legRoot_CTRL",
+            pole_vector_control="L_Leg_poleVector_CTRL",
+            soft_trn=soft_leg_L_result["softTransform_node"],
+            soft_condition_node=soft_leg_L_result["condition_node"],
+            upper_ik_joint="L_Leg_knee_ik_JNT",
+            lower_ik_joint="L_Leg_ankle_ik_JNT"
+        )
+
+        pv_pin_leg_R = pvPin_module.Pv_pin(side="R", name="leg")
+        pv_pin_leg_R.setup_pole_vector_pin(
+            ik_control="R_Leg_legIk_CTRL",
+            root_control="R_Leg_legRoot_CTRL",
+            pole_vector_control="R_Leg_poleVector_CTRL",
+            soft_trn=soft_leg_R_result["softTransform_node"],
+            soft_condition_node=soft_leg_R_result["condition_node"],
+            upper_ik_joint="R_Leg_knee_ik_JNT",
+            lower_ik_joint="R_Leg_ankle_ik_JNT"
+        )
+
+        pv_pin_arm_L = pvPin_module.Pv_pin(side="L", name="arm")
+        pv_pin_arm_L.setup_pole_vector_pin(
+            ik_control="L_Arm_armIk_CTRL",
+            root_control="L_Arm_armRoot_CTRL",
+            pole_vector_control="L_Arm_poleVector_CTRL",
+            soft_trn=soft_arm_L_result["softTransform_node"],
+            soft_condition_node=soft_arm_L_result["condition_node"],
+            upper_ik_joint="L_Arm_elbow_ik_JNT",
+            lower_ik_joint="L_Arm_wrist_ik_JNT"
+        )
+
+        pv_pin_arm_R = pvPin_module.Pv_pin(side="R", name="arm")
+        pv_pin_arm_R.setup_pole_vector_pin(
+            ik_control="R_Arm_armIk_CTRL",
+            root_control="R_Arm_armRoot_CTRL",
+            pole_vector_control="R_Arm_poleVector_CTRL",
+            soft_trn=soft_arm_R_result["softTransform_node"],
+            soft_condition_node=soft_arm_R_result["condition_node"],
+            upper_ik_joint="R_Arm_elbow_ik_JNT",
+            lower_ik_joint="R_Arm_wrist_ik_JNT"
+        )
 
         # =========================================================================
         # CONFIGURACIÓN DE SPACES (DYNAMIC PARENTS) - ANTES DEL SKINNING

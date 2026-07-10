@@ -333,6 +333,8 @@ class LegModule(object):
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
         cmds.connectAttr(f"{vis_rev}.outputX",   f"{self.ik_grp}.visibility")
 
+        
+
         # ---- PAIR BLENDS ----
         for i in range(5):
             pbl_creator = NodeCreator(

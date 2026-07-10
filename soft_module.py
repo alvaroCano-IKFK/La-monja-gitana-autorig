@@ -200,3 +200,8 @@ class SoftIkModule(object):
         
         print(f"[{self.prefix}] Sistema Soft IK conectado centralizadamente.")
 
+        return {
+            "softTransform_node": softTransform_node,
+            "condition_node": condition_node
+        }
+

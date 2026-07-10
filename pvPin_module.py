@@ -11,8 +11,8 @@ class Pv_pin(object):
     def setup_pole_vector_pin(self, ik_control, root_control, pole_vector_control,
                            soft_trn, soft_condition_node, upper_ik_joint, lower_ik_joint):
 
-        if not cmds.attributeQuery("pin", node=ik_control, exists=True):
-            cmds.addAttr(ik_control, ln="pin", at="float", dv=0, min=0, max=1, k=True)
+        if not cmds.attributeQuery("pin", node=pole_vector_control, exists=True):
+            cmds.addAttr(pole_vector_control, ln="pin", at="float", dv=0, min=0, max=1, k=True)
 
         # Capturar la longitud original ABANS de sobreescriure translateX
         upper_length_value = cmds.getAttr(f"{upper_ik_joint}.translateX")
@@ -52,8 +52,8 @@ class Pv_pin(object):
         )
         blend_lower = blend_lower_inst.create()
 
-        cmds.connectAttr(f"{ik_control}.pin", f"{blend_upper}.attributesBlender", force=True)
-        cmds.connectAttr(f"{ik_control}.pin", f"{blend_lower}.attributesBlender", force=True)
+        cmds.connectAttr(f"{pole_vector_control}.pin", f"{blend_upper}.attributesBlender", force=True)
+        cmds.connectAttr(f"{pole_vector_control}.pin", f"{blend_lower}.attributesBlender", force=True)
 
         # input[0] = longitud original de l'os (pin = 0 -> comportament normal)
         cmds.setAttr(f"{blend_upper}.input[0]", upper_length_value)

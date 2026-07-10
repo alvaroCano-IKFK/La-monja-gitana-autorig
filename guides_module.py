@@ -392,6 +392,44 @@ class FootGuides(object):
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
 
+############################################################
+#BOCA🫦
+############################################################
+class BocaGuides(object):
+    """
+    Genera los jointsa de la boca y la surface
+    """
+    def __init__(self, lips_NRB,lip_mid, lip_end):
+        self.boca_surface = lips_NRB
+        self.lip_mid = lip_mid
+        self.lip_end = lip_end
+        
+    def create_boca(self):
+        #Crea la surface de la boca
+        surface = cmds.nurbsPlane(n=self.boca_surface, ax=(0, 1, 0), w=10, lr=1, d=1, u=4, v=4)[0]
+        cmds.setAttr(f"{surface}.translateY", 58)
+        cmds.setAttr(f"{surface}.translateZ", 10)
+        cmds.setAttr(f"{surface}.rotateX", 90)
+        
+        #Dar una posición base a la forma de la nurbs
+        cmds.select(surface + ".cv[4][0:4]", r=True)
+        cmds.select(surface + ".cv[0][0:4]", add=True)
+        cmds.move(0, 0, -4, r=True)
+        
+        cmds.select(surface + ".cv[1][0:4]", r=True)
+        cmds.select(surface + ".cv[3][0:4]", add=True)
+        cmds.move(0, 0, -1, r=True)
+        
+        #Crea els joints de la boca
+        cmds.select(clear=True)
+        lip_mid_joint = cmds.joint(n=self.lip_mid, p=(0, 58, 10))
+        cmds.select(clear=True)
+        lip_end_joint = cmds.joint(n=self.lip_end, p=(2.5, 58, 9))
+        cmds.setAttr(f"{lip_end_joint}.rotateY", 45)
+        
+        
+    
+
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
@@ -450,6 +488,9 @@ class CharacterGuides(object):
         )
         foot_instance.foot_guides()
        
+        boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end")
+        boca_instance.create_boca()
+        
         #Llista amb tots els grups de guies creats       
         guide_groups = [
             spine_instance.guides_group,

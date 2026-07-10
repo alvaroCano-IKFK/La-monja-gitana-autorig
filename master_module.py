@@ -24,6 +24,7 @@ import spaceSwitching_module
 import headSpace_module
 import soft_module
 import curvature_module
+import mouthModule
 
 
 def run():
@@ -53,6 +54,7 @@ def run():
     importlib.reload(headSpace_module)
     importlib.reload(soft_module)
     importlib.reload(curvature_module)
+    importlib.reload(mouthModule)
     
     ui = ui_module.UI()
     ui.main_UI()

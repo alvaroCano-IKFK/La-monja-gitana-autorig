@@ -22,6 +22,5 @@ class Mirror(object):
         
 
 
-# Ejecución
-#mirror = Mirror()
-#mirror.mirror()
+
+

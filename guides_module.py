@@ -407,7 +407,7 @@ class BocaGuides(object):
     def create_boca(self):
         #Crea la surface de la boca
         surface = cmds.nurbsPlane(n=self.boca_surface, ax=(0, 1, 0), w=10, lr=1, d=1, u=4, v=4)[0]
-        cmds.setAttr(f"{surface}.translateY", 58)
+        cmds.setAttr(f"{surface}.translateY", 24)
         cmds.setAttr(f"{surface}.translateZ", 10)
         cmds.setAttr(f"{surface}.rotateX", 90)
         
@@ -422,11 +422,13 @@ class BocaGuides(object):
         
         #Crea els joints de la boca
         cmds.select(clear=True)
-        lip_mid_joint = cmds.joint(n=self.lip_mid, p=(0, 58, 10))
+        lip_mid_joint = cmds.joint(n=self.lip_mid, p=(0, 24, 10))
         cmds.select(clear=True)
-        lip_end_joint = cmds.joint(n=self.lip_end, p=(2.5, 58, 9))
+        lip_end_joint = cmds.joint(n=self.lip_end, p=(2.5, 24, 9))
         cmds.setAttr(f"{lip_end_joint}.rotateY", 45)
         
+        self.guides_group = cmds.group(surface, lip_mid_joint, lip_end_joint, n="boca_guides_GRP")
+        return self.guides_group
         
     
 
@@ -498,7 +500,8 @@ class CharacterGuides(object):
             arm_instance.guides_group,
             leg_instance.guides_group,
             hand_instance.group,
-         ]
+            boca_instance.guides_group
+        ]
 
         # Filtra nomes els grups que existeixen
         new_list = []

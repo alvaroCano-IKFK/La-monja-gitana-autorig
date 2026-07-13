@@ -154,9 +154,20 @@ class BuildRig(object):
                 lip_mid="C_lip_mid",
                 lip_end="L_lip_end",
                 root_instance=self.root_rig,
-                rig_name="Character"
+                rig_name="Character",
+                side="L"
             )
         self.mouth_rig.build()
+        
+        self.mirror_mouth_rig = mouthModule.MouthModule(
+                boca_surface="boca_surface",
+                lip_mid="C_lip_mid",
+                lip_end="R_lip_end",
+                root_instance=self.root_rig,
+                rig_name="Character",
+                side="R"
+            )
+        self.mirror_mouth_rig.build()
 
         # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(

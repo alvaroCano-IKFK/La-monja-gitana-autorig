@@ -44,7 +44,11 @@ class NodeCreator(object):
         "remapValue": "RMV",
         "clamp": "CLP",
         "floatMath": "FLM",
-        "reverse": "REV"
+        "reverse": "REV",
+        "uvPin": "UVP",
+        "closestPointOnSurface": "CPOS",
+        "multMatrix": "MMX",
+        "decomposeMatrix": "DCM"
         }
 
         #Si hi ha un suffix personalitzat, li dona prioritat

@@ -55,10 +55,10 @@ class MouthModule(object):
             return grp_name
 
         settings_grp = cmds.group(em=True, n=grp_name)
-        cmds.addAttr(settings_grp, ln="HorizontalFollow01", nn="Horizontal Follow 01", at="float", min=0, max=1, dv=0, k=True)
-        cmds.addAttr(settings_grp, ln="HorizontalFollow02", nn="Horizontal Follow 02", at="float", min=0, max=1, dv=0, k=True)
-        cmds.addAttr(settings_grp, ln="VerticalFollow01", nn="Vertical Follow 01", at="float", min=0, max=1, dv=0, k=True)
-        cmds.addAttr(settings_grp, ln="VerticalFollow02", nn="Vertical Follow 02", at="float", min=0, max=1, dv=0, k=True)
+        cmds.addAttr(settings_grp, ln="HorizontalFollow01", nn="Horizontal Follow 01", at="float", min=0, max=1, dv=0.5, k=True)
+        cmds.addAttr(settings_grp, ln="HorizontalFollow02", nn="Horizontal Follow 02", at="float", min=0, max=1, dv=0.25, k=True)
+        cmds.addAttr(settings_grp, ln="VerticalFollow01", nn="Vertical Follow 01", at="float", min=0, max=1, dv=0.77, k=True)
+        cmds.addAttr(settings_grp, ln="VerticalFollow02", nn="Vertical Follow 02", at="float", min=0, max=1, dv=0.58, k=True)
         return settings_grp
 
     def _is_coordinate_connected(self, uvpin_node, coordinate_index):
@@ -131,6 +131,62 @@ class MouthModule(object):
 
         return bta_node
 
+    def _get_ordered_lip_locator_names(self):
+        """
+        Orden de comisura a comisura: L_raw -> L_02 -> L_01 -> C -> R_01 -> R_02 -> R_raw.
+        Coincide 1 a 1 con los 7 coordinate[]/outputMatrix[] del uvPin compartido.
+        """
+        L = f"L_{self.rig_name}"
+        R = f"R_{self.rig_name}"
+        C = f"C_{self.rig_name}"
+        return [
+            f"{L}_lipProjected_LOC",
+            f"{L}_lipProjected02_LOC",
+            f"{L}_lipProjected01_LOC",
+            f"{C}_lipProjected_LOC",
+            f"{R}_lipProjected01_LOC",
+            f"{R}_lipProjected02_LOC",
+            f"{R}_lipProjected_LOC",
+        ]
+
+    def _build_lip_curve(self):
+        """
+        Crea (una única vez) la curva de curvatura de los labios:
+        1. Curva de grado 1 con un CV en la posición de cada locator (7 CVs).
+        2. rebuildCurve a grado 3, 4 spans (4+3 = 7 CVs -> mismo conteo, misma correspondencia 1 a 1).
+        3. Cada locator queda conectado a (gestiona en vivo) el CV que ocupa su posición.
+
+        Solo se construye cuando existen los 7 locators (L, R y centro), es decir,
+        cuando ya se ha llamado a build() en ambos lados. Si aún faltan, no hace nada.
+        """
+        curve_name = f"C_{self.rig_name}_lipCurvature_CRV"
+        if cmds.objExists(curve_name):
+            return curve_name
+
+        ordered_locators = self._get_ordered_lip_locator_names()
+        if not all(cmds.objExists(loc) for loc in ordered_locators):
+            # Todavía no existen los locators de los dos lados; se construirá
+            # cuando se llame a build() en el lado que falta.
+            return None
+
+        positions = [cmds.xform(loc, q=True, ws=True, t=True) for loc in ordered_locators]
+
+        curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
+        cmds.rebuildCurve(
+            curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
+            s=4, d=3, tol=0.01
+        )
+
+        curve_shape = cmds.listRelatives(curve_transform, shapes=True)[0]
+
+        for cv_index, locator_name in enumerate(ordered_locators):
+            cmds.connectAttr(f"{locator_name}.worldPosition[0]", f"{curve_shape}.controlPoints[{cv_index}]")
+
+        return curve_transform
+    
+
+    
+    
     # ------------------------------------------------------------------
     # BUILD
     # ------------------------------------------------------------------
@@ -239,4 +295,35 @@ class MouthModule(object):
         locator02 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected02_LOC")[0]
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
 
-        return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn
+        #creamos el lipCenterOffProjection
+        
+        nurb_locator_name = f"C_{self.rig_name}_lipCenterOffProjection_LOC"
+        if cmds.objExists(nurb_locator_name):
+            return nurb_locator_name
+
+        nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
+        cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
+        cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6 )
+
+        
+        aimCenter_locator_name = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
+        aimCenter_locator = cmds.spaceLocator(name=aimCenter_locator_name)[0]
+        
+        aimMatrix_node = NodeCreator(
+            side=f"C_{self.rig_name}", node_type="aimMatrix", base_name="mouth",
+            name="Local", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        
+        cmds.connectAttr(f"{nurbCenter_locator}.worldMatrix[0]", f"{aimMatrix_node}.inputMatrix")
+        cmds.connectAttr(f"{end_local_trn}.worldMatrix[0]", f"{aimMatrix_node}.primaryTargetMatrix")
+        cmds.setAttr(f"{aimMatrix_node}.primaryMode", 1)  # 1 = Aim
+        cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{aimCenter_locator}.offsetParentMatrix")
+
+        # =========================================================
+        # 7. CURVA DE CURVATURA DE LOS LABIOS
+        # Solo se construye de verdad cuando ya existen los 7 locators
+        # (es decir, en la llamada de build() del segundo lado).
+        # =========================================================
+        self._build_lip_curve()
+
+        return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator

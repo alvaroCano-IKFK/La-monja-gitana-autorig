@@ -296,28 +296,53 @@ class MouthModule(object):
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
 
         #creamos el lipCenterOffProjection
-        
+        # Todo este bloque (locator + aimMatrix + cMuscleKeepOut) solo se crea
+        # una vez, la primera vez que se llama a build() (lado L). En la
+        # llamada del lado R, el locator ya existe: NO hacemos return aquí,
+        # simplemente saltamos la creación y seguimos hasta el final del
+        # método para que se pueda construir la curva (punto 7).
         nurb_locator_name = f"C_{self.rig_name}_lipCenterOffProjection_LOC"
-        if cmds.objExists(nurb_locator_name):
-            return nurb_locator_name
+        if not cmds.objExists(nurb_locator_name):
+            nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
+            cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
+            cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6 )
 
-        nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
-        cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
-        cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6 )
+            aimCenter_locator_name = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
+            aimCenter_locator = cmds.spaceLocator(name=aimCenter_locator_name)[0]
 
-        
-        aimCenter_locator_name = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
-        aimCenter_locator = cmds.spaceLocator(name=aimCenter_locator_name)[0]
-        
-        aimMatrix_node = NodeCreator(
-            side=f"C_{self.rig_name}", node_type="aimMatrix", base_name="mouth",
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        
-        cmds.connectAttr(f"{nurbCenter_locator}.worldMatrix[0]", f"{aimMatrix_node}.inputMatrix")
-        cmds.connectAttr(f"{end_local_trn}.worldMatrix[0]", f"{aimMatrix_node}.primaryTargetMatrix")
-        cmds.setAttr(f"{aimMatrix_node}.primaryMode", 1)  # 1 = Aim
-        cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{aimCenter_locator}.offsetParentMatrix")
+            aimMatrix_node = NodeCreator(
+                side=f"C_{self.rig_name}", node_type="aimMatrix", base_name="mouth",
+                name="Local", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+
+            cmds.connectAttr(f"{nurbCenter_locator}.worldMatrix[0]", f"{aimMatrix_node}.inputMatrix")
+            cmds.connectAttr(f"{end_local_trn}.worldMatrix[0]", f"{aimMatrix_node}.primaryTargetMatrix")
+            cmds.setAttr(f"{aimMatrix_node}.primaryMode", 1)  # 1 = Aim
+            cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisX", 0)
+            cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisZ", 1)
+            cmds.setAttr(f"{aimMatrix_node}.secondaryMode", 1)
+            cmds.setAttr(f"{aimMatrix_node}.secondaryTargetVectorY", 1)
+            cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{aimCenter_locator}.offsetParentMatrix")
+
+            cMuscleKeepOut_node = NodeCreator(
+                side=f"C_{self.rig_name}", node_type="cMuscleKeepOut", base_name="mouth",
+                name="Local", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+
+            vector_product_node = NodeCreator(
+                side=f"C_{self.rig_name}", node_type="vectorProduct", base_name="mouth",
+                name="Local", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+
+            cmds.connectAttr(f"{self.boca_surface}.worldSpace[0]", f"{cMuscleKeepOut_node}.muscleData[0].meshInBase")
+            cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{vector_product_node}.matrix")
+            cmds.connectAttr(f"{vector_product_node}.output", f"{cMuscleKeepOut_node}.inputData.inDirection")
+            cmds.setAttr(f"{vector_product_node}.operation", 3)  # 3 = vector Matrix Product
+            cmds.setAttr(f"{vector_product_node}.input1Z",1)
+            cmds.setAttr(f"{vector_product_node}.normalizeOutput", 1)
+        else:
+            nurbCenter_locator = nurb_locator_name
+            aimCenter_locator = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
 
         # =========================================================
         # 7. CURVA DE CURVATURA DE LOS LABIOS

@@ -253,42 +253,6 @@ class MouthModule(object):
         else:
             mid_lip = center_name
             mid_lip_grp = cmds.listRelatives(mid_lip, parent=True)[0]
-            
-        upper_lip_name = f"C_{self.prefix}_lipUpper_GRP"
-        if not cmds.objExists(upper_lip_name):
-            mid_lipUpper = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
-                    final_name=f"{self.prefix}_mid_lipUpper_CTRL"
-            )
-            mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
-            upper_lip_grp = self.group_maker.create_rig_hierarchy(
-                    mid_lipUpper, self.lip_mid, match_rotation=True, world_space=True
-            )
-        else:
-            mid_lipUpper = upper_lip_name
-            upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
-            
-        upper_local_off, upper_local_trn = self._build_off_network(
-                prefix=f"C_{self.rig_name}",
-                base_name="mouthCenterUpper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
-        )
-
-        lower_lip_name = f"C_{self.prefix}_lipLower_GRP"
-        if not cmds.objExists(lower_lip_name):
-            mid_lipLower = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
-                    final_name=f"{self.prefix}_mid_lipLower_CTRL"
-            )
-
-            mid_lipLower = cmds.rename(mid_lipLower, lower_lip_name)
-            lower_lip_grp = self.group_maker.create_rig_hierarchy(
-                    mid_lipLower, self.lip_mid, match_rotation=True, world_space=True
-            )
-            cmds.setAttr(f"{lower_lip_grp}.scaleY", -1)
-        else:
-            mid_lipLower = lower_lip_name
-            lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
-
 
 
         # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
@@ -315,7 +279,48 @@ class MouthModule(object):
                 cmds.setAttr(f"{end_lip_grp}.rotateX", 0)
                 cmds.setAttr(f"{end_lip_grp}.rotateY", 45)
                 cmds.setAttr(f"{end_lip_grp}.rotateZ", 0)
+                
+        #Duplicar controles de upper y lower lip para usarlos como locators en global, no en local        
+        upper_lip_name = f"C_{self.rig_name}_lipUpper_GRP"
+        if not cmds.objExists(upper_lip_name):
+            mid_lipUpper = controlsLibrary.create_control_from_lib(
+                    lib_name=self.styles["mainFk"],
+                    final_name=f"C_{self.rig_name}_mid_lipUpper_CTRL"
+            )
+            mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
+            upper_lip_grp = self.group_maker.create_rig_hierarchy(
+                    mid_lipUpper, self.lip_mid, match_rotation=True, world_space=True
+            )
+        else:
+            mid_lipUpper = upper_lip_name
+            upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
+            
+        upper_local_off, upper_local_trn = self._build_off_network(
+                prefix=f"C_{self.rig_name}",
+                base_name="mouthCenterUpper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
+        )
 
+        lower_lip_name = f"C_{self.rig_name}_lipLower_GRP"
+        if not cmds.objExists(lower_lip_name):
+            mid_lipLower = controlsLibrary.create_control_from_lib(
+                    lib_name=self.styles["mainFk"],
+                    final_name=f"C_{self.rig_name}_mid_lipLower_CTRL"
+            )
+
+            mid_lipLower = cmds.rename(mid_lipLower, lower_lip_name)
+            lower_lip_grp = self.group_maker.create_rig_hierarchy(
+                    mid_lipLower, self.lip_mid, match_rotation=True, world_space=True
+            )
+            cmds.setAttr(f"{lower_lip_grp}.scaleY", -1)
+        else:
+            mid_lipLower = lower_lip_name
+            lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
+            
+        lower_local_off, lower_local_trn = self._build_off_network(
+                prefix=f"C_{self.rig_name}",
+                base_name="mouthCenterLower", source_ctrl=mid_lipLower, source_ctrl_grp=lower_lip_grp
+        )
+        
         # 3. UVPIN Y SETTINGS ÚNICOS COMPARTIDOS
         uvpin_node = self._get_or_create_shared_uvpin()
         settings_grp = self._get_or_create_shared_settings_grp()
@@ -451,11 +456,11 @@ class MouthModule(object):
         #Creacion de los joints
         cmds.select(clear=True)
 
-        upper_joint = cmds.joint(n=f"C_{self.prefix}_lipUpper_JNT")
+        upper_joint = cmds.joint(n=f"C_{self.rig_name}_lipUpper_JNT")
         cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
         cmds.select(clear=True)
         
-        lower_joint = cmds.joint(n=f"C_{self.prefix}_lipLower_JNT")
+        lower_joint = cmds.joint(n=f"C_{self.rig_name}_lipLower_JNT")
         cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
         
         

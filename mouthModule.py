@@ -205,7 +205,32 @@ class MouthModule(object):
         else:
             mid_lip = center_name
             mid_lip_grp = cmds.listRelatives(mid_lip, parent=True)[0]
+            
+        upper_lip_name = f"C_{self.prefix}_lipUpper_GRP"
+        if not cmds.objExists(upper_lip_name):
+            mid_lipUpper = controlsLibrary.create_control_from_lib(
+                    lib_name=self.styles["mainFk"],
+                    final_name=f"{self.prefix}_mid_lipUpper_CTRL"
+            )
+            mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
+            mid_lip_grp = self.group_maker.create_rig_hierarchy(
+                    mid_lipUpper, self.lip_mid, match_rotation=True, world_space=True
+            )
+            
+        lower_lip_name = f"C_{self.prefix}_lipLower_GRP"
+        if not cmds.objExists(lower_lip_name):
+            mid_lipLower = controlsLibrary.create_control_from_lib(
+                    lib_name=self.styles["mainFk"],
+                    final_name=f"{self.prefix}_mid_lipLower_CTRL"
+            )
 
+            mid_lipLower = cmds.rename(mid_lipLower, lower_lip_name)
+            mid_lip_grp = self.group_maker.create_rig_hierarchy(
+                    mid_lipLower, self.lip_mid, match_rotation=True, world_space=True
+            )
+            cmds.setAttr(f"{mid_lip_grp}.scaleY", -1)
+
+        
         # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
         end_lip = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["mainFk"],

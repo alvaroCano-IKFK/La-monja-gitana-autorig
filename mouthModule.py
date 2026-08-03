@@ -176,11 +176,25 @@ class MouthModule(object):
             curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
             s=4, d=3, tol=0.01
         )
+        cmds.setAttr(f"{curve_transform}.lineWidth", 3)
 
         curve_shape = cmds.listRelatives(curve_transform, shapes=True)[0]
 
         for cv_index, locator_name in enumerate(ordered_locators):
             cmds.connectAttr(f"{locator_name}.worldPosition[0]", f"{curve_shape}.controlPoints[{cv_index}]")
+            
+        if cmds.objExists(curve_transform):
+            upperCurve = cmds.duplicate(curve_transform, n=f"{self.prefix}_lipCurvatureUpper_CRV")
+        else:
+            print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
+
+        if cmds.objExists(curve_transform):
+            lowerCurve = cmds.duplicate(curve_transform, n=f"{self.prefix}_lipCurvatureLower_CRV")
+        else:
+            print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
+            
+        cmds.connectAttr(f"{curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
+        cmds.connectAttr(f"{curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
 
         return curve_transform
     
@@ -213,10 +227,13 @@ class MouthModule(object):
                     final_name=f"{self.prefix}_mid_lipUpper_CTRL"
             )
             mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
-            mid_lip_grp = self.group_maker.create_rig_hierarchy(
+            upper_lip_grp = self.group_maker.create_rig_hierarchy(
                     mid_lipUpper, self.lip_mid, match_rotation=True, world_space=True
             )
-            
+        else:
+            mid_lipUpper = upper_lip_name
+            upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
+
         lower_lip_name = f"C_{self.prefix}_lipLower_GRP"
         if not cmds.objExists(lower_lip_name):
             mid_lipLower = controlsLibrary.create_control_from_lib(
@@ -225,10 +242,13 @@ class MouthModule(object):
             )
 
             mid_lipLower = cmds.rename(mid_lipLower, lower_lip_name)
-            mid_lip_grp = self.group_maker.create_rig_hierarchy(
+            lower_lip_grp = self.group_maker.create_rig_hierarchy(
                     mid_lipLower, self.lip_mid, match_rotation=True, world_space=True
             )
-            cmds.setAttr(f"{mid_lip_grp}.scaleY", -1)
+            cmds.setAttr(f"{lower_lip_grp}.scaleY", -1)
+        else:
+            mid_lipLower = lower_lip_name
+            lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
 
         
         # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
@@ -264,6 +284,7 @@ class MouthModule(object):
         # 4. CPS RAW DEL CENTRO — se construye una única vez
         # =========================================================
         center_raw_index = self.RAW_INDEX["C"]
+        center_locator_name = f"C_{self.rig_name}_lipProjected_LOC"
         if not self._is_coordinate_connected(uvpin_node, center_raw_index):
             center_local_off, center_local_trn, center_cps = self._build_cps_network(
                 prefix=f"C_{self.rig_name}", cps_name=f"C_{self.rig_name}_lips_CPS",
@@ -272,13 +293,31 @@ class MouthModule(object):
             cmds.connectAttr(f"{center_cps}.result.parameterU", f"{uvpin_node}.coordinate[{center_raw_index}].coordinateU")
             cmds.connectAttr(f"{center_cps}.result.parameterV", f"{uvpin_node}.coordinate[{center_raw_index}].coordinateV")
 
-            center_locator = cmds.spaceLocator(name=f"C_{self.rig_name}_lipProjected_LOC")[0]
+            center_locator = cmds.spaceLocator(name=center_locator_name)[0]
             cmds.connectAttr(f"{uvpin_node}.outputMatrix[{center_raw_index}]", f"{center_locator}.offsetParentMatrix")
+        else:
+            center_locator = center_locator_name
+
 
         center_cps = cmds.listConnections(
             f"{uvpin_node}.coordinate[{center_raw_index}].coordinateU", source=True, destination=False
         )[0]
 
+        #duplicar el locator del centro para usarlo como locator en global, no en local
+        
+        center_locator_global = cmds.duplicate(center_locator_name, n=f"{self.prefix}_lipProjectedGlobal_LOC")[0]
+        #WIP: este grupo se tiene que constreñir al joint de la cabeza y el grupo de los controles de la boca generales tmb
+        global_locator_grp = cmds.group(n=f"{self.prefix}_lipGlobal_GRP", em=True)
+        cmds.parent(center_locator_global, global_locator_grp)
+        
+        cmds.connectAttr(f"{center_locator}.worldMatrix[0]", f"{center_locator_global}.offsetParentMatrix")
+
+        #Conectar los grupos de upper y lower lip al locator global del centro mediante un constraint
+        #(el locator es el driver: upper/lower lip siguen al centro, no al revés)
+        if not cmds.listRelatives(upper_lip_grp, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_global, upper_lip_grp, mo=True)
+        if not cmds.listRelatives(lower_lip_grp, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_global, lower_lip_grp, mo=True)
         # =========================================================
         # 5. CPS RAW DE ESTE LADO (L o R)
         # =========================================================

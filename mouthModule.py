@@ -109,6 +109,40 @@ class MouthModule(object):
         cmds.connectAttr(f"{decompose_trn_node}.outputTranslate", f"{closest_point_node}.inPosition")
 
         return local_off, local_trn, closest_point_node
+    
+    def _build_off_network(self, prefix, base_name, source_ctrl, source_ctrl_grp):
+        """
+        Crea el space-tracking + closestPointOnSurface (CPS) crudo de un control.
+        Devuelve (local_off, local_trn, closest_point_node).
+        """
+        local_off, local_trn = self.group_maker.create_space_tracking_hierarchy(
+            space_base_name=f"{prefix}_{base_name}Local",
+            target_joint=source_ctrl_grp,
+            parent_group=None
+        )
+
+        mult_node = NodeCreator(
+            side=prefix, node_type="multMatrix", base_name=base_name,
+            name="Local", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        decompose_node = NodeCreator(
+            side=prefix, node_type="decomposeMatrix", base_name=base_name,
+            name="Local", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        decompose_trn_node = NodeCreator(
+            side=prefix, node_type="decomposeMatrix", base_name=base_name,
+            name="Local", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+
+        cmds.connectAttr(f"{source_ctrl}.matrix", f"{mult_node}.matrixIn[0]")
+        cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
+        cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
+        cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
+        cmds.connectAttr(f"{decompose_node}.outputScale", f"{local_trn}.scale")
+        cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
+
+
+        return local_off, local_trn
 
     def _create_blend_pair(self, side_label, axis, own_cps, center_cps, suffix, blender_attr):
         """
@@ -233,6 +267,11 @@ class MouthModule(object):
         else:
             mid_lipUpper = upper_lip_name
             upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
+            
+        upper_local_off, upper_local_trn = self._build_off_network(
+                prefix=f"C_{self.rig_name}",
+                base_name="mouthCenterUpper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
+        )
 
         lower_lip_name = f"C_{self.prefix}_lipLower_GRP"
         if not cmds.objExists(lower_lip_name):
@@ -250,7 +289,8 @@ class MouthModule(object):
             mid_lipLower = lower_lip_name
             lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
 
-        
+
+
         # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
         end_lip = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["mainFk"],
@@ -408,6 +448,18 @@ class MouthModule(object):
             nurbCenter_locator = nurb_locator_name
             aimCenter_locator = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
 
+        #Creacion de los joints
+        cmds.select(clear=True)
+
+        upper_joint = cmds.joint(n=f"C_{self.prefix}_lipUpper_JNT")
+        cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
+        cmds.select(clear=True)
+        
+        lower_joint = cmds.joint(n=f"C_{self.prefix}_lipLower_JNT")
+        cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
+        
+        
+        
         # =========================================================
         # 7. CURVA DE CURVATURA DE LOS LABIOS
         # Solo se construye de verdad cuando ya existen los 7 locators

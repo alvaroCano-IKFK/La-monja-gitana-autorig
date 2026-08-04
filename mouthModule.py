@@ -205,34 +205,34 @@ class MouthModule(object):
 
         positions = [cmds.xform(loc, q=True, ws=True, t=True) for loc in ordered_locators]
 
-        curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
+        self.curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
         cmds.rebuildCurve(
-            curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
+            self.curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
             s=4, d=3, tol=0.01
         )
-        cmds.setAttr(f"{curve_transform}.lineWidth", 3)
+        cmds.setAttr(f"{self.curve_transform}.lineWidth", 3)
 
-        curve_shape = cmds.listRelatives(curve_transform, shapes=True)[0]
+        curve_shape = cmds.listRelatives(self.curve_transform, shapes=True)[0]
 
         for cv_index, locator_name in enumerate(ordered_locators):
             cmds.connectAttr(f"{locator_name}.worldPosition[0]", f"{curve_shape}.controlPoints[{cv_index}]")
             
-        if cmds.objExists(curve_transform):
-            upperCurve = cmds.duplicate(curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpper_CRV")
+        if cmds.objExists(self.curve_transform):
+            upperCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpper_CRV")
         else:
-            print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
 
-        if cmds.objExists(curve_transform):
-            lowerCurve = cmds.duplicate(curve_transform, n=f"C_{self.rig_name}_lipCurvatureLower_CRV")
+        if cmds.objExists(self.curve_transform):
+            lowerCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLower_CRV")
         else:
-            print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
             
-        cmds.connectAttr(f"{curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
-        cmds.connectAttr(f"{curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
+        cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
+        cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
 
-        return curve_transform
+        return self.curve_transform
+
     
-
     
     
     # ------------------------------------------------------------------
@@ -484,6 +484,8 @@ class MouthModule(object):
             cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
             cmds.parentConstraint(upper_local_trn, upper_joint, mo=True)
             cmds.select(clear=True)
+        else:
+            upper_joint = upper_joint_name
 
         lower_joint_name = f"C_{self.rig_name}_lipLower_JNT"
         if not cmds.objExists(lower_joint_name):
@@ -491,20 +493,51 @@ class MouthModule(object):
             cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
             cmds.parentConstraint(lower_local_trn, lower_joint, mo=True)
             cmds.select(clear=True)
-            
+        else:
+            lower_joint = lower_joint_name
+
         freeze_joint_name = f"C_{self.rig_name}_freeze_JNT"
         if not cmds.objExists(freeze_joint_name):
             freeze_joint = cmds.joint(n=freeze_joint_name)
-        
-        #upper_skinning_to_curve = cmds.select(freeze_joint,upper_joint,f"C_{self.rig_name}_lipCurvatureUpper_CRV" )
-        #cmds.bindSkin( tsb=True, sm=0, nw=1, mi=3, dr=4.0, omi=True )
+        else:
+            freeze_joint = freeze_joint_name
 
-        
         # =========================================================
         # 7. CURVA DE CURVATURA DE LOS LABIOS
         # Solo se construye de verdad cuando ya existen los 7 locators
         # (es decir, en la llamada de build() del segundo lado).
         # =========================================================
         self._build_lip_curve()
+
+        # =========================================================
+        # 8. BIND SKIN de las curvas upper/lower — solo cuando la curva
+        # ya existe (segunda llamada de build()) y todavía no tiene skinCluster
+        # =========================================================
+        upper_curve_name = f"C_{self.rig_name}_lipCurvatureUpper_CRV"
+        lower_curve_name = f"C_{self.rig_name}_lipCurvatureLower_CRV"
+
+        if cmds.objExists(upper_curve_name) and not cmds.listConnections(upper_curve_name, type="skinCluster"):
+            upperSkinning = cmds.skinCluster(
+                freeze_joint, upper_joint, upper_curve_name,
+                tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+            )[0]
+            cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperSkinning}.input[0].inputGeometry", f=True)
+            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
+            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+
+            
+        if cmds.objExists(lower_curve_name) and not cmds.listConnections(lower_curve_name, type="skinCluster"):
+            lowerSkinning = cmds.skinCluster(
+                freeze_joint, lower_joint, lower_curve_name,
+                tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+            )[0]
+            cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerSkinning}.input[0].inputGeometry", f=True)
+            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
+            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator

@@ -218,12 +218,12 @@ class MouthModule(object):
             cmds.connectAttr(f"{locator_name}.worldPosition[0]", f"{curve_shape}.controlPoints[{cv_index}]")
             
         if cmds.objExists(curve_transform):
-            upperCurve = cmds.duplicate(curve_transform, n=f"{self.prefix}_lipCurvatureUpper_CRV")
+            upperCurve = cmds.duplicate(curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpper_CRV")
         else:
             print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
 
         if cmds.objExists(curve_transform):
-            lowerCurve = cmds.duplicate(curve_transform, n=f"{self.prefix}_lipCurvatureLower_CRV")
+            lowerCurve = cmds.duplicate(curve_transform, n=f"C_{self.rig_name}_lipCurvatureLower_CRV")
         else:
             print(f"Warning: Curve {curve_transform} does not exist, cannot duplicate.")
             
@@ -295,10 +295,15 @@ class MouthModule(object):
             mid_lipUpper = upper_lip_name
             upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
             
-        upper_local_off, upper_local_trn = self._build_off_network(
+        upper_off_name = f"C_{self.rig_name}_mouthCenterUpperLocal_OFF"
+        upper_trn_name = f"C_{self.rig_name}_mouthCenterUpperLocal_TRN"
+        if not cmds.objExists(upper_off_name):
+            upper_local_off, upper_local_trn = self._build_off_network(
                 prefix=f"C_{self.rig_name}",
                 base_name="mouthCenterUpper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
-        )
+            )
+        else:
+            upper_local_off, upper_local_trn = upper_off_name, upper_trn_name
 
         lower_lip_name = f"C_{self.rig_name}_lipLower_GRP"
         if not cmds.objExists(lower_lip_name):
@@ -316,10 +321,24 @@ class MouthModule(object):
             mid_lipLower = lower_lip_name
             lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
             
-        lower_local_off, lower_local_trn = self._build_off_network(
+        lower_off_name = f"C_{self.rig_name}_mouthCenterLowerLocal_OFF"
+        lower_trn_name = f"C_{self.rig_name}_mouthCenterLowerLocal_TRN"
+        inverted_name = f"C_{self.rig_name}_lipLowerInverted_GRP"
+
+        if not cmds.objExists(inverted_name):
+            lower_local_off, lower_local_trn = self._build_off_network(
                 prefix=f"C_{self.rig_name}",
                 base_name="mouthCenterLower", source_ctrl=mid_lipLower, source_ctrl_grp=lower_lip_grp
-        )
+            )
+            inverted_group = cmds.group(em=True, n=inverted_name)
+            cmds.setAttr(f"{inverted_group}.scaleY", -1)
+            cmds.parent(lower_local_off, inverted_group)
+            cmds.setAttr(f"{lower_local_off}.rotateX", 0)
+            cmds.setAttr(f"{lower_local_off}.scaleZ", 1)
+        else:
+            inverted_group = inverted_name
+            lower_local_off = cmds.listRelatives(inverted_group, children=True, type="transform")[0]
+            lower_local_trn = lower_trn_name
         
         # 3. UVPIN Y SETTINGS ÚNICOS COMPARTIDOS
         uvpin_node = self._get_or_create_shared_uvpin()
@@ -452,18 +471,34 @@ class MouthModule(object):
         else:
             nurbCenter_locator = nurb_locator_name
             aimCenter_locator = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
-
+            
+            
+        # =========================================================
         #Creacion de los joints
+        # =========================================================
         cmds.select(clear=True)
 
-        upper_joint = cmds.joint(n=f"C_{self.rig_name}_lipUpper_JNT")
-        cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
-        cmds.select(clear=True)
+        upper_joint_name = f"C_{self.rig_name}_lipUpper_JNT"
+        if not cmds.objExists(upper_joint_name):
+            upper_joint = cmds.joint(n=upper_joint_name)
+            cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
+            cmds.parentConstraint(upper_local_trn, upper_joint, mo=True)
+            cmds.select(clear=True)
+
+        lower_joint_name = f"C_{self.rig_name}_lipLower_JNT"
+        if not cmds.objExists(lower_joint_name):
+            lower_joint = cmds.joint(n=lower_joint_name)
+            cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
+            cmds.parentConstraint(lower_local_trn, lower_joint, mo=True)
+            cmds.select(clear=True)
+            
+        freeze_joint_name = f"C_{self.rig_name}_freeze_JNT"
+        if not cmds.objExists(freeze_joint_name):
+            freeze_joint = cmds.joint(n=freeze_joint_name)
         
-        lower_joint = cmds.joint(n=f"C_{self.rig_name}_lipLower_JNT")
-        cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
-        
-        
+        #upper_skinning_to_curve = cmds.select(freeze_joint,upper_joint,f"C_{self.rig_name}_lipCurvatureUpper_CRV" )
+        #cmds.bindSkin( tsb=True, sm=0, nw=1, mi=3, dr=4.0, omi=True )
+
         
         # =========================================================
         # 7. CURVA DE CURVATURA DE LOS LABIOS

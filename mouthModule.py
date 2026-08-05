@@ -382,6 +382,16 @@ class MouthModule(object):
             cmds.parentConstraint(center_locator_global, upper_lip_grp, mo=True)
         if not cmds.listRelatives(lower_lip_grp, children=True, type="parentConstraint"):
             cmds.parentConstraint(center_locator_global, lower_lip_grp, mo=True)
+            
+        # =========================================================
+        # 4.5 LOS OFFSETS DE UPPER/LOWER SIGUEN AL LOCATOR DEL CENTRO
+        # =========================================================
+        if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
+        if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
+            
+            
         # =========================================================
         # 5. CPS RAW DE ESTE LADO (L o R)
         # =========================================================
@@ -496,11 +506,14 @@ class MouthModule(object):
         else:
             lower_joint = lower_joint_name
 
+        
+        
         freeze_joint_name = f"C_{self.rig_name}_freeze_JNT"
         if not cmds.objExists(freeze_joint_name):
             freeze_joint = cmds.joint(n=freeze_joint_name)
         else:
             freeze_joint = freeze_joint_name
+            
 
         # =========================================================
         # 7. CURVA DE CURVATURA DE LOS LABIOS
@@ -516,28 +529,67 @@ class MouthModule(object):
         upper_curve_name = f"C_{self.rig_name}_lipCurvatureUpper_CRV"
         lower_curve_name = f"C_{self.rig_name}_lipCurvatureLower_CRV"
 
-        if cmds.objExists(upper_curve_name) and not cmds.listConnections(upper_curve_name, type="skinCluster"):
-            upperSkinning = cmds.skinCluster(
-                freeze_joint, upper_joint, upper_curve_name,
-                tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-            )[0]
-            cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperSkinning}.input[0].inputGeometry", f=True)
-            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
-            cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+        upperSkinning = None
+        lowerSkinning = None
 
-            
-        if cmds.objExists(lower_curve_name) and not cmds.listConnections(lower_curve_name, type="skinCluster"):
-            lowerSkinning = cmds.skinCluster(
-                freeze_joint, lower_joint, lower_curve_name,
-                tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-            )[0]
-            cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerSkinning}.input[0].inputGeometry", f=True)
-            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
-            cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+        if cmds.objExists(upper_curve_name):
+            existing_upper_skin = cmds.listConnections(upper_curve_name, type="skinCluster")
+            if not existing_upper_skin:
+                upperSkinning = cmds.skinCluster(
+                    freeze_joint, upper_joint, upper_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
+                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+            else:
+                upperSkinning = existing_upper_skin[0]
 
+        if cmds.objExists(lower_curve_name):
+            existing_lower_skin = cmds.listConnections(lower_curve_name, type="skinCluster")
+            if not existing_lower_skin:
+                lowerSkinning = cmds.skinCluster(
+                    freeze_joint, lower_joint, lower_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
+                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
+            else:
+                lowerSkinning = existing_lower_skin[0]
+
+        cmds.select(clear=True)
+
+        upperPrebind_joint_name = f"C_{self.rig_name}_lipUpperPreBind_JNT"
+        if not cmds.objExists(upperPrebind_joint_name):
+            upperPrebind_joint = cmds.joint(n=upperPrebind_joint_name)
+            cmds.matchTransform(upperPrebind_joint, upper_joint, pos=True, rot=True)
+            cmds.select(clear=True)
+        else:
+            upperPrebind_joint = upperPrebind_joint_name
+
+        if not cmds.listRelatives(upperPrebind_joint, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, upperPrebind_joint, mo=True)
+
+        if upperSkinning and not cmds.isConnected(f"{upperPrebind_joint}.inverseMatrix", f"{upperSkinning}.bindPreMatrix[1]"):
+            cmds.connectAttr(f"{upperPrebind_joint}.inverseMatrix", f"{upperSkinning}.bindPreMatrix[1]")
+
+        lowerPrebind_joint_name = f"C_{self.rig_name}_lipLowerPreBind_JNT"
+        if not cmds.objExists(lowerPrebind_joint_name):
+            lowerPrebind_joint = cmds.joint(n=lowerPrebind_joint_name)
+            cmds.matchTransform(lowerPrebind_joint, lower_joint, pos=True, rot=True)
+            cmds.select(clear=True)
+        else:
+            lowerPrebind_joint = lowerPrebind_joint_name
+
+        if not cmds.listRelatives(lowerPrebind_joint, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, lowerPrebind_joint, mo=True)
+
+        if lowerSkinning and not cmds.isConnected(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]"):
+            cmds.connectAttr(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]")
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator

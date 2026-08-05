@@ -230,10 +230,46 @@ class MouthModule(object):
         cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
         cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
 
-        return self.curve_transform
+        return self.curve_transform, upperCurve, lowerCurve
 
-    
-    
+    def _get_or_create_curve_motion_locator(self, curve_name, base_name, u_value, side=None):
+        """
+        Crea (una única vez) un motionPath sobre `curve_name` fijo en `u_value`,
+        con un locator conectado a su salida (posición + rotación).
+
+        `side` determina el prefijo (L_/R_/C_) del nombre para que cada lado
+        tenga sus propios nodos, aunque lean de la misma curva compartida.
+        Idempotente: si el locator ya existe, lo devuelve sin tocar nada.
+        """
+        prefix = f"{side}_{self.rig_name}" if side else f"C_{self.rig_name}"
+        locator_name = f"{prefix}_{base_name}_tracker_LOC"
+        locatorGlobal_name = f"{prefix}_{base_name}_trackerGlobal_LOC"
+
+        motionpath_name = f"{prefix}_{base_name}_MPA"
+
+        if cmds.objExists(locator_name):
+            return motionpath_name, locator_name
+
+        motionpath_node = NodeCreator(
+            side=prefix, node_type="motionPath", base_name=base_name,
+            name="Local", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        motionpath_node = cmds.rename(motionpath_node, motionpath_name)
+
+        cmds.connectAttr(f"{curve_name}.worldSpace[0]", f"{motionpath_node}.geometryPath")
+        cmds.setAttr(f"{motionpath_node}.uValue", u_value)
+
+        locatorTracker = cmds.spaceLocator(name=locator_name)[0]
+        cmds.connectAttr(f"{motionpath_node}.allCoordinates", f"{locatorTracker}.translate")
+        cmds.connectAttr(f"{motionpath_node}.rotate", f"{locatorTracker}.rotate")
+        
+        # 3. Crear Tracker Global limpio
+        if not cmds.objExists(locatorGlobal_name):
+            locatorTrackerGlobal = cmds.spaceLocator(name=locatorGlobal_name)[0]
+            # Conectar la matriz mundial del Tracker Local al offsetParentMatrix del Global
+            cmds.connectAttr(f"{locatorTracker}.worldMatrix[0]", f"{locatorTrackerGlobal}.offsetParentMatrix")
+
+        return motionpath_node, locatorTracker
     
     # ------------------------------------------------------------------
     # BUILD
@@ -263,6 +299,8 @@ class MouthModule(object):
         end_lip_grp = self.group_maker.create_rig_hierarchy(
             end_lip, self.lip_end, match_rotation=True, world_space=True
         )
+        
+
 
         cmds.rebuildSurface(self.boca_surface, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kc=0,
                              su=4, du=3, sv=4, dv=3, tol=0.01, fr=0, dir=2)
@@ -426,13 +464,49 @@ class MouthModule(object):
         cmds.connectAttr(f"{bta_v01}.output", f"{uvpin_node}.coordinate[{blend01_index}].coordinateV")
         locator01 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected01_LOC")[0]
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend01_index}]", f"{locator01}.offsetParentMatrix")
+        
+        
+        levator_name = f"{self.prefix}_levator_CTRL"
+        if not cmds.objExists(levator_name):
+            levator_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"],
+                final_name=levator_name
+            )
+            
+            levator_ctrl_grp = self.group_maker.create_rig_hierarchy(
+                levator_ctrl, locator01, match_rotation=True, world_space=True
+            )
+        else:
+            levator_ctrl = levator_name
+            levator_ctrl_grp = cmds.listRelatives(levator_ctrl, parent=True)[0]
 
+        depresor_name = f"{self.prefix}_depresor_CTRL"
+        if not cmds.objExists(depresor_name):
+            depresor_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"],
+                final_name=depresor_name
+            )
+            
+            depresor_ctrl_grp = self.group_maker.create_rig_hierarchy(
+                depresor_ctrl, locator01, match_rotation=True, world_space=True
+            )
+            depresor_negative = cmds.group(depresor_ctrl_grp, n=f"{self.prefix}_depresor_negative_GRP")
+            cmds.setAttr(f"{self.prefix}_depresor_negative_GRP.scaleY", -1)
+            cmds.parent(depresor_ctrl_grp, depresor_negative)
+        else:
+            depresor_ctrl = depresor_name
+            depresor_ctrl_grp = cmds.listRelatives(depresor_ctrl, parent=True)[0]
+
+            
         blend02_index = self.BLEND02_INDEX[self.side]
         cmds.connectAttr(f"{bta_u02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateU")
         cmds.connectAttr(f"{bta_v02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateV")
         locator02 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected02_LOC")[0]
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
-
+        
+    
+            
+            
         #creamos el lipCenterOffProjection
         # Todo este bloque (locator + aimMatrix + cMuscleKeepOut) solo se crea
         # una vez, la primera vez que se llama a build() (lado L). En la
@@ -591,5 +665,60 @@ class MouthModule(object):
 
         if lowerSkinning and not cmds.isConnected(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]"):
             cmds.connectAttr(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]")
+            
+        # =========================================================
+        # 9. CREACIÓN DE TRACKERS / MOTION PATHS Y CONSTRAINTS
+        # =========================================================
+        if cmds.objExists(upper_curve_name) and cmds.objExists(lower_curve_name):
+            u_levator_L = 0.25
+            u_depresor_L = 0.25
+
+            # --- UPPER / LEVATORES ---
+            # Levator L
+            _, tracker_upper_L = self._get_or_create_curve_motion_locator(
+                curve_name=upper_curve_name, base_name="levatorFollow", u_value=u_levator_L, side="L"
+            )
+            # Levator R
+            _, tracker_upper_R = self._get_or_create_curve_motion_locator(
+                curve_name=upper_curve_name, base_name="levatorFollow", u_value=1.0 - u_levator_L, side="R"
+            )
+
+            # --- LOWER / DEPRESORES ---
+            # Depresor L
+            _, tracker_lower_L = self._get_or_create_curve_motion_locator(
+                curve_name=lower_curve_name, base_name="depresorFollow", u_value=u_depresor_L, side="L"
+            )
+            # Depresor R
+            _, tracker_lower_R = self._get_or_create_curve_motion_locator(
+                curve_name=lower_curve_name, base_name="depresorFollow", u_value=1.0 - u_depresor_L, side="R"
+            )
+
+            # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---
+            for side_code in ["L", "R"]:
+                prefix_side = f"{side_code}_{self.rig_name}"
+                
+                # Nombres de los Global Trackers creados
+                upper_global_loc = f"{prefix_side}_levatorFollow_trackerGlobal_LOC"
+                lower_global_loc = f"{prefix_side}_depresorFollow_trackerGlobal_LOC"
+
+                # Nombres de los controles
+                levator_ctrl = f"{prefix_side}_levator_CTRL"
+                depresor_ctrl = f"{prefix_side}_depresor_CTRL"
+
+                # 1. LEVATOR: Apuntamos directamente al grupo raíz principal (_GRP)
+                levator_grp = f"{prefix_side}_levator_GRP"
+                if cmds.objExists(levator_grp):
+                    if not cmds.listRelatives(levator_grp, type="parentConstraint"):
+                        cmds.parentConstraint(upper_global_loc, levator_grp, mo=True)
+
+                # 2. DEPRESOR: Si existe el grupo negativo usamos ese, si no el _GRP principal
+                if cmds.objExists(depresor_ctrl):
+                    neg_grp = f"{prefix_side}_depresor_negative_GRP"
+                    depresor_grp = f"{prefix_side}_depresor_GRP"
+                    target_depresor_grp = neg_grp if cmds.objExists(neg_grp) else depresor_grp
+
+                    if cmds.objExists(target_depresor_grp):
+                        if not cmds.listRelatives(target_depresor_grp, type="parentConstraint"):
+                            cmds.parentConstraint(lower_global_loc, target_depresor_grp, mo=True)
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator

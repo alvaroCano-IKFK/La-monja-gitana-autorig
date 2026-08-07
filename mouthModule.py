@@ -497,14 +497,76 @@ class MouthModule(object):
             depresor_ctrl = depresor_name
             depresor_ctrl_grp = cmds.listRelatives(depresor_ctrl, parent=True)[0]
 
-            
+        # =========================================================
+        # 6.5 SETUP DE OFF/TRN + JOINTS PARA LEVATOR Y DEPRESOR (ambos sides)
+        # =========================================================
+        levator_off_name = f"{self.prefix}_levatorLocal_OFF"
+        levator_trn_name = f"{self.prefix}_levatorLocal_TRN"
+        if not cmds.objExists(levator_off_name):
+            levator_local_off, levator_local_trn = self._build_off_network(
+                prefix=self.prefix, base_name="levator",
+                source_ctrl=levator_ctrl, source_ctrl_grp=levator_ctrl_grp
+            )
+        else:
+            levator_local_off, levator_local_trn = levator_off_name, levator_trn_name
+
+        levator_joint_name = f"{self.prefix}_levator_JNT"
+        if not cmds.objExists(levator_joint_name):
+            cmds.select(clear=True)
+            levator_joint = cmds.joint(n=levator_joint_name)
+            cmds.matchTransform(levator_joint, levator_ctrl_grp, pos=True, rot=True)
+            cmds.parentConstraint(levator_local_trn, levator_joint, mo=True)
+            cmds.select(clear=True)
+        else:
+            levator_joint = levator_joint_name
+
+        depresor_off_name = f"{self.prefix}_depresorLocal_OFF"
+        depresor_trn_name = f"{self.prefix}_depresorLocal_TRN"
+        if not cmds.objExists(depresor_off_name):
+            depresor_local_off, depresor_local_trn = self._build_off_network(
+                prefix=self.prefix, base_name="depresor",
+                source_ctrl=depresor_ctrl, source_ctrl_grp=depresor_ctrl_grp
+            )
+            cmds.setAttr(f"{depresor_local_off}.scaleY", -1)
+            cmds.setAttr(f"{depresor_local_off}.scaleX", -1)
+            cmds.setAttr(f"{depresor_local_off}.scaleZ", -1)
+
+
+
+        else:
+            depresor_local_off, depresor_local_trn = depresor_off_name, depresor_trn_name
+
+        depresor_joint_name = f"{self.prefix}_depresor_JNT"
+        if not cmds.objExists(depresor_joint_name):
+            cmds.select(clear=True)
+            depresor_joint = cmds.joint(n=depresor_joint_name)
+            cmds.matchTransform(depresor_joint, depresor_ctrl_grp, pos=True, rot=True)
+            cmds.parentConstraint(depresor_local_trn, depresor_joint, mo=True)
+            cmds.select(clear=True)
+        else:
+            depresor_joint = depresor_joint_name
+
         blend02_index = self.BLEND02_INDEX[self.side]
         cmds.connectAttr(f"{bta_u02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateU")
         cmds.connectAttr(f"{bta_v02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateV")
         locator02 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected02_LOC")[0]
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
         
-    
+        
+
+        #if self.side == "R":
+            #mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
+            #if cmds.objExists(mirror_behavior_grp):
+                #cmds.parent(levator_ctrl_grp,depresor_ctrl_grp, mirror_behavior_grp)
+                #cmds.setAttr(f"{levator_ctrl_grp}.scaleX", -1)
+                #cmds.setAttr(f"{levator_ctrl_grp}.scaleY", 1)
+                #cmds.setAttr(f"{levator_ctrl_grp}.scaleZ", 1)
+                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleX", -1)
+                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleY", 1)
+                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleZ", 1)
+
+
+                
             
             
         #creamos el lipCenterOffProjection

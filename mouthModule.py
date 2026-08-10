@@ -170,6 +170,68 @@ class MouthModule(object):
         influence_index = influences.index(joint_name)
         return skin_cluster, influence_index
 
+    def _connect_prebind_to_skincluster(self, skin_cluster, joint_name, prebind_joint):
+        """
+        Busca el índice de influencia de 'joint_name' dentro de 'skin_cluster'
+        (el mismo índice en el que joint_name está conectado a .matrix[i])
+        y conecta prebind_joint.inverseMatrix -> skin_cluster.bindPreMatrix[i]
+        en ese mismo índice. Idempotente.
+        """
+        if not skin_cluster or not cmds.objExists(skin_cluster):
+            return
+        if not cmds.objExists(joint_name) or not cmds.objExists(prebind_joint):
+            return
+
+        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
+        if joint_name not in influences:
+            return
+        index = influences.index(joint_name)
+
+        dest = f"{skin_cluster}.bindPreMatrix[{index}]"
+        if not cmds.isConnected(f"{prebind_joint}.inverseMatrix", dest):
+            cmds.connectAttr(f"{prebind_joint}.inverseMatrix", dest, force=True)
+
+    def _connect_freeze_lock_weights(self, freeze_joint, skin_cluster):
+        """
+        Conecta freeze_joint.lockInfluenceWeights -> skin_cluster.lockWeights[0]
+        (freeze_joint siempre se pasa primero al crear cada skinCluster, así que
+        su índice de influencia es 0). Idempotente.
+        """
+        if not freeze_joint or not skin_cluster:
+            return
+        if not cmds.objExists(freeze_joint) or not cmds.objExists(skin_cluster):
+            return
+
+        src = f"{freeze_joint}.lockInfluenceWeights"
+        dst = f"{skin_cluster}.lockWeights[0]"
+        if not cmds.isConnected(src, dst):
+            cmds.connectAttr(src, dst, force=True)
+
+    def _chain_curve_into_skincluster(self, previous_curve_name, next_skin_cluster):
+        """
+        Encadena dos curvas: redirige TANTO el input geometry COMO el original
+        geometry del siguiente skinCluster (p.ej. Levator) para que lean
+        directamente el worldSpace de la curva anterior de la cadena (p.ej.
+        Upper), en vez de la copia estática (Orig) creada al hacer bind.
+
+        Así el siguiente skinCluster siempre parte de la posición actual (ya
+        deformada) de la curva anterior, y aplica su propia deformación de
+        joints encima. Idempotente.
+        """
+        if not previous_curve_name or not next_skin_cluster:
+            return
+        if not cmds.objExists(previous_curve_name) or not cmds.objExists(next_skin_cluster):
+            return
+
+        src = f"{previous_curve_name}.worldSpace[0]"
+        input_dst = f"{next_skin_cluster}.input[0].inputGeometry"
+        original_dst = f"{next_skin_cluster}.originalGeometry[0]"
+
+        if not cmds.isConnected(src, input_dst):
+            cmds.connectAttr(src, input_dst, force=True)
+        if not cmds.isConnected(src, original_dst):
+            cmds.connectAttr(src, original_dst, force=True)
+
     def _setup_prebind_joint(self, prebind_name, source_joint, driver_target):
         """
         Crea (si no existe) el joint de PreBind para 'source_joint', lo
@@ -194,7 +256,9 @@ class MouthModule(object):
         if not cmds.listRelatives(prebind_joint, children=True, type="parentConstraint"):
             cmds.parentConstraint(driver_target, prebind_joint, mo=True)
 
-
+        skin_cluster, _ = self._get_skincluster_from_joint(source_joint)
+        if skin_cluster:
+            self._connect_prebind_to_skincluster(skin_cluster, source_joint, prebind_joint)
 
         return prebind_joint
 
@@ -219,8 +283,12 @@ class MouthModule(object):
 
         return bta_node
 
-    def _get_ordered_lip_locator_names(self):
+    def _get_ordered_lip_locator_info(self):
         """
+        Igual que _get_ordered_lip_locator_names, pero además devuelve el
+        prefix (L_/R_/C_ + rig_name) y el base_name de cada locator, para
+        poder nombrar los decomposeMatrix con el mismo criterio que el resto
+        del módulo (NodeCreator side=prefix, base_name=base).
         Orden de comisura a comisura: L_raw -> L_02 -> L_01 -> C -> R_01 -> R_02 -> R_raw.
         Coincide 1 a 1 con los 7 coordinate[]/outputMatrix[] del uvPin compartido.
         """
@@ -228,14 +296,21 @@ class MouthModule(object):
         R = f"R_{self.rig_name}"
         C = f"C_{self.rig_name}"
         return [
-            f"{L}_lipProjected_LOC",
-            f"{L}_lipProjected02_LOC",
-            f"{L}_lipProjected01_LOC",
-            f"{C}_lipProjected_LOC",
-            f"{R}_lipProjected01_LOC",
-            f"{R}_lipProjected02_LOC",
-            f"{R}_lipProjected_LOC",
+            (L, "lipProjected", f"{L}_lipProjected_LOC"),
+            (L, "lipProjected02", f"{L}_lipProjected02_LOC"),
+            (L, "lipProjected01", f"{L}_lipProjected01_LOC"),
+            (C, "lipProjected", f"{C}_lipProjected_LOC"),
+            (R, "lipProjected01", f"{R}_lipProjected01_LOC"),
+            (R, "lipProjected02", f"{R}_lipProjected02_LOC"),
+            (R, "lipProjected", f"{R}_lipProjected_LOC"),
         ]
+
+    def _get_ordered_lip_locator_names(self):
+        """
+        Orden de comisura a comisura: L_raw -> L_02 -> L_01 -> C -> R_01 -> R_02 -> R_raw.
+        Coincide 1 a 1 con los 7 coordinate[]/outputMatrix[] del uvPin compartido.
+        """
+        return [locator_name for _, _, locator_name in self._get_ordered_lip_locator_info()]
 
     def _build_lip_curve(self):
         """
@@ -247,11 +322,12 @@ class MouthModule(object):
         Solo se construye cuando existen los 7 locators (L, R y centro), es decir,
         cuando ya se ha llamado a build() en ambos lados. Si aún faltan, no hace nada.
         """
-        curve_name = f"C_{self.rig_name}_lipCurvature_CRV"
+        curve_name = f"C_{self.rig_name}_lipProjected_CRV"
         if cmds.objExists(curve_name):
             return curve_name
 
-        ordered_locators = self._get_ordered_lip_locator_names()
+        locator_info = self._get_ordered_lip_locator_info()
+        ordered_locators = [locator_name for _, _, locator_name in locator_info]
         if not all(cmds.objExists(loc) for loc in ordered_locators):
             # Todavía no existen los locators de los dos lados; se construirá
             # cuando se llame a build() en el lado que falta.
@@ -268,16 +344,21 @@ class MouthModule(object):
 
         curve_shape = cmds.listRelatives(self.curve_transform, shapes=True)[0]
 
-        for cv_index, locator_name in enumerate(ordered_locators):
-            cmds.connectAttr(f"{locator_name}.worldPosition[0]", f"{curve_shape}.controlPoints[{cv_index}]")
-            
+        for cv_index, (prefix, base_name, locator_name) in enumerate(locator_info):
+            decompose_node = NodeCreator(
+                side=prefix, node_type="decomposeMatrix", base_name=base_name,
+                name="Local", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+            cmds.connectAttr(f"{locator_name}.worldMatrix[0]", f"{decompose_node}.inputMatrix")
+            cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{curve_shape}.controlPoints[{cv_index}]")
+
         if cmds.objExists(self.curve_transform):
-            upperCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpper_CRV")
+            upperCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipUpperLine_CRV")
         else:
             print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
 
         if cmds.objExists(self.curve_transform):
-            lowerCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLower_CRV")
+            lowerCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipLowerLine_CRV")
         else:
             print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
 
@@ -301,8 +382,8 @@ class MouthModule(object):
         else:
             print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
             
-        cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
-        cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
         #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{levatorCurve[0]}.create")
         #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{depresorCurve[0]}.create")
         #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperPinchCurve[0]}.create")
@@ -782,7 +863,7 @@ class MouthModule(object):
         if not cmds.objExists(upper_joint_name):
             upper_joint = cmds.joint(n=upper_joint_name)
             cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
-            cmds.parentConstraint(upper_local_trn, upper_joint, mo=True)
+            cmds.parentConstraint(upper_local_off, upper_joint, mo=True)
             cmds.select(clear=True)
         else:
             upper_joint = upper_joint_name
@@ -791,7 +872,7 @@ class MouthModule(object):
         if not cmds.objExists(lower_joint_name):
             lower_joint = cmds.joint(n=lower_joint_name)
             cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
-            cmds.parentConstraint(lower_local_trn, lower_joint, mo=True)
+            cmds.parentConstraint(lower_local_off, lower_joint, mo=True)
             cmds.select(clear=True)
         else:
             lower_joint = lower_joint_name
@@ -816,8 +897,8 @@ class MouthModule(object):
         # 8. BIND SKIN de las curvas upper/lower — solo cuando la curva
         # ya existe (segunda llamada de build()) y todavía no tiene skinCluster
         # =========================================================
-        upper_curve_name = f"C_{self.rig_name}_lipCurvatureUpper_CRV"
-        lower_curve_name = f"C_{self.rig_name}_lipCurvatureLower_CRV"
+        upper_curve_name = f"C_{self.rig_name}_lipUpperLine_CRV"
+        lower_curve_name = f"C_{self.rig_name}_lipLowerLine_CRV"
 
         upperSkinning = None
         lowerSkinning = None
@@ -837,6 +918,17 @@ class MouthModule(object):
             else:
                 upperSkinning = existing_upper_skin[0]
 
+        # La curva original (lipProjected, alimentada por un decomposeMatrix por
+        # cada locator) conecta su .local al originalGeometry[0] del primer
+        # skinCluster creado (Upper).
+        if upperSkinning and cmds.objExists(self.curve_transform):
+            src = f"{self.curve_transform}.local"
+            dst = f"{upperSkinning}.originalGeometry[0]"
+            if not cmds.isConnected(src, dst):
+                cmds.connectAttr(src, dst, force=True)
+
+        self._connect_freeze_lock_weights(freeze_joint, upperSkinning)
+
         if cmds.objExists(lower_curve_name):
             existing_lower_skin = cmds.listConnections(lower_curve_name, type="skinCluster")
             if not existing_lower_skin:
@@ -851,6 +943,8 @@ class MouthModule(object):
                 cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
             else:
                 lowerSkinning = existing_lower_skin[0]
+
+        self._connect_freeze_lock_weights(freeze_joint, lowerSkinning)
 
         # --- BIND SKIN de las curvas de levator / depresor / upperPinch / lowerPinch ---
         # Mismo sistema que upper/lower, pero cada curva es compartida entre L y R,
@@ -881,13 +975,16 @@ class MouthModule(object):
                     freeze_joint, L_levator_joint, R_levator_joint, levator_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
-                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{levatorSkinning}.input[0].inputGeometry", f=True)
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_levator_joint, 0.5)])
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_levator_joint, 0.5)])
             else:
                 levatorSkinning = existing_levator_skin[0]
+
+        # Levator hereda la deformación ya resuelta de Upper (cadena Upper -> Levator -> UpperPinch)
+        self._chain_curve_into_skincluster(upper_curve_name, levatorSkinning)
+        self._connect_freeze_lock_weights(freeze_joint, levatorSkinning)
 
         if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
             existing_depresor_skin = cmds.listConnections(depresor_curve_name, type="skinCluster")
@@ -896,13 +993,16 @@ class MouthModule(object):
                     freeze_joint, L_depresor_joint, R_depresor_joint, depresor_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
-                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{depresorSkinning}.input[0].inputGeometry", f=True)
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_depresor_joint, 0.5)])
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
             else:
                 depresorSkinning = existing_depresor_skin[0]
+
+        # Depresor hereda la deformación ya resuelta de Lower (cadena Lower -> Depresor -> LowerPinch)
+        self._chain_curve_into_skincluster(lower_curve_name, depresorSkinning)
+        self._connect_freeze_lock_weights(freeze_joint, depresorSkinning)
 
         if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
             existing_upperPinch_skin = cmds.listConnections(upperPinch_curve_name, type="skinCluster")
@@ -911,13 +1011,16 @@ class MouthModule(object):
                     freeze_joint, L_upperPinch_joint, R_upperPinch_joint, upperPinch_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
-                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperPinchSkinning}.input[0].inputGeometry", f=True)
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_upperPinch_joint, 0.5)])
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_upperPinch_joint, 0.5)])
             else:
                 upperPinchSkinning = existing_upperPinch_skin[0]
+
+        # UpperPinch hereda la deformación ya resuelta de Levator
+        self._chain_curve_into_skincluster(levator_curve_name, upperPinchSkinning)
+        self._connect_freeze_lock_weights(freeze_joint, upperPinchSkinning)
 
         if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
             existing_lowerPinch_skin = cmds.listConnections(lowerPinch_curve_name, type="skinCluster")
@@ -926,13 +1029,16 @@ class MouthModule(object):
                     freeze_joint, L_lowerPinch_joint, R_lowerPinch_joint, lowerPinch_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
-                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerPinchSkinning}.input[0].inputGeometry", f=True)
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_lowerPinch_joint, 0.5)])
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_lowerPinch_joint, 0.5)])
             else:
                 lowerPinchSkinning = existing_lowerPinch_skin[0]
+
+        # LowerPinch hereda la deformación ya resuelta de Depresor
+        self._chain_curve_into_skincluster(depresor_curve_name, lowerPinchSkinning)
+        self._connect_freeze_lock_weights(freeze_joint, lowerPinchSkinning)
 
         cmds.select(clear=True)
 
@@ -947,8 +1053,8 @@ class MouthModule(object):
         if not cmds.listRelatives(upperPrebind_joint, children=True, type="parentConstraint"):
             cmds.parentConstraint(center_locator_name, upperPrebind_joint, mo=True)
 
-        if upperSkinning and not cmds.isConnected(f"{upperPrebind_joint}.inverseMatrix", f"{upperSkinning}.bindPreMatrix[1]"):
-            cmds.connectAttr(f"{upperPrebind_joint}.inverseMatrix", f"{upperSkinning}.bindPreMatrix[1]")
+        if upperSkinning:
+            self._connect_prebind_to_skincluster(upperSkinning, upper_joint, upperPrebind_joint)
 
         lowerPrebind_joint_name = f"C_{self.rig_name}_lipLowerPreBind_JNT"
         if not cmds.objExists(lowerPrebind_joint_name):
@@ -961,13 +1067,14 @@ class MouthModule(object):
         if not cmds.listRelatives(lowerPrebind_joint, children=True, type="parentConstraint"):
             cmds.parentConstraint(center_locator_name, lowerPrebind_joint, mo=True)
 
-        if lowerSkinning and not cmds.isConnected(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]"):
-            cmds.connectAttr(f"{lowerPrebind_joint}.inverseMatrix", f"{lowerSkinning}.bindPreMatrix[1]")
+        if lowerSkinning:
+            self._connect_prebind_to_skincluster(lowerSkinning, lower_joint, lowerPrebind_joint)
             
         # =========================================================
         # 9. CREACIÓN DE TRACKERS / MOTION PATHS Y CONSTRAINTS
         # =========================================================
-        if cmds.objExists(upper_curve_name) and cmds.objExists(lower_curve_name):
+        if (cmds.objExists(upper_curve_name) and cmds.objExists(lower_curve_name)
+                and cmds.objExists(levator_curve_name) and cmds.objExists(depresor_curve_name)):
             u_levator_L = 0.25
             u_depresor_L = 0.25
 
@@ -1038,26 +1145,27 @@ class MouthModule(object):
                     )
 
             # --- UPPERPINCH / LOWERPINCH ---
-            # Mismas curvas que levator/depresor (upper_curve_name / lower_curve_name),
-            # con su propio valor de U en la curva (ajustable).
+            # UpperPinch va DESPUÉS de Levator en la cadena (Upper -> Levator -> UpperPinch),
+            # así que su tracker debe leer el world space de la curva Levator (la anterior),
+            # no de Upper. Igual para LowerPinch con Depresor (Lower -> Depresor -> LowerPinch).
             u_pinch_L = 0.1
 
             # Upper pinch L
             _, tracker_upperPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
+                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
             )
             # Upper pinch R
             _, tracker_upperPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
             )
 
             # Lower pinch L
             _, tracker_lowerPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
+                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
             )
             # Lower pinch R
             _, tracker_lowerPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
             )
 
             # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---

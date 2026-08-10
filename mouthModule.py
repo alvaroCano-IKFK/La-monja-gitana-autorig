@@ -837,9 +837,6 @@ class MouthModule(object):
             else:
                 upperSkinning = existing_upper_skin[0]
 
-            upper_curve_shape = cmds.listRelatives(upper_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{upperSkinning}.outputGeometry[0]", f"{upper_curve_shape}.create", f=True)
-
         if cmds.objExists(lower_curve_name):
             existing_lower_skin = cmds.listConnections(lower_curve_name, type="skinCluster")
             if not existing_lower_skin:
@@ -854,9 +851,6 @@ class MouthModule(object):
                 cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
             else:
                 lowerSkinning = existing_lower_skin[0]
-
-            lower_curve_shape = cmds.listRelatives(lower_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{lowerSkinning}.outputGeometry[0]", f"{lower_curve_shape}.create", f=True)
 
         # --- BIND SKIN de las curvas de levator / depresor / upperPinch / lowerPinch ---
         # Mismo sistema que upper/lower, pero cada curva es compartida entre L y R,
@@ -895,10 +889,6 @@ class MouthModule(object):
             else:
                 levatorSkinning = existing_levator_skin[0]
 
-            levator_curve_shape = cmds.listRelatives(levator_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{upper_curve_name}.worldSpace[0]", f"{levatorSkinning}.input[0].inputGeometry", f=True)
-            cmds.connectAttr(f"{levatorSkinning}.outputGeometry[0]", f"{levator_curve_shape}.create", f=True)
-
         if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
             existing_depresor_skin = cmds.listConnections(depresor_curve_name, type="skinCluster")
             if not existing_depresor_skin:
@@ -913,10 +903,6 @@ class MouthModule(object):
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
             else:
                 depresorSkinning = existing_depresor_skin[0]
-
-            depresor_curve_shape = cmds.listRelatives(depresor_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{lower_curve_name}.worldSpace[0]", f"{depresorSkinning}.input[0].inputGeometry", f=True)
-            cmds.connectAttr(f"{depresorSkinning}.outputGeometry[0]", f"{depresor_curve_shape}.create", f=True)
 
         if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
             existing_upperPinch_skin = cmds.listConnections(upperPinch_curve_name, type="skinCluster")
@@ -933,10 +919,6 @@ class MouthModule(object):
             else:
                 upperPinchSkinning = existing_upperPinch_skin[0]
 
-            upperPinch_curve_shape = cmds.listRelatives(upperPinch_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{levator_curve_name}.worldSpace[0]", f"{upperPinchSkinning}.input[0].inputGeometry", f=True)
-            cmds.connectAttr(f"{upperPinchSkinning}.outputGeometry[0]", f"{upperPinch_curve_shape}.create", f=True)
-
         if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
             existing_lowerPinch_skin = cmds.listConnections(lowerPinch_curve_name, type="skinCluster")
             if not existing_lowerPinch_skin:
@@ -951,10 +933,6 @@ class MouthModule(object):
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_lowerPinch_joint, 0.5)])
             else:
                 lowerPinchSkinning = existing_lowerPinch_skin[0]
-
-            lowerPinch_curve_shape = cmds.listRelatives(lowerPinch_curve_name, shapes=True)[0]
-            cmds.connectAttr(f"{depresor_curve_name}.worldSpace[0]", f"{lowerPinchSkinning}.input[0].inputGeometry", f=True)
-            cmds.connectAttr(f"{lowerPinchSkinning}.outputGeometry[0]", f"{lowerPinch_curve_shape}.create", f=True)
 
         cmds.select(clear=True)
 
@@ -1060,26 +1038,26 @@ class MouthModule(object):
                     )
 
             # --- UPPERPINCH / LOWERPINCH ---
-            # UPPERPINCH sigue la curva del LEVATOR y LOWERPINCH sigue la curva del DEPRESOR,
+            # Mismas curvas que levator/depresor (upper_curve_name / lower_curve_name),
             # con su propio valor de U en la curva (ajustable).
             u_pinch_L = 0.1
 
             # Upper pinch L
             _, tracker_upperPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
+                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
             )
             # Upper pinch R
             _, tracker_upperPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
             )
 
             # Lower pinch L
             _, tracker_lowerPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
+                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
             )
             # Lower pinch R
             _, tracker_lowerPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
             )
 
             # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---

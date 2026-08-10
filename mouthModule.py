@@ -144,6 +144,60 @@ class MouthModule(object):
 
         return local_off, local_trn
 
+    # ------------------------------------------------------------------
+    # SISTEMA DE PREBIND (genérico) — mismo patrón que upperPrebind_joint /
+    # lowerPrebind_joint, pero reutilizable para depresor / upperPinch / lowerPinch.
+    # ------------------------------------------------------------------
+    def _get_skincluster_from_joint(self, joint_name):
+        """
+        Busca un skinCluster que use 'joint_name' como influencia.
+        Devuelve (skinCluster, indice_de_influencia) o (None, None) si todavía
+        no existe (por ejemplo si el skinning de la malla se hace en otro módulo
+        y aún no se ha corrido).
+        """
+        if not cmds.objExists(joint_name):
+            return None, None
+
+        skin_clusters = list(set(cmds.listConnections(joint_name, type="skinCluster") or []))
+        if not skin_clusters:
+            return None, None
+
+        skin_cluster = skin_clusters[0]
+        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
+        if joint_name not in influences:
+            return None, None
+
+        influence_index = influences.index(joint_name)
+        return skin_cluster, influence_index
+
+    def _setup_prebind_joint(self, prebind_name, source_joint, driver_target):
+        """
+        Crea (si no existe) el joint de PreBind para 'source_joint', lo
+        parentConstrainea a 'driver_target' (el mismo driver que ya mueve el
+        grupo/off del control, igual que center_locator_name en upper/lower) y,
+        si 'source_joint' ya es influencia de algún skinCluster, conecta
+        prebind.inverseMatrix -> skinCluster.bindPreMatrix[indice].
+
+        Idempotente: se puede llamar en cada build() sin duplicar nada.
+        """
+        if not cmds.objExists(source_joint) or not cmds.objExists(driver_target):
+            return None
+
+        if not cmds.objExists(prebind_name):
+            cmds.select(clear=True)
+            prebind_joint = cmds.joint(n=prebind_name)
+            cmds.matchTransform(prebind_joint, source_joint, pos=True, rot=True)
+            cmds.select(clear=True)
+        else:
+            prebind_joint = prebind_name
+
+        if not cmds.listRelatives(prebind_joint, children=True, type="parentConstraint"):
+            cmds.parentConstraint(driver_target, prebind_joint, mo=True)
+
+
+
+        return prebind_joint
+
     def _create_blend_pair(self, side_label, axis, own_cps, center_cps, suffix, blender_attr):
         """
         Crea un blendTwoAttr que blendea own_cps.Parameter{U/V} (input0, raw propio)
@@ -226,11 +280,35 @@ class MouthModule(object):
             lowerCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLower_CRV")
         else:
             print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+
+        if cmds.objExists(self.curve_transform):
+            levatorCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLevator_CRV")
+        else:
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+
+        if cmds.objExists(self.curve_transform):
+            depresorCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureDepresor_CRV")
+        else:
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+
+        if cmds.objExists(self.curve_transform):
+            upperPinchCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpperPinch_CRV")
+        else:
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+
+        if cmds.objExists(self.curve_transform):
+            lowerPinchCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLowerPinch_CRV")
+        else:
+            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
             
         cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
         cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{levatorCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{depresorCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperPinchCurve[0]}.create")
+        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerPinchCurve[0]}.create")
 
-        return self.curve_transform, upperCurve, lowerCurve
+        return self.curve_transform, upperCurve, lowerCurve, levatorCurve, depresorCurve, upperPinchCurve, lowerPinchCurve
 
     def _get_or_create_curve_motion_locator(self, curve_name, base_name, u_value, side=None):
         """
@@ -551,8 +629,87 @@ class MouthModule(object):
         cmds.connectAttr(f"{bta_v02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateV")
         locator02 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected02_LOC")[0]
         cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
-        
-        
+
+        # =========================================================
+        # 6.6 CONTROLES UPPERPINCH Y LOWERPINCH (sobre locator02, ambos sides)
+        # Mismo patrón que levator/depresor pero anclados al lipProjected02
+        # =========================================================
+        upperPinch_name = f"{self.prefix}_upperPinch_CTRL"
+        if not cmds.objExists(upperPinch_name):
+            upperPinch_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"],
+                final_name=upperPinch_name
+            )
+
+            upperPinch_ctrl_grp = self.group_maker.create_rig_hierarchy(
+                upperPinch_ctrl, locator02, match_rotation=True, world_space=True
+            )
+        else:
+            upperPinch_ctrl = upperPinch_name
+            upperPinch_ctrl_grp = cmds.listRelatives(upperPinch_ctrl, parent=True)[0]
+
+        lowerPinch_name = f"{self.prefix}_lowerPinch_CTRL"
+        if not cmds.objExists(lowerPinch_name):
+            lowerPinch_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"],
+                final_name=lowerPinch_name
+            )
+
+            lowerPinch_ctrl_grp = self.group_maker.create_rig_hierarchy(
+                lowerPinch_ctrl, locator02, match_rotation=True, world_space=True
+            )
+            lowerPinch_negative = cmds.group(lowerPinch_ctrl_grp, n=f"{self.prefix}_lowerPinch_negative_GRP")
+            cmds.setAttr(f"{self.prefix}_lowerPinch_negative_GRP.scaleY", -1)
+            cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
+        else:
+            lowerPinch_ctrl = lowerPinch_name
+            lowerPinch_ctrl_grp = cmds.listRelatives(lowerPinch_ctrl, parent=True)[0]
+
+        # =========================================================
+        # 6.7 SETUP DE OFF/TRN + JOINTS PARA UPPERPINCH Y LOWERPINCH (ambos sides)
+        # =========================================================
+        upperPinch_off_name = f"{self.prefix}_upperPinchLocal_OFF"
+        upperPinch_trn_name = f"{self.prefix}_upperPinchLocal_TRN"
+        if not cmds.objExists(upperPinch_off_name):
+            upperPinch_local_off, upperPinch_local_trn = self._build_off_network(
+                prefix=self.prefix, base_name="upperPinch",
+                source_ctrl=upperPinch_ctrl, source_ctrl_grp=upperPinch_ctrl_grp
+            )
+        else:
+            upperPinch_local_off, upperPinch_local_trn = upperPinch_off_name, upperPinch_trn_name
+
+        upperPinch_joint_name = f"{self.prefix}_upperPinch_JNT"
+        if not cmds.objExists(upperPinch_joint_name):
+            cmds.select(clear=True)
+            upperPinch_joint = cmds.joint(n=upperPinch_joint_name)
+            cmds.matchTransform(upperPinch_joint, upperPinch_ctrl_grp, pos=True, rot=True)
+            cmds.parentConstraint(upperPinch_local_trn, upperPinch_joint, mo=True)
+            cmds.select(clear=True)
+        else:
+            upperPinch_joint = upperPinch_joint_name
+
+        lowerPinch_off_name = f"{self.prefix}_lowerPinchLocal_OFF"
+        lowerPinch_trn_name = f"{self.prefix}_lowerPinchLocal_TRN"
+        if not cmds.objExists(lowerPinch_off_name):
+            lowerPinch_local_off, lowerPinch_local_trn = self._build_off_network(
+                prefix=self.prefix, base_name="lowerPinch",
+                source_ctrl=lowerPinch_ctrl, source_ctrl_grp=lowerPinch_ctrl_grp
+            )
+            cmds.setAttr(f"{lowerPinch_local_off}.scaleY", -1)
+            cmds.setAttr(f"{lowerPinch_local_off}.scaleX", -1)
+            cmds.setAttr(f"{lowerPinch_local_off}.scaleZ", -1)
+        else:
+            lowerPinch_local_off, lowerPinch_local_trn = lowerPinch_off_name, lowerPinch_trn_name
+
+        lowerPinch_joint_name = f"{self.prefix}_lowerPinch_JNT"
+        if not cmds.objExists(lowerPinch_joint_name):
+            cmds.select(clear=True)
+            lowerPinch_joint = cmds.joint(n=lowerPinch_joint_name)
+            cmds.matchTransform(lowerPinch_joint, lowerPinch_ctrl_grp, pos=True, rot=True)
+            cmds.parentConstraint(lowerPinch_local_trn, lowerPinch_joint, mo=True)
+            cmds.select(clear=True)
+        else:
+            lowerPinch_joint = lowerPinch_joint_name
 
         #if self.side == "R":
             #mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
@@ -565,9 +722,6 @@ class MouthModule(object):
                 #cmds.setAttr(f"{depresor_ctrl_grp}.scaleY", 1)
                 #cmds.setAttr(f"{depresor_ctrl_grp}.scaleZ", 1)
 
-
-                
-            
             
         #creamos el lipCenterOffProjection
         # Todo este bloque (locator + aimMatrix + cMuscleKeepOut) solo se crea
@@ -698,6 +852,88 @@ class MouthModule(object):
             else:
                 lowerSkinning = existing_lower_skin[0]
 
+        # --- BIND SKIN de las curvas de levator / depresor / upperPinch / lowerPinch ---
+        # Mismo sistema que upper/lower, pero cada curva es compartida entre L y R,
+        # asi que los joints influencia son freeze_joint + el joint de cada lado.
+        levator_curve_name = f"C_{self.rig_name}_lipCurvatureLevator_CRV"
+        depresor_curve_name = f"C_{self.rig_name}_lipCurvatureDepresor_CRV"
+        upperPinch_curve_name = f"C_{self.rig_name}_lipCurvatureUpperPinch_CRV"
+        lowerPinch_curve_name = f"C_{self.rig_name}_lipCurvatureLowerPinch_CRV"
+
+        L_levator_joint = f"L_{self.rig_name}_levator_JNT"
+        R_levator_joint = f"R_{self.rig_name}_levator_JNT"
+        L_depresor_joint = f"L_{self.rig_name}_depresor_JNT"
+        R_depresor_joint = f"R_{self.rig_name}_depresor_JNT"
+        L_upperPinch_joint = f"L_{self.rig_name}_upperPinch_JNT"
+        R_upperPinch_joint = f"R_{self.rig_name}_upperPinch_JNT"
+        L_lowerPinch_joint = f"L_{self.rig_name}_lowerPinch_JNT"
+        R_lowerPinch_joint = f"R_{self.rig_name}_lowerPinch_JNT"
+
+        levatorSkinning = None
+        depresorSkinning = None
+        upperPinchSkinning = None
+        lowerPinchSkinning = None
+
+        if cmds.objExists(levator_curve_name) and cmds.objExists(L_levator_joint) and cmds.objExists(R_levator_joint):
+            existing_levator_skin = cmds.listConnections(levator_curve_name, type="skinCluster")
+            if not existing_levator_skin:
+                levatorSkinning = cmds.skinCluster(
+                    freeze_joint, L_levator_joint, R_levator_joint, levator_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{levatorSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_levator_joint, 0.5)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_levator_joint, 0.5)])
+            else:
+                levatorSkinning = existing_levator_skin[0]
+
+        if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
+            existing_depresor_skin = cmds.listConnections(depresor_curve_name, type="skinCluster")
+            if not existing_depresor_skin:
+                depresorSkinning = cmds.skinCluster(
+                    freeze_joint, L_depresor_joint, R_depresor_joint, depresor_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{depresorSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_depresor_joint, 0.5)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
+            else:
+                depresorSkinning = existing_depresor_skin[0]
+
+        if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
+            existing_upperPinch_skin = cmds.listConnections(upperPinch_curve_name, type="skinCluster")
+            if not existing_upperPinch_skin:
+                upperPinchSkinning = cmds.skinCluster(
+                    freeze_joint, L_upperPinch_joint, R_upperPinch_joint, upperPinch_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperPinchSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_upperPinch_joint, 0.5)])
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_upperPinch_joint, 0.5)])
+            else:
+                upperPinchSkinning = existing_upperPinch_skin[0]
+
+        if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
+            existing_lowerPinch_skin = cmds.listConnections(lowerPinch_curve_name, type="skinCluster")
+            if not existing_lowerPinch_skin:
+                lowerPinchSkinning = cmds.skinCluster(
+                    freeze_joint, L_lowerPinch_joint, R_lowerPinch_joint, lowerPinch_curve_name,
+                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+                )[0]
+                #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerPinchSkinning}.input[0].inputGeometry", f=True)
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_lowerPinch_joint, 0.5)])
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_lowerPinch_joint, 0.5)])
+            else:
+                lowerPinchSkinning = existing_lowerPinch_skin[0]
+
         cmds.select(clear=True)
 
         upperPrebind_joint_name = f"C_{self.rig_name}_lipUpperPreBind_JNT"
@@ -773,6 +1009,15 @@ class MouthModule(object):
                     if not cmds.listRelatives(levator_grp, type="parentConstraint"):
                         cmds.parentConstraint(upper_global_loc, levator_grp, mo=True)
 
+                    # --- PREBIND DEL LEVATOR (mismo sistema que upper/lower) ---
+                    levator_joint_side = f"{prefix_side}_levator_JNT"
+                    levatorPrebind_name = f"{prefix_side}_levatorPreBind_JNT"
+                    self._setup_prebind_joint(
+                        prebind_name=levatorPrebind_name,
+                        source_joint=levator_joint_side,
+                        driver_target=upper_global_loc
+                    )
+
                 # 2. DEPRESOR: Si existe el grupo negativo usamos ese, si no el _GRP principal
                 if cmds.objExists(depresor_ctrl):
                     neg_grp = f"{prefix_side}_depresor_negative_GRP"
@@ -782,5 +1027,82 @@ class MouthModule(object):
                     if cmds.objExists(target_depresor_grp):
                         if not cmds.listRelatives(target_depresor_grp, type="parentConstraint"):
                             cmds.parentConstraint(lower_global_loc, target_depresor_grp, mo=True)
+
+                    # --- PREBIND DEL DEPRESOR (mismo sistema que upper/lower) ---
+                    depresor_joint_side = f"{prefix_side}_depresor_JNT"
+                    depresorPrebind_name = f"{prefix_side}_depresorPreBind_JNT"
+                    self._setup_prebind_joint(
+                        prebind_name=depresorPrebind_name,
+                        source_joint=depresor_joint_side,
+                        driver_target=lower_global_loc
+                    )
+
+            # --- UPPERPINCH / LOWERPINCH ---
+            # Mismas curvas que levator/depresor (upper_curve_name / lower_curve_name),
+            # con su propio valor de U en la curva (ajustable).
+            u_pinch_L = 0.1
+
+            # Upper pinch L
+            _, tracker_upperPinch_L = self._get_or_create_curve_motion_locator(
+                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
+            )
+            # Upper pinch R
+            _, tracker_upperPinch_R = self._get_or_create_curve_motion_locator(
+                curve_name=upper_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+            )
+
+            # Lower pinch L
+            _, tracker_lowerPinch_L = self._get_or_create_curve_motion_locator(
+                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
+            )
+            # Lower pinch R
+            _, tracker_lowerPinch_R = self._get_or_create_curve_motion_locator(
+                curve_name=lower_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
+            )
+
+            # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---
+            for side_code in ["L", "R"]:
+                prefix_side = f"{side_code}_{self.rig_name}"
+
+                # Nombres de los Global Trackers creados
+                upperPinch_global_loc = f"{prefix_side}_upperPinchFollow_trackerGlobal_LOC"
+                lowerPinch_global_loc = f"{prefix_side}_lowerPinchFollow_trackerGlobal_LOC"
+
+                # Nombres de los controles
+                lowerPinch_ctrl_name = f"{prefix_side}_lowerPinch_CTRL"
+
+                # 1. UPPERPINCH: apuntamos directamente al grupo raíz principal (_GRP)
+                upperPinch_grp = f"{prefix_side}_upperPinch_GRP"
+                if cmds.objExists(upperPinch_grp):
+                    if not cmds.listRelatives(upperPinch_grp, type="parentConstraint"):
+                        cmds.parentConstraint(upperPinch_global_loc, upperPinch_grp, mo=True)
+
+                    # --- PREBIND DEL UPPERPINCH (mismo sistema que upper/lower) ---
+                    upperPinch_joint_side = f"{prefix_side}_upperPinch_JNT"
+                    upperPinchPrebind_name = f"{prefix_side}_upperPinchPreBind_JNT"
+                    self._setup_prebind_joint(
+                        prebind_name=upperPinchPrebind_name,
+                        source_joint=upperPinch_joint_side,
+                        driver_target=upperPinch_global_loc
+                    )
+
+                # 2. LOWERPINCH: si existe el grupo negativo usamos ese, si no el _GRP principal
+                if cmds.objExists(lowerPinch_ctrl_name):
+                    neg_grp = f"{prefix_side}_lowerPinch_negative_GRP"
+                    lowerPinch_grp = f"{prefix_side}_lowerPinch_GRP"
+                    target_lowerPinch_grp = neg_grp if cmds.objExists(neg_grp) else lowerPinch_grp
+
+                    if cmds.objExists(target_lowerPinch_grp):
+                        if not cmds.listRelatives(target_lowerPinch_grp, type="parentConstraint"):
+                            cmds.parentConstraint(lowerPinch_global_loc, target_lowerPinch_grp, mo=True)
+
+                    # --- PREBIND DEL LOWERPINCH (mismo sistema que upper/lower) ---
+                    lowerPinch_joint_side = f"{prefix_side}_lowerPinch_JNT"
+                    lowerPinchPrebind_name = f"{prefix_side}_lowerPinchPreBind_JNT"
+                    self._setup_prebind_joint(
+                        prebind_name=lowerPinchPrebind_name,
+                        source_joint=lowerPinch_joint_side,
+                        driver_target=lowerPinch_global_loc
+                    )
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator

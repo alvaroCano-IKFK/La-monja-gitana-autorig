@@ -605,10 +605,10 @@ class MouthModule(object):
         # =========================================================
         # 4.5 LOS OFFSETS DE UPPER/LOWER SIGUEN AL LOCATOR DEL CENTRO
         # =========================================================
-        # if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
-        #     cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
-        # if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
-        #     cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
+        if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
+        if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
+            cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
             
             
         # =========================================================
@@ -1099,7 +1099,7 @@ class MouthModule(object):
             upperPrebind_joint = upperPrebind_joint_name
 
         if not cmds.listRelatives(upperPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(upper_local_trn, upperPrebind_joint, mo=True)
+            cmds.parentConstraint(center_locator_name, upperPrebind_joint, mo=True)
 
         if upperSkinning:
             self._connect_prebind_to_skincluster(upperSkinning, upper_joint, upperPrebind_joint)
@@ -1113,7 +1113,7 @@ class MouthModule(object):
             lowerPrebind_joint = lowerPrebind_joint_name
 
         if not cmds.listRelatives(lowerPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(lower_local_trn, lowerPrebind_joint, mo=True)
+            cmds.parentConstraint(center_locator_name, lowerPrebind_joint, mo=True)
 
         if lowerSkinning:
             self._connect_prebind_to_skincluster(lowerSkinning, lower_joint, lowerPrebind_joint)
@@ -1154,7 +1154,7 @@ class MouthModule(object):
                 upper_global_loc = f"{prefix_side}_levatorFollow_trackerGlobal_LOC"
                 lower_global_loc = f"{prefix_side}_depresorFollow_trackerGlobal_LOC"
 
-                # Nombres de los Trackers normales (locales) creados
+                # Nombres de los Trackers LOCALES creados
                 upper_local_loc = f"{prefix_side}_levatorFollow_tracker_LOC"
                 lower_local_loc = f"{prefix_side}_depresorFollow_tracker_LOC"
 
@@ -1168,13 +1168,13 @@ class MouthModule(object):
                     if not cmds.listRelatives(levator_grp, type="parentConstraint"):
                         cmds.parentConstraint(upper_global_loc, levator_grp, mo=True)
 
-                    # --- TRACKER NORMAL -> OFF del levator ---
-                    levator_off_grp = f"{prefix_side}_levatorLocal_OFF"
-                    if cmds.objExists(levator_off_grp) and cmds.objExists(upper_local_loc):
-                        if not cmds.listRelatives(levator_off_grp, children=True, type="parentConstraint"):
-                            cmds.parentConstraint(upper_local_loc, levator_off_grp, mo=True)
+                    # --- OFF LOCAL DEL LEVATOR: lo conduce el Tracker LOCAL ---
+                    levator_off = f"{prefix_side}_levatorLocal_OFF"
+                    if cmds.objExists(levator_off) and cmds.objExists(upper_local_loc):
+                        if not cmds.listRelatives(levator_off, type="parentConstraint"):
+                            cmds.parentConstraint(upper_local_loc, levator_off, mo=True)
 
-                    # --- PREBIND DEL LEVATOR (driver = tracker normal, no el global) ---
+                    # --- PREBIND DEL LEVATOR (conducido por el Tracker LOCAL) ---
                     levator_joint_side = f"{prefix_side}_levator_JNT"
                     levatorPrebind_name = f"{prefix_side}_levatorPreBind_JNT"
                     self._setup_prebind_joint(
@@ -1193,13 +1193,13 @@ class MouthModule(object):
                         if not cmds.listRelatives(target_depresor_grp, type="parentConstraint"):
                             cmds.parentConstraint(lower_global_loc, target_depresor_grp, mo=True)
 
-                    # --- TRACKER NORMAL -> OFF del depresor ---
-                    depresor_off_grp = f"{prefix_side}_depresorLocal_OFF"
-                    if cmds.objExists(depresor_off_grp) and cmds.objExists(lower_local_loc):
-                        if not cmds.listRelatives(depresor_off_grp, children=True, type="parentConstraint"):
-                            cmds.parentConstraint(lower_local_loc, depresor_off_grp, mo=True)
+                    # --- OFF LOCAL DEL DEPRESOR: lo conduce el Tracker LOCAL ---
+                    depresor_off = f"{prefix_side}_depresorLocal_OFF"
+                    if cmds.objExists(depresor_off) and cmds.objExists(lower_local_loc):
+                        if not cmds.listRelatives(depresor_off, type="parentConstraint"):
+                            cmds.parentConstraint(lower_local_loc, depresor_off, mo=True)
 
-                    # --- PREBIND DEL DEPRESOR (driver = tracker normal, no el global) ---
+                    # --- PREBIND DEL DEPRESOR (conducido por el Tracker LOCAL) ---
                     depresor_joint_side = f"{prefix_side}_depresor_JNT"
                     depresorPrebind_name = f"{prefix_side}_depresorPreBind_JNT"
                     self._setup_prebind_joint(
@@ -1237,10 +1237,11 @@ class MouthModule(object):
                 prefix_side = f"{side_code}_{self.rig_name}"
 
                 # Nombres de los Global Trackers creados
+                
                 upperPinch_global_loc = f"{prefix_side}_upperPinchFollow_trackerGlobal_LOC"
                 lowerPinch_global_loc = f"{prefix_side}_lowerPinchFollow_trackerGlobal_LOC"
 
-                # Nombres de los Trackers normales (locales) creados
+                # Nombres de los Trackers LOCALES creados
                 upperPinch_local_loc = f"{prefix_side}_upperPinchFollow_tracker_LOC"
                 lowerPinch_local_loc = f"{prefix_side}_lowerPinchFollow_tracker_LOC"
 
@@ -1253,13 +1254,13 @@ class MouthModule(object):
                     if not cmds.listRelatives(upperPinch_grp, type="parentConstraint"):
                         cmds.parentConstraint(upperPinch_global_loc, upperPinch_grp, mo=True)
 
-                    # --- TRACKER NORMAL -> OFF del upperPinch ---
-                    upperPinch_off_grp = f"{prefix_side}_upperPinchLocal_OFF"
-                    if cmds.objExists(upperPinch_off_grp) and cmds.objExists(upperPinch_local_loc):
-                        if not cmds.listRelatives(upperPinch_off_grp, children=True, type="parentConstraint"):
-                            cmds.parentConstraint(upperPinch_local_loc, upperPinch_off_grp, mo=True)
+                    # --- OFF LOCAL DEL UPPERPINCH: lo conduce el Tracker LOCAL ---
+                    upperPinch_off = f"{prefix_side}_upperPinchLocal_OFF"
+                    if cmds.objExists(upperPinch_off) and cmds.objExists(upperPinch_local_loc):
+                        if not cmds.listRelatives(upperPinch_off, type="parentConstraint"):
+                            cmds.parentConstraint(upperPinch_local_loc, upperPinch_off, mo=True)
 
-                    # --- PREBIND DEL UPPERPINCH (driver = tracker normal, no el global) ---
+                    # --- PREBIND DEL UPPERPINCH (conducido por el Tracker LOCAL) ---
                     upperPinch_joint_side = f"{prefix_side}_upperPinch_JNT"
                     upperPinchPrebind_name = f"{prefix_side}_upperPinchPreBind_JNT"
                     self._setup_prebind_joint(
@@ -1278,13 +1279,13 @@ class MouthModule(object):
                         if not cmds.listRelatives(target_lowerPinch_grp, type="parentConstraint"):
                             cmds.parentConstraint(lowerPinch_global_loc, target_lowerPinch_grp, mo=True)
 
-                    # --- TRACKER NORMAL -> OFF del lowerPinch ---
-                    lowerPinch_off_grp = f"{prefix_side}_lowerPinchLocal_OFF"
-                    if cmds.objExists(lowerPinch_off_grp) and cmds.objExists(lowerPinch_local_loc):
-                        if not cmds.listRelatives(lowerPinch_off_grp, children=True, type="parentConstraint"):
-                            cmds.parentConstraint(lowerPinch_local_loc, lowerPinch_off_grp, mo=True)
+                    # --- OFF LOCAL DEL LOWERPINCH: lo conduce el Tracker LOCAL ---
+                    lowerPinch_off = f"{prefix_side}_lowerPinchLocal_OFF"
+                    if cmds.objExists(lowerPinch_off) and cmds.objExists(lowerPinch_local_loc):
+                        if not cmds.listRelatives(lowerPinch_off, type="parentConstraint"):
+                            cmds.parentConstraint(lowerPinch_local_loc, lowerPinch_off, mo=True)
 
-                    # --- PREBIND DEL LOWERPINCH (driver = tracker normal, no el global) ---
+                    # --- PREBIND DEL LOWERPINCH (conducido por el Tracker LOCAL) ---
                     lowerPinch_joint_side = f"{prefix_side}_lowerPinch_JNT"
                     lowerPinchPrebind_name = f"{prefix_side}_lowerPinchPreBind_JNT"
                     self._setup_prebind_joint(

@@ -174,7 +174,7 @@ class MouthModule(object):
         """
         Busca el índice de influencia de 'joint_name' dentro de 'skin_cluster'
         (el mismo índice en el que joint_name está conectado a .matrix[i])
-        y conecta prebind_joint.inverseMatrix -> skin_cluster.bindPreMatrix[i]
+        y conecta prebind_joint.worldInverseMatrix[0] -> skin_cluster.bindPreMatrix[i]
         en ese mismo índice. Idempotente.
         """
         if not skin_cluster or not cmds.objExists(skin_cluster):
@@ -188,8 +188,8 @@ class MouthModule(object):
         index = influences.index(joint_name)
 
         dest = f"{skin_cluster}.bindPreMatrix[{index}]"
-        if not cmds.isConnected(f"{prebind_joint}.inverseMatrix", dest):
-            cmds.connectAttr(f"{prebind_joint}.inverseMatrix", dest, force=True)
+        if not cmds.isConnected(f"{prebind_joint}.worldInverseMatrix[0]", dest):
+            cmds.connectAttr(f"{prebind_joint}.worldInverseMatrix[0]", dest, force=True)
 
     def _connect_freeze_lock_weights(self, freeze_joint, skin_cluster):
         """
@@ -204,6 +204,28 @@ class MouthModule(object):
 
         src = f"{freeze_joint}.lockInfluenceWeights"
         dst = f"{skin_cluster}.lockWeights[0]"
+        if not cmds.isConnected(src, dst):
+            cmds.connectAttr(src, dst, force=True)
+
+    def _connect_joint_lock_weights(self, joint_name, skin_cluster):
+        """
+        Conecta joint_name.lockInfluenceWeights -> skin_cluster.lockWeights[i],
+        donde i es el índice de influencia real de joint_name dentro de
+        skin_cluster (a diferencia de _connect_freeze_lock_weights, que asume
+        siempre índice 0 para freeze_joint). Idempotente.
+        """
+        if not joint_name or not skin_cluster:
+            return
+        if not cmds.objExists(joint_name) or not cmds.objExists(skin_cluster):
+            return
+
+        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
+        if joint_name not in influences:
+            return
+        index = influences.index(joint_name)
+
+        src = f"{joint_name}.lockInfluenceWeights"
+        dst = f"{skin_cluster}.lockWeights[{index}]"
         if not cmds.isConnected(src, dst):
             cmds.connectAttr(src, dst, force=True)
 
@@ -492,12 +514,12 @@ class MouthModule(object):
             mid_lipUpper = upper_lip_name
             upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
             
-        upper_off_name = f"C_{self.rig_name}_mouthCenterUpperLocal_OFF"
-        upper_trn_name = f"C_{self.rig_name}_mouthCenterUpperLocal_TRN"
+        upper_off_name = f"C_{self.rig_name}_UpperLocal_OFF"
+        upper_trn_name = f"C_{self.rig_name}_UpperLocal_TRN"
         if not cmds.objExists(upper_off_name):
             upper_local_off, upper_local_trn = self._build_off_network(
                 prefix=f"C_{self.rig_name}",
-                base_name="mouthCenterUpper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
+                base_name="Upper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
             )
         else:
             upper_local_off, upper_local_trn = upper_off_name, upper_trn_name
@@ -518,14 +540,14 @@ class MouthModule(object):
             mid_lipLower = lower_lip_name
             lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
             
-        lower_off_name = f"C_{self.rig_name}_mouthCenterLowerLocal_OFF"
-        lower_trn_name = f"C_{self.rig_name}_mouthCenterLowerLocal_TRN"
+        lower_off_name = f"C_{self.rig_name}_LowerLocal_OFF"
+        lower_trn_name = f"C_{self.rig_name}_LowerLocal_TRN"
         inverted_name = f"C_{self.rig_name}_lipLowerInverted_GRP"
 
         if not cmds.objExists(inverted_name):
             lower_local_off, lower_local_trn = self._build_off_network(
                 prefix=f"C_{self.rig_name}",
-                base_name="mouthCenterLower", source_ctrl=mid_lipLower, source_ctrl_grp=lower_lip_grp
+                base_name="Lower", source_ctrl=mid_lipLower, source_ctrl_grp=lower_lip_grp
             )
             inverted_group = cmds.group(em=True, n=inverted_name)
             cmds.setAttr(f"{inverted_group}.scaleY", -1)
@@ -568,8 +590,8 @@ class MouthModule(object):
         
         center_locator_global = cmds.duplicate(center_locator_name, n=f"{self.prefix}_lipProjectedGlobal_LOC")[0]
         #WIP: este grupo se tiene que constreñir al joint de la cabeza y el grupo de los controles de la boca generales tmb
-        global_locator_grp = cmds.group(n=f"{self.prefix}_lipGlobal_GRP", em=True)
-        cmds.parent(center_locator_global, global_locator_grp)
+        #global_locator_grp = cmds.group(n=f"{self.prefix}_lipGlobal_GRP", em=True)
+        #cmds.parent(center_locator_global, global_locator_grp)
         
         cmds.connectAttr(f"{center_locator}.worldMatrix[0]", f"{center_locator_global}.offsetParentMatrix")
 
@@ -583,10 +605,10 @@ class MouthModule(object):
         # =========================================================
         # 4.5 LOS OFFSETS DE UPPER/LOWER SIGUEN AL LOCATOR DEL CENTRO
         # =========================================================
-        if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
-        if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
+        # if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
+        #     cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
+        # if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
+        #     cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
             
             
         # =========================================================
@@ -810,48 +832,48 @@ class MouthModule(object):
         # llamada del lado R, el locator ya existe: NO hacemos return aquí,
         # simplemente saltamos la creación y seguimos hasta el final del
         # método para que se pueda construir la curva (punto 7).
-        nurb_locator_name = f"C_{self.rig_name}_lipCenterOffProjection_LOC"
-        if not cmds.objExists(nurb_locator_name):
-            nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
-            cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
-            cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6 )
+        # nurb_locator_name = f"C_{self.rig_name}_lipCenterOffProjection_LOC"
+        # if not cmds.objExists(nurb_locator_name):
+        #     nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
+        #     cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
+        #     cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6 )
 
-            aimCenter_locator_name = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
-            aimCenter_locator = cmds.spaceLocator(name=aimCenter_locator_name)[0]
+        #     aimCenter_locator_name = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
+        #     aimCenter_locator = cmds.spaceLocator(name=aimCenter_locator_name)[0]
 
-            aimMatrix_node = NodeCreator(
-                side=f"C_{self.rig_name}", node_type="aimMatrix", base_name="mouth",
-                name="Local", tag="CTRL", parent=None, custom_suffix=None
-            ).create()
+        #     aimMatrix_node = NodeCreator(
+        #         side=f"C_{self.rig_name}", node_type="aimMatrix", base_name="mouth",
+        #         name="Local", tag="CTRL", parent=None, custom_suffix=None
+        #     ).create()
 
-            cmds.connectAttr(f"{nurbCenter_locator}.worldMatrix[0]", f"{aimMatrix_node}.inputMatrix")
-            cmds.connectAttr(f"{end_local_trn}.worldMatrix[0]", f"{aimMatrix_node}.primaryTargetMatrix")
-            cmds.setAttr(f"{aimMatrix_node}.primaryMode", 1)  # 1 = Aim
-            cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisX", 0)
-            cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisZ", 1)
-            cmds.setAttr(f"{aimMatrix_node}.secondaryMode", 1)
-            cmds.setAttr(f"{aimMatrix_node}.secondaryTargetVectorY", 1)
-            cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{aimCenter_locator}.offsetParentMatrix")
+        #     cmds.connectAttr(f"{nurbCenter_locator}.worldMatrix[0]", f"{aimMatrix_node}.inputMatrix")
+        #     cmds.connectAttr(f"{end_local_trn}.worldMatrix[0]", f"{aimMatrix_node}.primaryTargetMatrix")
+        #     cmds.setAttr(f"{aimMatrix_node}.primaryMode", 1)  # 1 = Aim
+        #     cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisX", 0)
+        #     cmds.setAttr(f"{aimMatrix_node}.primaryInputAxisZ", 1)
+        #     cmds.setAttr(f"{aimMatrix_node}.secondaryMode", 1)
+        #     cmds.setAttr(f"{aimMatrix_node}.secondaryTargetVectorY", 1)
+        #     cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{aimCenter_locator}.offsetParentMatrix")
 
-            cMuscleKeepOut_node = NodeCreator(
-                side=f"C_{self.rig_name}", node_type="cMuscleKeepOut", base_name="mouth",
-                name="Local", tag="CTRL", parent=None, custom_suffix=None
-            ).create()
+        #     cMuscleKeepOut_node = NodeCreator(
+        #         side=f"C_{self.rig_name}", node_type="cMuscleKeepOut", base_name="mouth",
+        #         name="Local", tag="CTRL", parent=None, custom_suffix=None
+        #     ).create()
 
-            vector_product_node = NodeCreator(
-                side=f"C_{self.rig_name}", node_type="vectorProduct", base_name="mouth",
-                name="Local", tag="CTRL", parent=None, custom_suffix=None
-            ).create()
+        #     vector_product_node = NodeCreator(
+        #         side=f"C_{self.rig_name}", node_type="vectorProduct", base_name="mouth",
+        #         name="Local", tag="CTRL", parent=None, custom_suffix=None
+        #     ).create()
 
-            cmds.connectAttr(f"{self.boca_surface}.worldSpace[0]", f"{cMuscleKeepOut_node}.muscleData[0].meshInBase")
-            cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{vector_product_node}.matrix")
-            cmds.connectAttr(f"{vector_product_node}.output", f"{cMuscleKeepOut_node}.inputData.inDirection")
-            cmds.setAttr(f"{vector_product_node}.operation", 3)  # 3 = vector Matrix Product
-            cmds.setAttr(f"{vector_product_node}.input1Z",1)
-            cmds.setAttr(f"{vector_product_node}.normalizeOutput", 1)
-        else:
-            nurbCenter_locator = nurb_locator_name
-            aimCenter_locator = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
+        #     cmds.connectAttr(f"{self.boca_surface}.worldSpace[0]", f"{cMuscleKeepOut_node}.muscleData[0].meshInBase")
+        #     cmds.connectAttr(f"{aimMatrix_node}.outputMatrix", f"{vector_product_node}.matrix")
+        #     cmds.connectAttr(f"{vector_product_node}.output", f"{cMuscleKeepOut_node}.inputData.inDirection")
+        #     cmds.setAttr(f"{vector_product_node}.operation", 3)  # 3 = vector Matrix Product
+        #     cmds.setAttr(f"{vector_product_node}.input1Z",1)
+        #     cmds.setAttr(f"{vector_product_node}.normalizeOutput", 1)
+        # else:
+        #     nurbCenter_locator = nurb_locator_name
+        #     aimCenter_locator = f"C_{self.rig_name}_lipCenterOffProjectionAim_LOC"
             
             
         # =========================================================
@@ -863,7 +885,11 @@ class MouthModule(object):
         if not cmds.objExists(upper_joint_name):
             upper_joint = cmds.joint(n=upper_joint_name)
             cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
-            cmds.parentConstraint(upper_local_off, upper_joint, mo=True)
+            if cmds.objExists(upper_local_trn):
+                cmds.parentConstraint(upper_local_trn, upper_joint, mo=True)
+            else:
+                cmds.warning(f"MouthModule: no se pudo crear el parentConstraint de {upper_joint}, "
+                              f"'{upper_local_trn}' no existe en la escena.")
             cmds.select(clear=True)
         else:
             upper_joint = upper_joint_name
@@ -872,7 +898,11 @@ class MouthModule(object):
         if not cmds.objExists(lower_joint_name):
             lower_joint = cmds.joint(n=lower_joint_name)
             cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
-            cmds.parentConstraint(lower_local_off, lower_joint, mo=True)
+            if cmds.objExists(lower_local_trn):
+                cmds.parentConstraint(lower_local_trn, lower_joint, mo=True)
+            else:
+                cmds.warning(f"MouthModule: no se pudo crear el parentConstraint de {lower_joint}, "
+                              f"'{lower_local_trn}' no existe en la escena.")
             cmds.select(clear=True)
         else:
             lower_joint = lower_joint_name
@@ -919,15 +949,16 @@ class MouthModule(object):
                 upperSkinning = existing_upper_skin[0]
 
         # La curva original (lipProjected, alimentada por un decomposeMatrix por
-        # cada locator) conecta su .local al originalGeometry[0] del primer
-        # skinCluster creado (Upper).
+        # cada locator) conecta su worldSpace (global) al originalGeometry[0]
+        # del primer skinCluster creado (Upper).
         if upperSkinning and cmds.objExists(self.curve_transform):
-            src = f"{self.curve_transform}.local"
+            src = f"{self.curve_transform}.worldSpace[0]"
             dst = f"{upperSkinning}.originalGeometry[0]"
             if not cmds.isConnected(src, dst):
                 cmds.connectAttr(src, dst, force=True)
 
         self._connect_freeze_lock_weights(freeze_joint, upperSkinning)
+        self._connect_joint_lock_weights(upper_joint, upperSkinning)
 
         if cmds.objExists(lower_curve_name):
             existing_lower_skin = cmds.listConnections(lower_curve_name, type="skinCluster")
@@ -944,7 +975,16 @@ class MouthModule(object):
             else:
                 lowerSkinning = existing_lower_skin[0]
 
+        # La curva original (lipProjected) también debe alimentar el
+        # originalGeometry[0] del skinCluster de Lower (mismo criterio que Upper).
+        if lowerSkinning and cmds.objExists(self.curve_transform):
+            src = f"{self.curve_transform}.worldSpace[0]"
+            dst = f"{lowerSkinning}.originalGeometry[0]"
+            if not cmds.isConnected(src, dst):
+                cmds.connectAttr(src, dst, force=True)
+
         self._connect_freeze_lock_weights(freeze_joint, lowerSkinning)
+        self._connect_joint_lock_weights(lower_joint, lowerSkinning)
 
         # --- BIND SKIN de las curvas de levator / depresor / upperPinch / lowerPinch ---
         # Mismo sistema que upper/lower, pero cada curva es compartida entre L y R,
@@ -985,6 +1025,8 @@ class MouthModule(object):
         # Levator hereda la deformación ya resuelta de Upper (cadena Upper -> Levator -> UpperPinch)
         self._chain_curve_into_skincluster(upper_curve_name, levatorSkinning)
         self._connect_freeze_lock_weights(freeze_joint, levatorSkinning)
+        self._connect_joint_lock_weights(L_levator_joint, levatorSkinning)
+        self._connect_joint_lock_weights(R_levator_joint, levatorSkinning)
 
         if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
             existing_depresor_skin = cmds.listConnections(depresor_curve_name, type="skinCluster")
@@ -1003,6 +1045,8 @@ class MouthModule(object):
         # Depresor hereda la deformación ya resuelta de Lower (cadena Lower -> Depresor -> LowerPinch)
         self._chain_curve_into_skincluster(lower_curve_name, depresorSkinning)
         self._connect_freeze_lock_weights(freeze_joint, depresorSkinning)
+        self._connect_joint_lock_weights(L_depresor_joint, depresorSkinning)
+        self._connect_joint_lock_weights(R_depresor_joint, depresorSkinning)
 
         if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
             existing_upperPinch_skin = cmds.listConnections(upperPinch_curve_name, type="skinCluster")
@@ -1021,6 +1065,8 @@ class MouthModule(object):
         # UpperPinch hereda la deformación ya resuelta de Levator
         self._chain_curve_into_skincluster(levator_curve_name, upperPinchSkinning)
         self._connect_freeze_lock_weights(freeze_joint, upperPinchSkinning)
+        self._connect_joint_lock_weights(L_upperPinch_joint, upperPinchSkinning)
+        self._connect_joint_lock_weights(R_upperPinch_joint, upperPinchSkinning)
 
         if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
             existing_lowerPinch_skin = cmds.listConnections(lowerPinch_curve_name, type="skinCluster")
@@ -1039,6 +1085,8 @@ class MouthModule(object):
         # LowerPinch hereda la deformación ya resuelta de Depresor
         self._chain_curve_into_skincluster(depresor_curve_name, lowerPinchSkinning)
         self._connect_freeze_lock_weights(freeze_joint, lowerPinchSkinning)
+        self._connect_joint_lock_weights(L_lowerPinch_joint, lowerPinchSkinning)
+        self._connect_joint_lock_weights(R_lowerPinch_joint, lowerPinchSkinning)
 
         cmds.select(clear=True)
 
@@ -1051,7 +1099,7 @@ class MouthModule(object):
             upperPrebind_joint = upperPrebind_joint_name
 
         if not cmds.listRelatives(upperPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, upperPrebind_joint, mo=True)
+            cmds.parentConstraint(upper_local_trn, upperPrebind_joint, mo=True)
 
         if upperSkinning:
             self._connect_prebind_to_skincluster(upperSkinning, upper_joint, upperPrebind_joint)
@@ -1065,7 +1113,7 @@ class MouthModule(object):
             lowerPrebind_joint = lowerPrebind_joint_name
 
         if not cmds.listRelatives(lowerPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, lowerPrebind_joint, mo=True)
+            cmds.parentConstraint(lower_local_trn, lowerPrebind_joint, mo=True)
 
         if lowerSkinning:
             self._connect_prebind_to_skincluster(lowerSkinning, lower_joint, lowerPrebind_joint)
@@ -1106,6 +1154,10 @@ class MouthModule(object):
                 upper_global_loc = f"{prefix_side}_levatorFollow_trackerGlobal_LOC"
                 lower_global_loc = f"{prefix_side}_depresorFollow_trackerGlobal_LOC"
 
+                # Nombres de los Trackers normales (locales) creados
+                upper_local_loc = f"{prefix_side}_levatorFollow_tracker_LOC"
+                lower_local_loc = f"{prefix_side}_depresorFollow_tracker_LOC"
+
                 # Nombres de los controles
                 levator_ctrl = f"{prefix_side}_levator_CTRL"
                 depresor_ctrl = f"{prefix_side}_depresor_CTRL"
@@ -1116,13 +1168,19 @@ class MouthModule(object):
                     if not cmds.listRelatives(levator_grp, type="parentConstraint"):
                         cmds.parentConstraint(upper_global_loc, levator_grp, mo=True)
 
-                    # --- PREBIND DEL LEVATOR (mismo sistema que upper/lower) ---
+                    # --- TRACKER NORMAL -> OFF del levator ---
+                    levator_off_grp = f"{prefix_side}_levatorLocal_OFF"
+                    if cmds.objExists(levator_off_grp) and cmds.objExists(upper_local_loc):
+                        if not cmds.listRelatives(levator_off_grp, children=True, type="parentConstraint"):
+                            cmds.parentConstraint(upper_local_loc, levator_off_grp, mo=True)
+
+                    # --- PREBIND DEL LEVATOR (driver = tracker normal, no el global) ---
                     levator_joint_side = f"{prefix_side}_levator_JNT"
                     levatorPrebind_name = f"{prefix_side}_levatorPreBind_JNT"
                     self._setup_prebind_joint(
                         prebind_name=levatorPrebind_name,
                         source_joint=levator_joint_side,
-                        driver_target=upper_global_loc
+                        driver_target=upper_local_loc
                     )
 
                 # 2. DEPRESOR: Si existe el grupo negativo usamos ese, si no el _GRP principal
@@ -1135,13 +1193,19 @@ class MouthModule(object):
                         if not cmds.listRelatives(target_depresor_grp, type="parentConstraint"):
                             cmds.parentConstraint(lower_global_loc, target_depresor_grp, mo=True)
 
-                    # --- PREBIND DEL DEPRESOR (mismo sistema que upper/lower) ---
+                    # --- TRACKER NORMAL -> OFF del depresor ---
+                    depresor_off_grp = f"{prefix_side}_depresorLocal_OFF"
+                    if cmds.objExists(depresor_off_grp) and cmds.objExists(lower_local_loc):
+                        if not cmds.listRelatives(depresor_off_grp, children=True, type="parentConstraint"):
+                            cmds.parentConstraint(lower_local_loc, depresor_off_grp, mo=True)
+
+                    # --- PREBIND DEL DEPRESOR (driver = tracker normal, no el global) ---
                     depresor_joint_side = f"{prefix_side}_depresor_JNT"
                     depresorPrebind_name = f"{prefix_side}_depresorPreBind_JNT"
                     self._setup_prebind_joint(
                         prebind_name=depresorPrebind_name,
                         source_joint=depresor_joint_side,
-                        driver_target=lower_global_loc
+                        driver_target=lower_local_loc
                     )
 
             # --- UPPERPINCH / LOWERPINCH ---
@@ -1176,6 +1240,10 @@ class MouthModule(object):
                 upperPinch_global_loc = f"{prefix_side}_upperPinchFollow_trackerGlobal_LOC"
                 lowerPinch_global_loc = f"{prefix_side}_lowerPinchFollow_trackerGlobal_LOC"
 
+                # Nombres de los Trackers normales (locales) creados
+                upperPinch_local_loc = f"{prefix_side}_upperPinchFollow_tracker_LOC"
+                lowerPinch_local_loc = f"{prefix_side}_lowerPinchFollow_tracker_LOC"
+
                 # Nombres de los controles
                 lowerPinch_ctrl_name = f"{prefix_side}_lowerPinch_CTRL"
 
@@ -1185,13 +1253,19 @@ class MouthModule(object):
                     if not cmds.listRelatives(upperPinch_grp, type="parentConstraint"):
                         cmds.parentConstraint(upperPinch_global_loc, upperPinch_grp, mo=True)
 
-                    # --- PREBIND DEL UPPERPINCH (mismo sistema que upper/lower) ---
+                    # --- TRACKER NORMAL -> OFF del upperPinch ---
+                    upperPinch_off_grp = f"{prefix_side}_upperPinchLocal_OFF"
+                    if cmds.objExists(upperPinch_off_grp) and cmds.objExists(upperPinch_local_loc):
+                        if not cmds.listRelatives(upperPinch_off_grp, children=True, type="parentConstraint"):
+                            cmds.parentConstraint(upperPinch_local_loc, upperPinch_off_grp, mo=True)
+
+                    # --- PREBIND DEL UPPERPINCH (driver = tracker normal, no el global) ---
                     upperPinch_joint_side = f"{prefix_side}_upperPinch_JNT"
                     upperPinchPrebind_name = f"{prefix_side}_upperPinchPreBind_JNT"
                     self._setup_prebind_joint(
                         prebind_name=upperPinchPrebind_name,
                         source_joint=upperPinch_joint_side,
-                        driver_target=upperPinch_global_loc
+                        driver_target=upperPinch_local_loc
                     )
 
                 # 2. LOWERPINCH: si existe el grupo negativo usamos ese, si no el _GRP principal
@@ -1204,13 +1278,19 @@ class MouthModule(object):
                         if not cmds.listRelatives(target_lowerPinch_grp, type="parentConstraint"):
                             cmds.parentConstraint(lowerPinch_global_loc, target_lowerPinch_grp, mo=True)
 
-                    # --- PREBIND DEL LOWERPINCH (mismo sistema que upper/lower) ---
+                    # --- TRACKER NORMAL -> OFF del lowerPinch ---
+                    lowerPinch_off_grp = f"{prefix_side}_lowerPinchLocal_OFF"
+                    if cmds.objExists(lowerPinch_off_grp) and cmds.objExists(lowerPinch_local_loc):
+                        if not cmds.listRelatives(lowerPinch_off_grp, children=True, type="parentConstraint"):
+                            cmds.parentConstraint(lowerPinch_local_loc, lowerPinch_off_grp, mo=True)
+
+                    # --- PREBIND DEL LOWERPINCH (driver = tracker normal, no el global) ---
                     lowerPinch_joint_side = f"{prefix_side}_lowerPinch_JNT"
                     lowerPinchPrebind_name = f"{prefix_side}_lowerPinchPreBind_JNT"
                     self._setup_prebind_joint(
                         prebind_name=lowerPinchPrebind_name,
                         source_joint=lowerPinch_joint_side,
-                        driver_target=lowerPinch_global_loc
+                        driver_target=lowerPinch_local_loc
                     )
 
-        return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn,nurbCenter_locator,aimCenter_locator
+        return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn

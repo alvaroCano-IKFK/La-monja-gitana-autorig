@@ -430,7 +430,38 @@ class BocaGuides(object):
         self.guides_group = cmds.group(surface, lip_mid_joint, lip_end_joint, n="boca_guides_GRP")
         return self.guides_group
         
-    
+class JawGuides(object):
+    """
+    Crea les guies de la jaw.
+    """
+    def __init__(self, jaw_root, jaw_end, root_pos, end_pos):
+        self.jaw_root = jaw_root
+        self.jaw_end = jaw_end
+        self.root_pos = root_pos
+        self.end_pos = end_pos
+        self.guides_group = None
+
+    def jaw_guides(self):
+        cmds.select(clear=True)
+
+        # Crea el joint root de les guies de la jaw
+        rootJaw_joint = cmds.joint(p=self.root_pos, name=self.jaw_root)
+        if not rootJaw_joint:
+            print(f"Error creando la joint: {self.jaw_root}")
+            return
+
+        # Crea el joint final de les guies de la jaw
+        endJaw_joint = cmds.joint(p=self.end_pos, name=self.jaw_end)
+        if not endJaw_joint:
+            print(f"Error creando la joint: {self.jaw_end}")
+            return
+
+        # Crea el grup de les guies de la jaw
+        self.guides_group = cmds.group(rootJaw_joint, n="jaw_guides_GRP")
+        if self.guides_group is None:
+            print("Error al crear el grupo de guías de la jaw.")
+
+        cmds.select(clear=True)  
 
 ##### INSTANCIAS #####
 
@@ -490,8 +521,14 @@ class CharacterGuides(object):
         )
         foot_instance.foot_guides()
        
+       
+        #Crea les guies de la boca
         boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end")
         boca_instance.create_boca()
+        
+        #Crea les guies de la jaw
+        jaw_instance = JawGuides("jaw_root", "jaw_end", (0, 21, 5),(0, 19, 9))
+        jaw_instance.jaw_guides()
         
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -500,7 +537,8 @@ class CharacterGuides(object):
             arm_instance.guides_group,
             leg_instance.guides_group,
             hand_instance.group,
-            boca_instance.guides_group
+            boca_instance.guides_group,
+            jaw_instance.guides_group
         ]
 
         # Filtra nomes els grups que existeixen

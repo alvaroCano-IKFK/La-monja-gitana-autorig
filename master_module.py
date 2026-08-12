@@ -26,6 +26,7 @@ import soft_module
 import curvature_module
 import mouthModule
 import mirror_module
+import jaw_module
 
 
 def run():
@@ -57,6 +58,7 @@ def run():
     importlib.reload(curvature_module)
     importlib.reload(mouthModule)
     importlib.reload(mirror_module)
+    importlib.reload(jaw_module)
     
     ui = ui_module.UI()
     ui.main_UI()

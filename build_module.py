@@ -24,6 +24,7 @@ import curvature_module
 import soft_module
 import pvPin_module
 import mouthModule
+import jaw_module
 
 
 
@@ -168,6 +169,15 @@ class BuildRig(object):
                 side="R"
             )
         self.mirror_mouth_rig.build()
+        
+        self.jaw_rig = jaw_module.JawModule(
+                jaw_root="jaw_root",
+                jaw_end="jaw_end",
+                root_instance=self.root_rig,
+                rig_name="Character",
+                side="C"
+            )
+        self.jaw_rig.build()
 
         # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(

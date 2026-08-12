@@ -166,114 +166,114 @@ class MouthModule(object):
         cmds.setAttr(f"{muscle_shapes[0]}.fat", 0)
         return surface_trn, muscle_shapes[0]
 
-    def _build_projection_aim_keepout(self, side_code, nurb_center_locator,
-                                      target_node, surface_trn):
-        """
-        Crea, para UN lado, el aim locator sobre el centro de proyeccion y le
-        monta el keepOut contra la nurbs.
+    # def _build_projection_aim_keepout(self, side_code, nurb_center_locator,
+    #                                   target_node, surface_trn):
+    #     """
+    #     Crea, para UN lado, el aim locator sobre el centro de proyeccion y le
+    #     monta el keepOut contra la nurbs.
 
-        side_code           -> "C", "L" o "R"
-        nurb_center_locator -> C_<rig>_lipCenterOfProjection_LOC (compartido)
-        target_node         -> nodo al que mira el eje Z de este lado
-        surface_trn         -> transform de la nurbs ya convertida a muscle
+    #     side_code           -> "C", "L" o "R"
+    #     nurb_center_locator -> C_<rig>_lipCenterOfProjection_LOC (compartido)
+    #     target_node         -> nodo al que mira el eje Z de este lado
+    #     surface_trn         -> transform de la nurbs ya convertida a muscle
 
-        Es idempotente: si el aim locator de ese lado ya existe, no hace nada.
-        Devuelve el nombre del aim locator, o None si no se pudo crear.
-        """
-        prefix = f"{side_code}_{self.rig_name}"
-        aim_locator_name = f"{prefix}_lipCenterOfProjectionAim_LOC"
+    #     Es idempotente: si el aim locator de ese lado ya existe, no hace nada.
+    #     Devuelve el nombre del aim locator, o None si no se pudo crear.
+    #     """
+    #     prefix = f"{side_code}_{self.rig_name}"
+    #     aim_locator_name = f"{prefix}_lipCenterOfProjectionAim_LOC"
 
-        if cmds.objExists(aim_locator_name):
-            return aim_locator_name
+    #     if cmds.objExists(aim_locator_name):
+    #         return aim_locator_name
 
-        if not cmds.objExists(target_node):
-            cmds.warning(
-                f"MouthModule: el target '{target_node}' del aim de '{side_code}' "
-                f"no existe todavia, me salto ese lado."
-            )
-            return None
+    #     if not cmds.objExists(target_node):
+    #         cmds.warning(
+    #             f"MouthModule: el target '{target_node}' del aim de '{side_code}' "
+    #             f"no existe todavia, me salto ese lado."
+    #         )
+    #         return None
 
-        aim_locator = cmds.spaceLocator(name=aim_locator_name)[0]
+    #     aim_locator = cmds.spaceLocator(name=aim_locator_name)[0]
 
-        aim_matrix = NodeCreator(
-            side=prefix, node_type="aimMatrix", base_name="mouthAim",
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        aim_matrix = cmds.rename(
-            aim_matrix, f"{prefix}_lipCenterOfProjectionAim_aimMatrix"
-        )
+    #     aim_matrix = NodeCreator(
+    #         side=prefix, node_type="aimMatrix", base_name="mouthAim",
+    #         name="Local", tag="CTRL", parent=None, custom_suffix=None
+    #     ).create()
+    #     aim_matrix = cmds.rename(
+    #         aim_matrix, f"{prefix}_lipCenterOfProjectionAim_aimMatrix"
+    #     )
 
-        cmds.connectAttr(f"{nurb_center_locator}.worldMatrix[0]", f"{aim_matrix}.inputMatrix")
-        cmds.connectAttr(f"{target_node}.worldMatrix[0]", f"{aim_matrix}.primaryTargetMatrix")
+    #     cmds.connectAttr(f"{nurb_center_locator}.worldMatrix[0]", f"{aim_matrix}.inputMatrix")
+    #     cmds.connectAttr(f"{target_node}.worldMatrix[0]", f"{aim_matrix}.primaryTargetMatrix")
 
-        # --- Primario: el eje Z apunta al target ---
-        cmds.setAttr(f"{aim_matrix}.primaryMode", 1)          # 1 = Aim
-        cmds.setAttr(f"{aim_matrix}.primaryInputAxisX", 0)
-        cmds.setAttr(f"{aim_matrix}.primaryInputAxisY", 0)
-        cmds.setAttr(f"{aim_matrix}.primaryInputAxisZ", 1)
+    #     # --- Primario: el eje Z apunta al target ---
+    #     cmds.setAttr(f"{aim_matrix}.primaryMode", 1)          # 1 = Aim
+    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisX", 0)
+    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisY", 0)
+    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisZ", 1)
 
-        # --- Secundario: Y hacia ARRIBA ---
-        # secondaryMode 1 (Aim) haria que la Y apuntase a la posicion del
-        # secondaryTargetMatrix, que al no estar conectado es el origen del
-        # mundo => Y mirando abajo. Con 2 (Align) la Y se alinea con el
-        # vector secondaryTargetVector (0,1,0) en espacio mundo.
-        cmds.setAttr(f"{aim_matrix}.secondaryMode", 2)        # 2 = Align
-        cmds.setAttr(f"{aim_matrix}.secondaryInputAxisX", 0)
-        cmds.setAttr(f"{aim_matrix}.secondaryInputAxisY", 1)
-        cmds.setAttr(f"{aim_matrix}.secondaryInputAxisZ", 0)
-        cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorX", 0)
-        cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorY", 1)
-        cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorZ", 0)
+    #     # --- Secundario: Y hacia ARRIBA ---
+    #     # secondaryMode 1 (Aim) haria que la Y apuntase a la posicion del
+    #     # secondaryTargetMatrix, que al no estar conectado es el origen del
+    #     # mundo => Y mirando abajo. Con 2 (Align) la Y se alinea con el
+    #     # vector secondaryTargetVector (0,1,0) en espacio mundo.
+    #     cmds.setAttr(f"{aim_matrix}.secondaryMode", 2)        # 2 = Align
+    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisX", 0)
+    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisY", 1)
+    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisZ", 0)
+    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorX", 0)
+    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorY", 1)
+    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorZ", 0)
 
-        cmds.connectAttr(f"{aim_matrix}.outputMatrix", f"{aim_locator}.offsetParentMatrix")
+    #     cmds.connectAttr(f"{aim_matrix}.outputMatrix", f"{aim_locator}.offsetParentMatrix")
 
-        # =========================================================
-        # KEEP OUT
-        # =========================================================
-        sel_backup = cmds.ls(selection=True) or []
+    #     # =========================================================
+    #     # KEEP OUT
+    #     # =========================================================
+    #     sel_backup = cmds.ls(selection=True) or []
 
-        # --- Self/Multi Collision > Rig selection for KeepOut ---
-        #     cMuscle_rigKeepOutSel() trabaja sobre la seleccion.
-        #     (cMuscle_rigKeepOut pide un $obj, no es este)
-        keepout_before = set(cmds.ls(type="cMuscleKeepOut") or [])
+    #     # --- Self/Multi Collision > Rig selection for KeepOut ---
+    #     #     cMuscle_rigKeepOutSel() trabaja sobre la seleccion.
+    #     #     (cMuscle_rigKeepOut pide un $obj, no es este)
+    #     keepout_before = set(cmds.ls(type="cMuscleKeepOut") or [])
 
-        cmds.select(aim_locator, replace=True)
-        mel.eval("cMuscle_rigKeepOutSel();")
+    #     cmds.select(aim_locator, replace=True)
+    #     mel.eval("cMuscle_rigKeepOutSel();")
 
-        keepout_after = set(cmds.ls(type="cMuscleKeepOut") or [])
-        new_keepout_shapes = sorted(keepout_after - keepout_before)
+    #     keepout_after = set(cmds.ls(type="cMuscleKeepOut") or [])
+    #     new_keepout_shapes = sorted(keepout_after - keepout_before)
 
-        # De la shape cMuscleKeepOut subimos a su transform.
-        keepout_trns = []
-        for shp in new_keepout_shapes:
-            keepout_trns.extend(cmds.listRelatives(shp, parent=True) or [])
+    #     # De la shape cMuscleKeepOut subimos a su transform.
+    #     keepout_trns = []
+    #     for shp in new_keepout_shapes:
+    #         keepout_trns.extend(cmds.listRelatives(shp, parent=True) or [])
 
-        # --- In Direction en Z ---
-        # Los tres componentes explicitos: por defecto viene en X, si solo
-        # pones la Z te queda una diagonal (1, 0, 1).
-        for ko_shape in new_keepout_shapes:
-            cmds.setAttr(f"{ko_shape}.inDirectionX", 0)
-            cmds.setAttr(f"{ko_shape}.inDirectionY", 0)
-            cmds.setAttr(f"{ko_shape}.inDirectionZ", 1)
+    #     # --- In Direction en Z ---
+    #     # Los tres componentes explicitos: por defecto viene en X, si solo
+    #     # pones la Z te queda una diagonal (1, 0, 1).
+    #     for ko_shape in new_keepout_shapes:
+    #         cmds.setAttr(f"{ko_shape}.inDirectionX", 0)
+    #         cmds.setAttr(f"{ko_shape}.inDirectionY", 0)
+    #         cmds.setAttr(f"{ko_shape}.inDirectionZ", 1)
 
-        # --- Self/Multi Collision > Connect Muscles to Keep Out ---
-        #     cMuscle_keepOutAddRemMuscle(1) ; keepOut primero, muscle el ULTIMO
-        if keepout_trns:
-            cmds.select(keepout_trns, replace=True)
-            cmds.select(surface_trn, add=True)
-            mel.eval("cMuscle_keepOutAddRemMuscle(1);")
-        else:
-            cmds.warning(
-                f"MouthModule: no se creo ningun cMuscleKeepOut sobre "
-                f"'{aim_locator}', me salto el Connect Muscles to Keep Out."
-            )
+    #     # --- Self/Multi Collision > Connect Muscles to Keep Out ---
+    #     #     cMuscle_keepOutAddRemMuscle(1) ; keepOut primero, muscle el ULTIMO
+    #     if keepout_trns:
+    #         cmds.select(keepout_trns, replace=True)
+    #         cmds.select(surface_trn, add=True)
+    #         mel.eval("cMuscle_keepOutAddRemMuscle(1);")
+    #     else:
+    #         cmds.warning(
+    #             f"MouthModule: no se creo ningun cMuscleKeepOut sobre "
+    #             f"'{aim_locator}', me salto el Connect Muscles to Keep Out."
+    #         )
 
-        if sel_backup:
-            cmds.select(sel_backup, replace=True)
-        else:
-            cmds.select(clear=True)
+    #     if sel_backup:
+    #         cmds.select(sel_backup, replace=True)
+    #     else:
+    #         cmds.select(clear=True)
 
-        return aim_locator
+    #     return aim_locator
 
     
     def _build_off_network(self, prefix, base_name, source_ctrl, source_ctrl_grp):
@@ -1002,37 +1002,37 @@ class MouthModule(object):
         # El keepOut de cada uno lo desliza por su propia Z hasta sacarlo
         # de la nurbs.
 
-        nurb_locator_name = f"C_{self.rig_name}_lipCenterOfProjection_LOC"
-        if not cmds.objExists(nurb_locator_name):
-            nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
-            cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
-            cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6)
-        else:
-            nurbCenter_locator = nurb_locator_name
+        # nurb_locator_name = f"C_{self.rig_name}_lipCenterOfProjection_LOC"
+        # if not cmds.objExists(nurb_locator_name):
+        #     nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
+        #     cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
+        #     cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6)
+        # else:
+        #     nurbCenter_locator = nurb_locator_name
 
-        # La nurbs se convierte a Muscle Object una sola vez (es compartida).
-        surface_trn, muscle_shape = self._get_or_create_muscle_surface()
+        # # La nurbs se convierte a Muscle Object una sola vez (es compartida).
+        # surface_trn, muscle_shape = self._get_or_create_muscle_surface()
 
-        # --- C: apunta al tracker local del centro ---
-        # Si aun no existe caemos al locator proyectado del centro.
-        center_target = f"C_{self.rig_name}_mouthCenterLocal_TRN"
-        if not cmds.objExists(center_target):
-            center_target = center_locator_name
+        # # --- C: apunta al tracker local del centro ---
+        # # Si aun no existe caemos al locator proyectado del centro.
+        # center_target = f"C_{self.rig_name}_mouthCenterLocal_TRN"
+        # if not cmds.objExists(center_target):
+        #     center_target = center_locator_name
 
-        self._build_projection_aim_keepout(
-            side_code="C",
-            nurb_center_locator=nurbCenter_locator,
-            target_node=center_target,
-            surface_trn=surface_trn,
-        )
+        # self._build_projection_aim_keepout(
+        #     side_code="C",
+        #     nurb_center_locator=nurbCenter_locator,
+        #     target_node=center_target,
+        #     surface_trn=surface_trn,
+        # )
 
-        # --- Lado actual (L o R): apunta a la comisura de este lado ---
-        aimCenter_locator = self._build_projection_aim_keepout(
-            side_code=self.side,
-            nurb_center_locator=nurbCenter_locator,
-            target_node=end_local_trn,
-            surface_trn=surface_trn,
-        )
+        # # --- Lado actual (L o R): apunta a la comisura de este lado ---
+        # aimCenter_locator = self._build_projection_aim_keepout(
+        #     side_code=self.side,
+        #     nurb_center_locator=nurbCenter_locator,
+        #     target_node=end_local_trn,
+        #     surface_trn=surface_trn,
+        # )
 
             
         # =========================================================

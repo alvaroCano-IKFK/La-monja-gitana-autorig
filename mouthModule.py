@@ -1367,7 +1367,7 @@ class MouthModule(object):
                         driver_target=lower_local_loc
                     )
 
-            # --- UPPERPINCH / LOWERPINCH ---
+            # --- UPPERPINCH / LOWERPINCH ----
             # UpperPinch va DESPUÉS de Levator en la cadena (Upper -> Levator -> UpperPinch),
             # así que su tracker debe leer el world space de la curva Levator (la anterior),
             # no de Upper. Igual para LowerPinch con Depresor (Lower -> Depresor -> LowerPinch).

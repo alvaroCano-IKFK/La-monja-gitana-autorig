@@ -36,6 +36,7 @@ class JawModule(object):
         self.jaw_lower_ctrl = None
         self.jaw_upper_local_trn = None
         self.jaw_lower_local_trn = None
+        self.corner_joints = {}
         
         
     def _offset_control_shape(self, ctrl, move=(0, 0, 0), rotate=(0, 0, 0), scale=1.0):
@@ -142,61 +143,87 @@ class JawModule(object):
         cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
 
         return local_off, local_trn
-    
+
+    def _constrain_joint_to_local_trn(self, local_trn, joint):
+        """
+        El _TRN conduce al joint. No al reves: los canales del _TRN ya vienen
+        conectados desde el decomposeMatrix de _build_off_network, asi que no
+        admite ser destino de un constraint.
+        """
+        if not cmds.objExists(local_trn):
+            cmds.warning(f"[Jaw] No existe el TRN '{local_trn}'.")
+            return None
+        if not cmds.objExists(joint):
+            cmds.warning(f"[Jaw] No existe el joint '{joint}'.")
+            return None
+
+        existing = cmds.listRelatives(joint, type="parentConstraint") or []
+        if existing:
+            return existing[0]
+
+        return cmds.parentConstraint(local_trn, joint, mo=True)[0]
+
+    # ------------------------------------------------------------------
+    # COMISURAS DE LA BOCA
+    # ------------------------------------------------------------------
     def _get_mouth_corner_controls(self):
-            """
-            Devuelve {side: ctrl} de las comisuras de la boca (end_LIP_CTRL).
+        """
+        Devuelve {side: ctrl} de las comisuras de la boca (end_LIP_CTRL).
 
-            Primero mira las instancias de MouthModule que nos hayan pasado;
-            si no hay, cae al nombre en escena. El nombre es determinista
-            ({side}_{rig_name}_end_LIP_CTRL), asi que el fallback es seguro.
-            """
-            corners = {}
+        Primero mira las instancias de MouthModule que nos hayan pasado;
+        si no hay, cae al nombre en escena. El nombre es determinista
+        ({side}_{rig_name}_end_LIP_CTRL), asi que el fallback es seguro.
+        """
+        corners = {}
 
-            for mouth in self.mouth_instances:
-                ctrl = getattr(mouth, "end_lip_ctrl", None)
-                if ctrl and cmds.objExists(ctrl):
-                    corners[mouth.side] = ctrl
+        for mouth in self.mouth_instances:
+            ctrl = getattr(mouth, "end_lip_ctrl", None)
+            if ctrl and cmds.objExists(ctrl):
+                corners[mouth.side] = ctrl
 
-            if not corners:
-                for side in ("L", "R"):
-                    ctrl = f"{side}_{self.rig_name}_end_LIP_CTRL"
-                    if cmds.objExists(ctrl):
-                        corners[side] = ctrl
+        if not corners:
+            for side in ("L", "R"):
+                ctrl = f"{side}_{self.rig_name}_end_LIP_CTRL"
+                if cmds.objExists(ctrl):
+                    corners[side] = ctrl
 
-            if not corners:
-                cmds.warning("[Jaw] No encuentro las comisuras de la boca. "
-                            "Construye el MouthModule antes que el jaw.")
-            return corners
-        
+        if not corners:
+            cmds.warning("[Jaw] No encuentro las comisuras de la boca. "
+                         "Construye el MouthModule antes que el jaw.")
+        return corners
+
     def _create_corner_joints(self):
-            """Crea un JNT por comisura, en la posicion del control y orientado
-            como el jaw_root (para que el rotateX del jaw sea el eje limpio)."""
-            corners = self._get_mouth_corner_controls()
-            corner_joints = {}
+        """
+        Crea un JNT por comisura, en la posicion del control y orientado
+        como el jaw_root (para que el rotateX del jaw sea el eje limpio).
+        """
+        corners = self._get_mouth_corner_controls()
+        corner_joints = {}
 
-            for side, ctrl in corners.items():
-                jnt_name = f"{side}_{self.rig_name}_jawCorner_JNT"
-                if cmds.objExists(jnt_name):
-                    corner_joints[side] = jnt_name
-                    continue
+        for side, ctrl in corners.items():
+            jnt_name = f"{side}_{self.rig_name}_jawCorner_JNT"
+            if cmds.objExists(jnt_name):
+                corner_joints[side] = jnt_name
+                continue
 
-                pos = cmds.xform(ctrl, q=True, ws=True, t=True)
-                cmds.select(clear=True)
-                jnt = cmds.joint(n=jnt_name, p=pos)
-                cmds.matchTransform(jnt, self.jaw_root, rot=True, pos=False)
-                cmds.makeIdentity(jnt, apply=True, r=True)
+            pos = cmds.xform(ctrl, q=True, ws=True, t=True)
+            cmds.select(clear=True)
+            jnt = cmds.joint(n=jnt_name, p=pos)
+            cmds.matchTransform(jnt, self.jaw_root, rot=True, pos=False)
+            cmds.makeIdentity(jnt, apply=True, r=True)
 
-                corner_joints[side] = jnt
+            corner_joints[side] = jnt
 
-            return corner_joints
-        
+        return corner_joints
+
     def _constrain_corner_joints(self, corner_joints, jaw_upper_jnt,
                                  jaw_lower_jnt, driver_ctrl):
         """
         Constrainea cada comisura entre jawUpper y jawLower.
+
         Los dos pesos van conectados con valores complementarios: uno recibe
-        el atributo directo y el otro el mismo atributo pasado por un reverse.
+        el atributo {side}UpperLower directo y el otro el mismo atributo
+        pasado por un reverse, para que el slider recorra de extremo a extremo.
         """
         constraints = {}
 
@@ -211,6 +238,8 @@ class JawModule(object):
                 constraints[side] = existing[0]
                 continue
 
+            # mo=True es obligatorio: la comisura esta desplazada del pivote
+            # del jaw, sin offset se teletransportaria al centro.
             constraint = cmds.parentConstraint(
                 jaw_upper_jnt, jaw_lower_jnt, corner_jnt, mo=True
             )[0]
@@ -243,26 +272,145 @@ class JawModule(object):
 
         return constraints
 
+    # ------------------------------------------------------------------
+    # LINEAS DE PINCH DEL JAW
+    # ------------------------------------------------------------------
+    def _get_pinch_curve_pairs(self):
+        """
+        {label: (curva_pinch_de_la_boca, copia_JawPinchLine)}
 
-       
-    def _constrain_joint_to_local_trn(self, local_trn, joint):
-            """
-            El _TRN conduce al joint. No al reves: los canales del _TRN ya vienen
-            conectados desde el decomposeMatrix de _build_off_network.
-            """
-            if not cmds.objExists(local_trn):
-                cmds.warning(f"[Jaw] No existe el TRN '{local_trn}'.")
-                return None
-            if not cmds.objExists(joint):
-                cmds.warning(f"[Jaw] No existe el joint '{joint}'.")
-                return None
+        Los nombres de la boca son constantes deterministas. No los saco de
+        las instancias de MouthModule porque _build_lip_curve tiene un early
+        return: en cualquier build posterior esas variables ni se asignan.
+        """
+        return {
+            "Upper": (f"C_{self.rig_name}_lipCurvatureUpperPinch_CRV",
+                      f"C_{self.rig_name}_lipUpperJawPinchLine_CRV"),
+            "Lower": (f"C_{self.rig_name}_lipCurvatureLowerPinch_CRV",
+                      f"C_{self.rig_name}_lipLowerJawPinchLine_CRV"),
+        }
 
-            existing = cmds.listRelatives(joint, type="parentConstraint") or []
+    def _build_jaw_pinch_lines(self):
+        """
+        Duplica las curvas de pinch de la boca y conecta el worldSpace de
+        la original al create de la copia, para que la siga ya deformada.
+        """
+        pinch_lines = {}
+
+        for label, (src_curve, dup_name) in self._get_pinch_curve_pairs().items():
+            if not cmds.objExists(src_curve):
+                cmds.warning(f"[Jaw] No existe la curva de pinch '{src_curve}'. "
+                             "Construye el MouthModule antes que el jaw.")
+                continue
+
+            if cmds.objExists(dup_name):
+                pinch_lines[label] = dup_name
+                continue
+
+            dup_curve = cmds.duplicate(src_curve, n=dup_name)[0]
+            # La copia no debe arrastrar deformadores propios: su unica
+            # entrada tiene que ser el worldSpace de la original.
+            cmds.delete(dup_curve, ch=True)
+
+            # ni=True es clave: la curva de pinch esta skineada, asi que tiene
+            # una shape intermedia (Orig). Sin el filtro te puede tocar esa.
+            src_shape = cmds.listRelatives(src_curve, shapes=True, ni=True, f=True)[0]
+            dup_shape = cmds.listRelatives(dup_curve, shapes=True, ni=True, f=True)[0]
+
+            cmds.connectAttr(f"{src_shape}.worldSpace[0]", f"{dup_shape}.create", force=True)
+
+            pinch_lines[label] = dup_curve
+
+        return pinch_lines
+
+    def _bind_jaw_pinch_lines(self, jaw_upper_jnt, jaw_lower_jnt, corner_joints):
+        """
+        Skinea las curvas JawPinchLine con los 4 joints del jaw (upper, lower
+        y las dos comisuras) y encadena cada skinCluster al worldSpace de su
+        curva de pinch de origen.
+
+        Reparto de pesos calcado del de la boca (lipUpperLine / lipLowerLine),
+        sustituyendo el freeze_joint por la comisura de cada lado: extremos
+        anclados, cv[1]/cv[5] a medias y el centro entero al joint del jaw
+        que toca. El orden de CVs va de comisura a comisura, asi que cv[0]
+        cae en el lado L y cv[6] en el R.
+        """
+        L_corner = corner_joints.get("L")
+        R_corner = corner_joints.get("R")
+
+        influences = [j for j in (jaw_upper_jnt, jaw_lower_jnt, L_corner, R_corner)
+                      if j and cmds.objExists(j)]
+
+        if len(influences) < 4:
+            cmds.warning(f"[Jaw] Solo tengo {len(influences)} de 4 joints. "
+                         "Revisa que existan las dos comisuras antes de skinear.")
+            return {}
+
+        # El joint central depende de la curva: la linea upper la lleva el
+        # jawUpper y la lower el jawLower.
+        central_joint = {"Upper": jaw_upper_jnt, "Lower": jaw_lower_jnt}
+
+        skins = {}
+
+        for label, (src_curve, dup_curve) in self._get_pinch_curve_pairs().items():
+            if not cmds.objExists(dup_curve):
+                cmds.warning(f"[Jaw] No existe '{dup_curve}'. "
+                             "Lanza _build_jaw_pinch_lines antes.")
+                continue
+
+            existing = cmds.listConnections(dup_curve, type="skinCluster")
             if existing:
-                return existing[0]
+                skins[label] = existing[0]
+                continue
 
-            return cmds.parentConstraint(local_trn, joint, mo=True)[0]   
-                                        
+            cv_count = len(cmds.ls(f"{dup_curve}.cv[*]", flatten=True))
+            if cv_count != 7:
+                cmds.warning(f"[Jaw] '{dup_curve}' tiene {cv_count} CVs, esperaba 7. "
+                             "No asigno pesos por CV.")
+
+            # Paso los joints como argumentos en vez de con cmds.select:
+            # asi el bind no depende de lo que haya seleccionado el usuario.
+            skin_cluster = cmds.skinCluster(
+                *influences, dup_curve,
+                tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
+            )[0]
+
+            # Los CVs centrales tambien van explicitos: con cuatro influencias,
+            # dejarlos por distancia haria que las comisuras sangraran al centro.
+            mid = central_joint[label]
+            cv_weights = {
+                0: [(L_corner, 1.0)],
+                1: [(L_corner, 0.5), (mid, 0.5)],
+                2: [(mid, 1.0)],
+                3: [(mid, 1.0)],
+                4: [(mid, 1.0)],
+                5: [(R_corner, 0.5), (mid, 0.5)],
+                6: [(R_corner, 1.0)],
+            }
+
+            if cv_count == 7:
+                for cv_index, transform_value in cv_weights.items():
+                    cmds.skinPercent(
+                        skin_cluster, f"{dup_curve}.cv[{cv_index}]",
+                        transformValue=transform_value
+                    )
+
+            # Mismo encadenado que usas en la boca: el skinCluster parte de la
+            # posicion YA deformada de la curva de pinch, no de la copia
+            # estatica (Orig) que crea el bind.
+            src = f"{src_curve}.worldSpace[0]"
+            for dst in (f"{skin_cluster}.input[0].inputGeometry",
+                        f"{skin_cluster}.originalGeometry[0]"):
+                if not cmds.isConnected(src, dst):
+                    cmds.connectAttr(src, dst, force=True)
+
+            skins[label] = skin_cluster
+
+        return skins
+
+    # ------------------------------------------------------------------
+    # BUILD
+    # ------------------------------------------------------------------
     def build(self):
         """Construye el rig del jaw."""
 
@@ -288,7 +436,16 @@ class JawModule(object):
                 final_name=f"{self.prefix}_jawUpper_CTRL"
             )
         
+        cmds.addAttr(jaw_upper_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
+        cmds.setAttr(f"{jaw_upper_ctrl}.extraAttrSep", cb=True)  
+        cmds.setAttr(f"{jaw_upper_ctrl}.extraAttrSep", l=True)
+        
+        cmds.addAttr(jaw_upper_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
+        cmds.addAttr(jaw_upper_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
+        cmds.addAttr(jaw_upper_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
 
+        
+        
         #UPPER CONTROL GROUP
         jaw_upper_grp = self.group_maker.create_rig_hierarchy(
             jaw_upper_ctrl, self.jaw_root, match_rotation=True, world_space=True
@@ -320,17 +477,8 @@ class JawModule(object):
         #LOWER CONTROL GROUP
         jaw_lower_grp = self.group_maker.create_rig_hierarchy(
             jaw_lower_ctrl, self.jaw_root, match_rotation=True, world_space=True
-            
         )
-        cmds.addAttr(jaw_lower_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
-        cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", cb=True)  
-        cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", l=True)
-        
-        cmds.addAttr(jaw_lower_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
-        cmds.addAttr(jaw_lower_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
-        cmds.addAttr(jaw_lower_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
-       
-       
+
         #LOWER CONTROL OFFSET
         self._offset_control_shape(jaw_lower_ctrl, move=(0, -2, 10))
         
@@ -346,15 +494,19 @@ class JawModule(object):
             lowerJaw_local_off = lower_off_name
             lowerJaw_local_trn = lower_trn_name
 
+        #LOS TRN LOCALES CONDUCEN A SUS JOINTS
+        self._constrain_joint_to_local_trn(upperJaw_local_trn, jaw_upper_jnt)
+        self._constrain_joint_to_local_trn(lowerJaw_local_trn, jaw_lower_jnt)
+
         # 3. EXPONER LOS NODOS CLAVE
         # Para que el modulo de la boca (u otros) puedan engancharse sin
         # reconstruir los nombres con f-strings.
-        # self.jaw_upper_jnt = jaw_upper_jnt
-        # self.jaw_lower_jnt = jaw_lower_jnt
-        # self.jaw_upper_ctrl = jaw_upper_ctrl
-        # self.jaw_lower_ctrl = jaw_lower_ctrl
-        # self.jaw_upper_local_trn = upperJaw_local_trn
-        # self.jaw_lower_local_trn = lowerJaw_local_trn
+        self.jaw_upper_jnt = jaw_upper_jnt
+        self.jaw_lower_jnt = jaw_lower_jnt
+        self.jaw_upper_ctrl = jaw_upper_ctrl
+        self.jaw_lower_ctrl = jaw_lower_ctrl
+        self.jaw_upper_local_trn = upperJaw_local_trn
+        self.jaw_lower_local_trn = lowerJaw_local_trn
 
         #CONEXIONES PARA Q EL LOWER EMPUJE AL UPPER
         #ROTACIONES
@@ -383,7 +535,7 @@ class JawModule(object):
         cmds.setAttr(f"{floatMath02_node}.operation", 1) #Subtract
         
         cmds.connectAttr(f"{clamp_node}.outputR", f"{floatMath02_node}.floatA")
-        cmds.connectAttr(f"{jaw_lower_ctrl}.collision", f"{floatMath02_node}.floatB")
+        cmds.connectAttr(f"{jaw_upper_ctrl}.collision", f"{floatMath02_node}.floatB")
 
         # El resultado entra en el SDK del upper.
         # create_rig_hierarchy monta GRP > SPC > OFF > SDK > ANIM pero solo
@@ -436,16 +588,25 @@ class JawModule(object):
         
         cmds.connectAttr(f"{multMatrix_node}.matrixSum", f"{upper_decompose_node}.inputMatrix")
         cmds.connectAttr(f"{upper_decompose_node}.outputRotateX", f"{floatMath_node}.floatB")
-        
-        
-        #COMISURAS DE LA BOCA
+
+        # 4. COMISURAS DE LA BOCA
+        # El orden importa: los joints tienen que existir antes de que nadie
+        # los use como target de un constraint o como influencia de un skin.
         corner_joints = self._create_corner_joints()
-        print(f"[Jaw] Corner joints: {corner_joints}")
+        self.corner_joints = corner_joints
+
         self._constrain_corner_joints(
-            corner_joints, jaw_upper_jnt, jaw_lower_jnt, jaw_lower_ctrl
+            corner_joints, jaw_upper_jnt, jaw_lower_jnt, jaw_upper_ctrl
         )
-        
-        self._constrain_joint_to_local_trn(upperJaw_local_trn, jaw_upper_jnt)
-        self._constrain_joint_to_local_trn(lowerJaw_local_trn, jaw_lower_jnt)
-        
+
+        # 5. LINEAS DE PINCH DEL JAW
+        jaw_pinch_lines = self._build_jaw_pinch_lines()
+        jaw_pinch_skins = self._bind_jaw_pinch_lines(
+            jaw_upper_jnt, jaw_lower_jnt, corner_joints
+        )
+
+        print(f"[Jaw] Corner joints: {corner_joints}")
+        print(f"[Jaw] Pinch lines:   {jaw_pinch_lines}")
+        print(f"[Jaw] Pinch skins:   {jaw_pinch_skins}")
+
         return jaw_upper_grp, jaw_lower_grp

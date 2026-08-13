@@ -5,7 +5,7 @@ import os
 import json
 
 # --- CONFIGURACIÓN DE PATHS ---
-BASE_PATH = r"C:\Users\Usuario\Documents\GitHub\La-monja-gitana-autorig03"
+BASE_PATH = r"E:\3A-ANIMACIÓ\Scripts\ENTREGA AUTORIG MONJA GITANA\La-monja-gitana-autorig"
 CONTROLS_DIR = os.path.join(BASE_PATH, "control_library")
 
 # Asegurar que la carpeta existe

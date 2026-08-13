@@ -441,8 +441,8 @@ class JawModule(object):
         cmds.setAttr(f"{jaw_upper_ctrl}.extraAttrSep", l=True)
         
         cmds.addAttr(jaw_upper_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
-        cmds.addAttr(jaw_upper_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
-        cmds.addAttr(jaw_upper_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0.5)
+        cmds.addAttr(jaw_upper_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
+        cmds.addAttr(jaw_upper_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
 
         
         

@@ -30,6 +30,11 @@ class MouthModule(object):
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
+        
+        # Nodos que expone el modulo para que el jaw pueda engancharse.
+        self.mid_lip_ctrl = None
+        self.end_lip_ctrl = None
+        self.end_lip_grp = None
 
     # ------------------------------------------------------------------
     # HELPERS DE IDEMPOTENCIA (crear una vez, reutilizar siempre)
@@ -636,6 +641,8 @@ class MouthModule(object):
         else:
             mid_lip = center_name
             mid_lip_grp = cmds.listRelatives(mid_lip, parent=True)[0]
+            
+        self.mid_lip_ctrl = mid_lip          
 
 
         # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
@@ -646,8 +653,8 @@ class MouthModule(object):
         end_lip_grp = self.group_maker.create_rig_hierarchy(
             end_lip, self.lip_end, match_rotation=True, world_space=True
         )
-        
-
+        self.end_lip_ctrl = end_lip
+        self.end_lip_grp = end_lip_grp
 
         cmds.rebuildSurface(self.boca_surface, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kc=0,
                              su=4, du=3, sv=4, dv=3, tol=0.01, fr=0, dir=2)

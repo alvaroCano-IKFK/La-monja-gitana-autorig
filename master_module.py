@@ -27,7 +27,7 @@ import curvature_module
 import mouthModule
 import mirror_module
 import jaw_module
-
+import eyes_module
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez
@@ -59,6 +59,7 @@ def run():
     importlib.reload(mouthModule)
     importlib.reload(mirror_module)
     importlib.reload(jaw_module)
+    importlib.reload(eyes_module)
     
     ui = ui_module.UI()
     ui.main_UI()

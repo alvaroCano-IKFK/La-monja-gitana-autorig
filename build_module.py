@@ -25,6 +25,7 @@ import soft_module
 import pvPin_module
 import mouthModule
 import jaw_module
+import eyes_module
 
 
 
@@ -178,6 +179,20 @@ class BuildRig(object):
                 side="C"
             )
         self.jaw_rig.build()
+        
+        self.eyes_rig = eyes_module.EyesModule(
+                root_instance=self.root_rig,
+                rig_name="Character",
+                side="L"
+            )
+        self.eyes_rig.build()
+
+        self.mirror_eyes_rig = eyes_module.EyesModule(
+                root_instance=self.root_rig,
+                rig_name="Character",
+                side="R"
+            )
+        self.mirror_eyes_rig.build()
 
         # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(

@@ -22,7 +22,8 @@ class SoftIkModule(object):
         )
         return creator.create()
 
-    def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt):
+    def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt,
+                      goal_ctrl=None):
         """
         Crea las conexiones de nodos para el Soft IK.
 
@@ -31,8 +32,30 @@ class SoftIkModule(object):
             ik_handle (str): Nombre del IK Handle a suavizar.
             root_jnt (str): El joint IK inicial de la cadena (Thigh o Shoulder).
             mid_jnt (str): El joint IK intermedio (Knee o Elbow).
-
+            goal_ctrl (str): Quien mandaba sobre el ik handle ANTES de meter
+                el soft. En un brazo es el propio ik_ctrl, y por eso es el
+                valor por defecto. En una pierna NO lo es: ahi el handle iba
+                pegado al footBall_CTRL, que cuelga de toda la cadena de
+                pivotes del pie (ik_ctrl > heel > bankIn > bankOut > tip >
+                ball). Si el soft apunta al ik_ctrl se salta esos pivotes y
+                el foot roll deja de mover el tobillo.
         """
+        # Por defecto el objetivo es el propio control IK (caso brazo).
+        goal_ctrl = goal_ctrl or ik_ctrl
+
+        # OJO: no se puede apuntar al goal_ctrl directamente. El ik handle
+        # resuelve hasta el TOBILLO, y el footBall_CTRL esta en la bola del
+        # pie: hay un offset real entre los dos. El parentConstraint que habia
+        # antes del soft lo conservaba con mo=True; aqui hace falta lo mismo.
+        #
+        # Este TRN nace en la posicion de reposo del handle y se cuelga del
+        # goal_ctrl con mo=True: es el goal_ctrl "trasladado" al sitio donde
+        # de verdad tiene que acabar el handle. Sin esto el handle se clava
+        # encima de la bola del pie y la pierna se encoge.
+        soft_goal_node = cmds.group(empty=True, name=f"{self.prefix}_softGoal_TRN")
+        cmds.matchTransform(soft_goal_node, ik_hdl, pos=True, rot=True)
+        cmds.parentConstraint(goal_ctrl, soft_goal_node, mo=True)
+
         # Asegurar que el atributo Soft existe, si no, lo creamos
         if not cmds.attributeQuery("Soft", node=ik_ctrl, exists=True):
             cmds.addAttr(ik_ctrl, ln="Soft", at="double", min=0, max=1, dv=0, k=True)
@@ -59,11 +82,14 @@ class SoftIkModule(object):
         cmds.connectAttr(f"{upperLenghtMult_node}.outFloat", f"{fullLenght_node}.floatA")
         cmds.connectAttr(f"{lowerLenghtMult_node}.outFloat", f"{fullLenght_node}.floatB")
         
-        # 4. Distancia REAL entre el Root y el Control IK (viva, se recalcula siempre)
+        # 4. Distancia REAL entre el Root y el goal (viva, se recalcula siempre)
+        # Se mide contra soft_goal_node, que es donde acaba el handle: la
+        # distancia tiene que ser la misma que luego recorre el aim, o el soft
+        # empieza a actuar a una longitud que no corresponde.
         distance_node = self._create_node("distanceBetween", "rootToIk", "DIST")
         
         cmds.connectAttr(f"{root_ctrl}.worldMatrix[0]", f"{distance_node}.inMatrix1", force=True)
-        cmds.connectAttr(f"{ik_ctrl}.worldMatrix[0]",  f"{distance_node}.inMatrix2", force=True)
+        cmds.connectAttr(f"{soft_goal_node}.worldMatrix[0]",  f"{distance_node}.inMatrix2", force=True)
         
         #5. Float math que divida la distancia total entre el global scale 
         distanceToControlNormalized_node = self._create_node("floatMath", "distanceToControlNormalized", "FLM")
@@ -187,7 +213,10 @@ class SoftIkModule(object):
         
         cmds.pointConstraint(root_ctrl, softOffset_node, mo=False)
         
-        cmds.aimConstraint(ik_ctrl, softOffset_node, mo=False, aimVector=(1, 0, 0), upVector=(0, 1, 0), worldUpType="vector", worldUpVector=(0, 1, 0))
+        # El aim va al soft_goal_node: asi el softTransform viaja sobre la
+        # recta root -> destino real del handle, y todo lo que haga el foot
+        # roll sigue llegando al tobillo.
+        cmds.aimConstraint(soft_goal_node, softOffset_node, mo=False, aimVector=(1, 0, 0), upVector=(0, 1, 0), worldUpType="vector", worldUpVector=(0, 1, 0))
         
         #Conectar el resultado del condition al translateX del softTransform_node
         cmds.connectAttr(f"{condition_node}.outColorR", f"{softTransform_node}.translateX")
@@ -202,6 +231,6 @@ class SoftIkModule(object):
 
         return {
             "softTransform_node": softTransform_node,
+            "softGoal_node": soft_goal_node,
             "condition_node": condition_node
         }
-

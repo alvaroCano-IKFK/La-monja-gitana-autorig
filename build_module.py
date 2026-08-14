@@ -195,7 +195,8 @@ class BuildRig(object):
             low_jnt="L_Leg_ankle_ik_JNT",
             global_ctrl="Character_global_CTL",
             ik_hdl="L_Leg_IKH",
-            root_jnt="L_Leg_thigh_ik_JNT"
+            root_jnt="L_Leg_thigh_ik_JNT",
+            goal_ctrl="L_Leg_footBall_CTRL"
         )
 
         soft_leg_R = soft_module.SoftIkModule(side="R", prefix="Leg")
@@ -207,7 +208,8 @@ class BuildRig(object):
             low_jnt="R_Leg_ankle_ik_JNT",
             global_ctrl="Character_global_CTL",
             ik_hdl="R_Leg_IKH",
-            root_jnt="R_Leg_thigh_ik_JNT"
+            root_jnt="R_Leg_thigh_ik_JNT",
+            goal_ctrl="R_Leg_footBall_CTRL"
         )
 
         soft_arm_L = soft_module.SoftIkModule(side="L", prefix="Arm")

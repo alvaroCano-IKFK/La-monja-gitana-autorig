@@ -576,7 +576,7 @@ class CharacterGuides(object):
         jaw_instance.jaw_guides()
 
         #Crea les guies de les celles
-        eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(0, 34, 9))
+        eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
         eyebrows_instance.eyebrows_guides()
         
         #Llista amb tots els grups de guies creats       

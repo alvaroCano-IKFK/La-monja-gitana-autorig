@@ -463,6 +463,51 @@ class JawGuides(object):
 
         cmds.select(clear=True)  
 
+#########################################################################
+#EYEBROWS
+#########################################################################
+
+class EyebrowsGuides(object):
+    """
+    Crea automàticament 10 guies de les celles a partir de les posicions de referència.
+    """
+    def __init__(self, eyebrow_root, eyebrow_end, root_pos=(0, 24, 10), end_pos=(2.5, 24, 9)):
+        self.eyebrow_root = eyebrow_root
+        self.eyebrow_end = eyebrow_end
+        self.root_pos = root_pos
+        self.end_pos = end_pos
+        self.guides_group = None
+
+    def eyebrows_guides(self):
+        cmds.select(clear=True)
+        
+        created_joints = []
+        num_joints = 10  
+
+        for i in range(num_joints):
+            t = i / float(num_joints - 1)
+            
+            current_pos = [
+                round(self.root_pos[j] + (self.end_pos[j] - self.root_pos[j]) * t, 4)
+                for j in range(3)
+            ]
+
+            joint_name = f"{self.eyebrow_root}_{i+1:02d}"
+            
+            current_joint = cmds.joint(p=current_pos, name=joint_name)
+            if not current_joint:
+                print(f"Error creant el joint: {joint_name}")
+                return
+                
+            created_joints.append(current_joint)
+
+        self.guides_group = cmds.group(created_joints, n="eyebrows_guides_GRP")
+        if self.guides_group is None:
+            print("Error al crear el grup de guies de les celles.")
+
+        cmds.select(clear=True)
+        return self.guides_group
+
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
@@ -529,6 +574,10 @@ class CharacterGuides(object):
         #Crea les guies de la jaw
         jaw_instance = JawGuides("jaw_root", "jaw_end", (0, 21, 5),(0, 19, 9))
         jaw_instance.jaw_guides()
+
+        #Crea les guies de les celles
+        eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(0, 34, 9))
+        eyebrows_instance.eyebrows_guides()
         
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -538,7 +587,8 @@ class CharacterGuides(object):
             leg_instance.guides_group,
             hand_instance.group,
             boca_instance.guides_group,
-            jaw_instance.guides_group
+            jaw_instance.guides_group,
+            eyebrows_instance.guides_group
         ]
 
         # Filtra nomes els grups que existeixen

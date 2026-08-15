@@ -24,7 +24,8 @@ import curvature_module
 import soft_module
 import pvPin_module
 import mouthModule
-import jaw_module
+#import jaw_module
+import eyebrowsModule
 
 
 
@@ -178,6 +179,26 @@ class BuildRig(object):
                 side="C"
             )
         self.jaw_rig.build()
+
+        self.eyebrows_rig_l = eyebrowsModule.EyebrowsModule(
+            eyebrow_surface="eyebrow_surface",
+            brow_mid="C_brow_mid",
+            brow_end="L_brow_end",
+            root_instance=self.root_rig,
+            rig_name="Character",
+            side="L"
+        )
+        self.eyebrows_rig_l.build()
+        
+        self.eyebrows_rig_r = eyebrowsModule.EyebrowsModule(
+            eyebrow_surface="eyebrow_surface",
+            brow_mid="C_brow_mid",
+            brow_end="R_brow_end",
+            root_instance=self.root_rig,
+            rig_name="Character",
+            side="R"
+        )
+        self.eyebrows_rig_r.build()
 
         # Importamos el módulo de skinning
         skn = skinning_module.SkinningModule(

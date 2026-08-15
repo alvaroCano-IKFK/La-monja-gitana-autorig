@@ -24,7 +24,7 @@ import curvature_module
 import soft_module
 import pvPin_module
 import mouthModule
-#import jaw_module
+import jaw_module
 import eyebrowsModule
 
 

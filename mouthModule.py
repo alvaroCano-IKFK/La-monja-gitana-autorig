@@ -828,6 +828,8 @@ class MouthModule(object):
             levator_ctrl_grp = cmds.listRelatives(levator_ctrl, parent=True)[0]
 
         depresor_name = f"{self.prefix}_depresor_CTRL"
+        depresor_neg_name = f"{self.prefix}_depresor_negative_GRP"
+
         if not cmds.objExists(depresor_name):
             depresor_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["mainFk"],
@@ -837,9 +839,17 @@ class MouthModule(object):
             depresor_ctrl_grp = self.group_maker.create_rig_hierarchy(
                 depresor_ctrl, locator01, match_rotation=True, world_space=True
             )
-            depresor_negative = cmds.group(depresor_ctrl_grp, n=f"{self.prefix}_depresor_negative_GRP")
-            cmds.setAttr(f"{self.prefix}_depresor_negative_GRP.scaleY", -1)
-            cmds.parent(depresor_ctrl_grp, depresor_negative)
+            
+            # Comprovem si el grup negatiu ja existeix
+            if not cmds.objExists(depresor_neg_name):
+                depresor_negative = cmds.group(depresor_ctrl_grp, n=depresor_neg_name)
+                cmds.setAttr(f"{depresor_neg_name}.scaleY", -1)
+            else:
+                depresor_negative = depresor_neg_name
+                # Comprovem si ja és fill abans de fer el parent
+                current_parent = cmds.listRelatives(depresor_ctrl_grp, parent=True)
+                if not current_parent or current_parent[0] != depresor_negative:
+                    cmds.parent(depresor_ctrl_grp, depresor_negative)
         else:
             depresor_ctrl = depresor_name
             depresor_ctrl_grp = cmds.listRelatives(depresor_ctrl, parent=True)[0]
@@ -929,7 +939,11 @@ class MouthModule(object):
             )
             lowerPinch_negative = cmds.group(lowerPinch_ctrl_grp, n=f"{self.prefix}_lowerPinch_negative_GRP")
             cmds.setAttr(f"{self.prefix}_lowerPinch_negative_GRP.scaleY", -1)
-            cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
+            # Comprovem si el grup negatiu i el control existeixen abans d'emparentar
+            if cmds.objExists(lowerPinch_ctrl_grp) and cmds.objExists(lowerPinch_negative):
+                current_parent = cmds.listRelatives(lowerPinch_ctrl_grp, parent=True)
+                if not current_parent or current_parent[0] != lowerPinch_negative:
+                    cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
         else:
             lowerPinch_ctrl = lowerPinch_name
             lowerPinch_ctrl_grp = cmds.listRelatives(lowerPinch_ctrl, parent=True)[0]

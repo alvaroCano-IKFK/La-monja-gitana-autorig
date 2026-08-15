@@ -181,22 +181,20 @@ class BuildRig(object):
         self.jaw_rig.build()
 
         self.eyebrows_rig_l = eyebrowsModule.EyebrowsModule(
-            eyebrow_surface="eyebrow_surface",
-            brow_mid="C_brow_mid",
-            brow_end="L_brow_end",
-            root_instance=self.root_rig,
+            guide_prefix="L_eyebrow_root",
+            num_joints=10,
             rig_name="Character",
-            side="L"
-        )
+            side="L",
+            root_instance=self.root_rig
+)
         self.eyebrows_rig_l.build()
         
         self.eyebrows_rig_r = eyebrowsModule.EyebrowsModule(
-            eyebrow_surface="eyebrow_surface",
-            brow_mid="C_brow_mid",
-            brow_end="R_brow_end",
-            root_instance=self.root_rig,
+            guide_prefix="R_eyebrow_root",
+            num_joints=10,
             rig_name="Character",
-            side="R"
+            side="R",
+            root_instance=self.root_rig
         )
         self.eyebrows_rig_r.build()
 

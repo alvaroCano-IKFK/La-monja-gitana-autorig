@@ -1,3 +1,4 @@
+import groups_module
 import maya.cmds as cmds
 import guides_module
 import controlsLibrary
@@ -6,53 +7,71 @@ from nodeCreator_module import NodeCreator
 import rigRoot_module
 
 class EyebrowsModule(object):
-    """
-    Mòdul per construir el rig de les celles de manera modular,
-    rebent guies de referència de l'escena (igual que la boca).
-    """
-    def __init__(self, eyebrow_surface="eyebrow_surface", 
-                 brow_mid="C_brow_mid", 
-                 brow_end="L_brow_end", 
-                 root_instance=None, 
-                 rig_name="Character", 
-                 side="L"):
-        
-        self.eyebrow_surface = eyebrow_surface
-        self.brow_mid = brow_mid
-        self.brow_end = brow_end
-        self.root_instance = root_instance
-        self.rig_name = rig_name
+    """Módulo para construir los joints y controles de las cejas a partir de las guías."""
+
+    def __init__(self, guide_prefix="L_eyebrow_root", num_joints=10, rig_name="Character", side="L", root_instance=None, **kwargs):
+        self.guide_prefix = guide_prefix
+        self.num_joints = num_joints
         self.side = side
+        self.rig_name = rig_name
+        self.prefix = f"{self.side}_{rig_name}_eyebrow"
         
-        # Prefix segons el costat (ex: L_Character o R_Character)
-        self.prefix = f"{self.side}_{self.rig_name}"
-        self.group_maker = ControlsGroups()
-        self.styles = {"mainFk": "circleControl"}
+        self.group_maker = groups_module.ControlsGroups()
+        self.root_instance = root_instance
+        self.control_style = "circleControl" 
+        
+        self.rig_joints = []
+        self.controls = []
+        self.control_groups = []
+        self.module_grp = None
 
     def build(self):
-        """Construeix els controls i connexions de la cella."""
-        print(f"Construint mòdul de celles per al costat: {self.side}...")
-
-        # 1. Crear control principal o de referència per a la cella
-        ctl_name = f"{self.prefix}_EYEBROW_CTRL"
+        """Construeix els joints de rig, els controls i aplica les connexions."""
         
-        if not cmds.objExists(ctl_name):
-            ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
-                final_name=ctl_name
-            )
-            
-            # Crear jerarquia de rig fent match amb la guia corresponent (per exemple, brow_mid o brow_end)
-            target_guide = self.brow_end if self.side in ["L", "R"] else self.brow_mid
-            
-            ctrl_grp = self.group_maker.create_rig_hierarchy(
-                ctrl, target_joint=target_guide, match_rotation=True, world_space=True
-            )
-            
-            # Emparentar al grup principal del rig o de control facial si escau
-            controls_grp = f"{self.rig_name}_controls_GRP"
-            if cmds.objExists(controls_grp):
-                cmds.parent(ctrl_grp, controls_grp)
+        # 1. Crear grups principals de l'estructura
+        self.module_grp = cmds.group(em=True, n=f"{self.prefix}_MODULE_GRP")
+        jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP", p=self.module_grp)
+        ctrl_grp_all = cmds.group(em=True, n=f"{self.prefix}_ctrl_GRP", p=self.module_grp)
 
-        print(f"Mòdul de celles ({self.side}) completat correctament.")
-        return ctl_name
+        created_joints = []
+        
+        for i in range(1, self.num_joints + 1):
+            base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
+            guide_name = f"{self.side}_{base_prefix}_{i:02d}"
+            
+            if cmds.objExists(guide_name):
+                # Obtenir posició i rotació de la guia
+                pos = cmds.xform(guide_name, q=True, ws=True, t=True)
+                rot = cmds.xform(guide_name, q=True, ws=True, ro=True)
+                
+                cmds.select(clear=True)
+                jnt_name = f"{self.prefix}_{i:02d}_bind_JNT"
+                jnt = cmds.joint(name=jnt_name, p=pos)
+                cmds.setAttr(f"{jnt}.rotate", *rot)
+                created_joints.append(jnt)
+                
+                ctrl_name = f"{self.prefix}_{i:02d}_CTRL"
+                ctrl = controlsLibrary.create_control_from_lib(
+                    lib_name=self.control_style,
+                    final_name=ctrl_name
+                )
+                
+                ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
+
+                cmds.parentConstraint(ctrl, jnt, mo=True)
+                
+                self.controls.append(ctrl)
+                self.control_groups.append(ctrl_gen)
+            else:
+                cmds.warning(f"[EyebrowsModule] No s'ha trobat la guia: {guide_name}")
+
+        if created_joints:
+            cmds.parent(created_joints[0], jnt_grp)
+            for gen in self.control_groups:
+                cmds.parent(gen, ctrl_grp_all)
+
+        rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
+        if rig_grp and cmds.objExists(rig_grp):
+            cmds.parent(self.module_grp, rig_grp)
+            
+        print(f"Build {self.prefix} complet amb èxit.")

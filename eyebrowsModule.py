@@ -7,7 +7,6 @@ from nodeCreator_module import NodeCreator
 import rigRoot_module
 
 class EyebrowsModule(object):
-    """Módulo para construir los joints y controles de las cejas a partir de las guías."""
 
     def __init__(self, guide_prefix="L_eyebrow_root", num_joints=10, rig_name="Character", side="L", root_instance=None, **kwargs):
         self.guide_prefix = guide_prefix
@@ -26,10 +25,7 @@ class EyebrowsModule(object):
         self.module_grp = None
 
     def build(self):
-        """Construeix els joints de rig, els controls i aplica les connexions."""
-        
-        # 1. Crear grups principals de l'estructura
-        self.module_grp = cmds.group(em=True, n=f"{self.prefix}_MODULE_GRP")
+        self.module_grp = cmds.group(em=True, n=f"{self.prefix}__GRP")
         jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP", p=self.module_grp)
         ctrl_grp_all = cmds.group(em=True, n=f"{self.prefix}_ctrl_GRP", p=self.module_grp)
 
@@ -40,7 +36,6 @@ class EyebrowsModule(object):
             guide_name = f"{self.side}_{base_prefix}_{i:02d}"
             
             if cmds.objExists(guide_name):
-                # Obtenir posició i rotació de la guia
                 pos = cmds.xform(guide_name, q=True, ws=True, t=True)
                 rot = cmds.xform(guide_name, q=True, ws=True, ro=True)
                 
@@ -56,6 +51,7 @@ class EyebrowsModule(object):
                     final_name=ctrl_name
                 )
                 
+                cmds.select(clear=True)
                 ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
 
                 cmds.parentConstraint(ctrl, jnt, mo=True)
@@ -63,7 +59,7 @@ class EyebrowsModule(object):
                 self.controls.append(ctrl)
                 self.control_groups.append(ctrl_gen)
             else:
-                cmds.warning(f"[EyebrowsModule] No s'ha trobat la guia: {guide_name}")
+                cmds.warning(f" No s'ha trobat la guia: {guide_name}")
 
         if created_joints:
             cmds.parent(created_joints[0], jnt_grp)

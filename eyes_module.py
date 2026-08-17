@@ -7,6 +7,27 @@ import rigRoot_module
 
 class EyesModule(object):
 
+    # Pesos de cada CV de las curvas de los parpados.
+    # Cada lista sigue el orden de influencias interna -> externa:
+    # [esquina_interna, secundario_interno, centro, secundario_externo, esquina_externa]
+    CV_WEIGHTS = {
+        0: [1.0, 0.0, 0.0, 0.0, 0.0],
+        1: [0.5931, 0.4069, 0.0, 0.0, 0.0],
+        2: [0.0, 0.7595, 0.2405, 0.0, 0.0],
+        3: [0.0, 0.0, 0.8949, 0.1051, 0.0],
+        4: [0.0, 0.0, 0.2286, 0.7714, 0.0],
+        5: [0.0, 0.0, 0.0, 0.4, 0.6],
+        6: [0.0, 0.0, 0.0, 0.0, 1.0],
+    }
+
+    # Atributos de follow del grupo de settings: (nombre_largo, nombre_visible)
+    SETTINGS_ATTRIBUTES = [
+        ("Up01FollowUp", "Up 01 Follow Up"),
+        ("Up03FollowUp", "Up 03 Follow Up"),
+        ("Low01FollowLow", "Low 01 Follow Low"),
+        ("Low03FollowLow", "Low 03 Follow Low"),
+    ]
+
     def __init__(self, 
                  eye_mid="eye_mid",
                  eye_inner_corner="eye_inner_corner",
@@ -51,6 +72,18 @@ class EyesModule(object):
             self.eyelid_low,
         ]
 
+        # Guias intermedias: cada una queda entre dos guias que la conducen y
+        # su reparto lo manda un atributo del grupo de settings.
+        # {guia_intermedia: (guia_driver_A, guia_driver_B, atributo_de_follow)}
+        # El atributo va directo al peso del driver A (el parpado) y pasa por un
+        # reverse hacia el peso del driver B (la esquina).
+        self.in_between_guides = {
+            self.eyelid_up02: (self.eyelid_up, self.eye_inner_corner, "Up01FollowUp"),
+            self.eyelid_up03: (self.eyelid_up, self.eye_outer_corner, "Up03FollowUp"),
+            self.eyelid_low02: (self.eyelid_low, self.eye_inner_corner, "Low01FollowLow"),
+            self.eyelid_low03: (self.eyelid_low, self.eye_outer_corner, "Low03FollowLow"),
+        }
+
         # Joints creados a partir de las guias
         self.eye_joints = {}
         self.joints_group = None
@@ -58,31 +91,41 @@ class EyesModule(object):
         # Curvas de los parpados
         self.upper_curve = None
         self.lower_curve = None
+        self.upper_skin_cluster = None
+        self.lower_skin_cluster = None
 
         # Controles y setup local
         self.eye_controls = {}
         self.eye_control_groups = {}
         self.eye_local_offs = {}
         self.eye_local_trns = {}
+        self.eye_local_joints = {}
 
         # Segundos controles (Sub) y su setup local
         self.eye_sub_controls = {}
         self.eye_sub_control_groups = {}
         self.eye_sub_local_offs = {}
         self.eye_sub_local_trns = {}
+        self.eye_sub_local_joints = {}
+
+        # Grupos del modulo
+        self.rig_module_group = None
+        self.settings_group = None
 
     # ------------------------------------------------------------------
     # SETUP LOCAL (mismo helper que el modulo de la boca)
     # ------------------------------------------------------------------
-    def _build_off_network(self, prefix, base_name, source_ctrl, source_ctrl_grp):
+    def _build_off_network(self, prefix, base_name, source_ctrl, source_ctrl_grp, parent_group=None):
         """
         Crea el space-tracking local de un control.
+        Si se pasa parent_group, el OFF se crea colgando de ese nodo (asi el setup
+        local replica la misma jerarquia que tienen los controles).
         Devuelve (local_off, local_trn).
         """
         local_off, local_trn = self.group_maker.create_space_tracking_hierarchy(
             space_base_name=f"{prefix}_{base_name}Local",
             target_joint=source_ctrl_grp,
-            parent_group=None
+            parent_group=parent_group
         )
 
         mult_node = NodeCreator(
@@ -106,6 +149,147 @@ class EyesModule(object):
         cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
 
         return local_off, local_trn
+
+    def _create_local_joint(self, local_trn):
+        """
+        Crea un joint por cada TRN del setup local, con el mismo nombre pero
+        acabado en _JNT, y lo emparenta bajo su propio TRN (a cero).
+
+        Se llama cuando toda la red de OFF/TRN ya esta construida, para que el
+        joint quede siempre como hoja y ningun OFF acabe colgando de el.
+        """
+        if local_trn is None or not cmds.objExists(local_trn):
+            cmds.warning(f"[EyesModule] No existe el TRN {local_trn}, no se crea su joint.")
+            return None
+
+        joint_name = local_trn.rsplit("_TRN", 1)[0] + "_JNT"
+        if cmds.objExists(joint_name):
+            return joint_name
+
+        cmds.select(clear=True)
+        local_joint = cmds.joint(n=joint_name)
+        cmds.parent(local_joint, local_trn)
+
+        # A cero para que quede exactamente sobre su TRN
+        cmds.setAttr(f"{local_joint}.translate", 0, 0, 0)
+        cmds.setAttr(f"{local_joint}.rotate", 0, 0, 0)
+        cmds.setAttr(f"{local_joint}.jointOrient", 0, 0, 0)
+        cmds.select(clear=True)
+
+        return local_joint
+
+    def _get_influence_joint(self, guide):
+        """
+        Devuelve el joint local que hay que usar como influencia de esa guia.
+        Si la guia tiene Sub, se usa solo el joint del Sub (el del principal no se crea).
+        """
+        if guide in self.sub_control_guides:
+            return self.eye_sub_local_joints.get(guide)
+
+        return self.eye_local_joints.get(guide)
+
+    def _get_driver_control(self, guide):
+        """
+        Control que conduce esa guia: el Sub si lo tiene (cuelga del principal,
+        asi que ya arrastra su movimiento), y si no el principal.
+        """
+        if guide in self.sub_control_guides:
+            return self.eye_sub_controls.get(guide)
+
+        return self.eye_controls.get(guide)
+
+    def _get_driver_local_trn(self, guide):
+        """
+        TRN del setup local que conduce esa guia: el del Sub si lo tiene,
+        y si no el del principal.
+        """
+        if guide in self.sub_control_guides:
+            return self.eye_sub_local_trns.get(guide)
+
+        return self.eye_local_trns.get(guide)
+
+    def _connect_follow_weights(self, constraint, follow_attribute, reverse_node):
+        """
+        Conecta los dos pesos de un parentConstraint al atributo de follow:
+        - weightAliasList[0] (driver A, el parpado) directo desde el atributo.
+        - weightAliasList[1] (driver B, la esquina) desde el reverse, para que
+          los dos pesos sumen siempre 1.
+        """
+        weights = cmds.parentConstraint(constraint, q=True, weightAliasList=True)
+        if not weights or len(weights) < 2:
+            cmds.warning(f"[EyesModule] El constraint {constraint} no tiene dos pesos, no se conecta.")
+            return
+
+        cmds.connectAttr(follow_attribute, f"{constraint}.{weights[0]}", force=True)
+        cmds.connectAttr(f"{reverse_node}.outputX", f"{constraint}.{weights[1]}", force=True)
+
+    def _constrain_in_between(self):
+        """
+        Deja los controles intermedios (02 y 03) conducidos por sus dos vecinos:
+        - El GRP del control intermedio va constrenido a los dos controles vecinos.
+        - El OFF local del intermedio va constrenido a los dos TRN locales vecinos.
+
+        El reparto de los dos pesos lo manda el atributo de follow del grupo de
+        settings, con un reverse por intermedio que alimenta el segundo peso de
+        los dos constraints (el del control y el del setup local).
+        """
+        if not self.settings_group or not cmds.objExists(self.settings_group):
+            cmds.warning("[EyesModule] No existe el grupo de settings, no se conectan los follows.")
+            return
+
+        for guide, (driver_a_guide, driver_b_guide, attribute_name) in self.in_between_guides.items():
+            follow_attribute = f"{self.settings_group}.{attribute_name}"
+
+            # Un reverse por intermedio, compartido por los dos constraints
+            reverse_name = f"{self.prefix}_{guide}Follow_REV"
+            if cmds.objExists(reverse_name):
+                cmds.delete(reverse_name)
+
+            reverse_node = NodeCreator(
+                side=self.prefix, node_type="reverse", base_name=guide,
+                name="Follow", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+            reverse_node = cmds.rename(reverse_node, reverse_name)
+            cmds.connectAttr(follow_attribute, f"{reverse_node}.inputX", force=True)
+
+            # ---- Controles ----
+            in_between_grp = self.eye_control_groups.get(guide)
+            driver_a_ctrl = self._get_driver_control(driver_a_guide)
+            driver_b_ctrl = self._get_driver_control(driver_b_guide)
+
+            if in_between_grp and driver_a_ctrl and driver_b_ctrl and cmds.objExists(in_between_grp):
+                # Borra un constraint previo por si se relanza la build
+                old = cmds.listRelatives(in_between_grp, type="parentConstraint") or []
+                if old:
+                    cmds.delete(old)
+
+                ctrl_constraint = cmds.parentConstraint(
+                    driver_a_ctrl, driver_b_ctrl, in_between_grp, mo=True
+                )[0]
+                cmds.setAttr(f"{ctrl_constraint}.interpType", 2)  # 2 = Shortest
+                self._connect_follow_weights(ctrl_constraint, follow_attribute, reverse_node)
+            else:
+                cmds.warning(f"[EyesModule] No se pudo constrenir el control intermedio {guide}.")
+
+            # ---- Setup local: el OFF del intermedio sigue a los TRN vecinos ----
+            in_between_off = self.eye_local_offs.get(guide)
+            driver_a_trn = self._get_driver_local_trn(driver_a_guide)
+            driver_b_trn = self._get_driver_local_trn(driver_b_guide)
+
+            if in_between_off and driver_a_trn and driver_b_trn and cmds.objExists(in_between_off):
+                old = cmds.listRelatives(in_between_off, type="parentConstraint") or []
+                if old:
+                    cmds.delete(old)
+
+                local_constraint = cmds.parentConstraint(
+                    driver_a_trn, driver_b_trn, in_between_off, mo=True
+                )[0]
+                cmds.setAttr(f"{local_constraint}.interpType", 2)  # 2 = Shortest
+                self._connect_follow_weights(local_constraint, follow_attribute, reverse_node)
+            else:
+                cmds.warning(f"[EyesModule] No se pudo constrenir el OFF local intermedio {guide}.")
+
+        cmds.select(clear=True)
 
     def _build_eye_joints(self):
         """
@@ -165,36 +349,42 @@ class EyesModule(object):
 
         return self.joints_group
 
-    def _get_ordered_eyelid_joints(self, upper=True):
+    def _get_ordered_eyelid_guides(self, upper=True):
         """
-        Devuelve la lista de joints del parpado ordenados de esquina interna a esquina externa.
-        Son 5 joints: inner_corner, secundario interno, central, secundario externo, outer_corner.
+        Devuelve las guias del parpado ordenadas de esquina interna a esquina externa.
+        Son las 5 que tienen joint propio; la curva ademas lleva 2 CVs intermedios
+        entre cada esquina y su secundario contiguo.
         """
         if upper:
-            ordered_guides = [
+            return [
                 self.eye_inner_corner,
                 self.eyelid_up02,
                 self.eyelid_up,
                 self.eyelid_up03,
                 self.eye_outer_corner,
             ]
-        else:
-            ordered_guides = [
-                self.eye_inner_corner,
-                self.eyelid_low02,
-                self.eyelid_low,
-                self.eyelid_low03,
-                self.eye_outer_corner,
-            ]
 
-        return [f"{self.prefix}_{guide}_JNT" for guide in ordered_guides]
+        return [
+            self.eye_inner_corner,
+            self.eyelid_low02,
+            self.eyelid_low,
+            self.eyelid_low03,
+            self.eye_outer_corner,
+        ]
+
+    def _get_ordered_eyelid_joints(self, upper=True):
+        """
+        Devuelve la lista de joints de guia del parpado ordenados de esquina interna
+        a esquina externa. Son 5 joints.
+        """
+        return [f"{self.prefix}_{guide}_JNT" for guide in self._get_ordered_eyelid_guides(upper=upper)]
 
     def _build_eyelid_curves(self):
         """
         Crea las curvas de curvatura de los parpados (superior e inferior):
-        1. Curva de grado 1 con un CV en la posicion de cada joint (5 CVs).
-        2. rebuildCurve a grado 3, 2 spans (2+3 = 5 CVs -> mismo conteo, misma correspondencia 1 a 1).
-        3. Cada joint queda asociado al CV que ocupa su posicion.
+        1. Curva de grado 1 con 7 CVs: los 5 joints de la linea mas 2 CVs intermedios,
+           uno entre cada esquina y el secundario contiguo (donde no hay joint).
+        2. rebuildCurve a grado 3, 4 spans (4+3 = 7 CVs -> mismo conteo, misma correspondencia).
 
         Solo se construye cuando existen los 5 joints de esa linea. Si falta alguno, no hace nada.
         """
@@ -210,12 +400,27 @@ class EyesModule(object):
                 cmds.warning(f"[EyesModule] Faltan joints para construir {curve_name}.")
                 continue
 
-            positions = [cmds.xform(jnt, q=True, ws=True, t=True) for jnt in ordered_joints]
+            joint_positions = [cmds.xform(jnt, q=True, ws=True, t=True) for jnt in ordered_joints]
+
+            # Punto medio entre esquina interna (0) y secundario interno (1)
+            inner_extra = [(a + b) * 0.5 for a, b in zip(joint_positions[0], joint_positions[1])]
+            # Punto medio entre secundario externo (3) y esquina externa (4)
+            outer_extra = [(a + b) * 0.5 for a, b in zip(joint_positions[3], joint_positions[4])]
+
+            positions = [
+                joint_positions[0],   # esquina interna
+                inner_extra,          # CV extra sin joint
+                joint_positions[1],   # secundario interno
+                joint_positions[2],   # centro del parpado
+                joint_positions[3],   # secundario externo
+                outer_extra,          # CV extra sin joint
+                joint_positions[4],   # esquina externa
+            ]
 
             curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
             cmds.rebuildCurve(
                 curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
-                s=2, d=3, tol=0.01
+                s=4, d=3, tol=0.01
             )
             cmds.setAttr(f"{curve_transform}.lineWidth", 3)
 
@@ -228,11 +433,144 @@ class EyesModule(object):
 
         return self.upper_curve, self.lower_curve
 
+    def _skin_eyelid_curve(self, curve_transform, upper=True):
+        """
+        Skinea la curva del parpado a sus joints locales y aplica los pesos
+        fijos de CV_WEIGHTS (los mismos para la curva de arriba y la de abajo).
+
+        maximumInfluences=2 y obeyMaxInfluences desactivado, porque los CVs
+        intermedios se reparten entre dos joints.
+        """
+        if curve_transform is None or not cmds.objExists(curve_transform):
+            return None
+
+        ordered_guides = self._get_ordered_eyelid_guides(upper=upper)
+        influence_joints = [self._get_influence_joint(guide) for guide in ordered_guides]
+
+        missing = [g for g, j in zip(ordered_guides, influence_joints) if not j or not cmds.objExists(j)]
+        if missing:
+            cmds.warning(f"[EyesModule] Faltan joints locales {missing}, no se skinea {curve_transform}.")
+            return None
+
+        # Borra un skinCluster previo por si se relanza la build
+        old_skins = cmds.ls(cmds.listHistory(curve_transform) or [], type="skinCluster")
+        if old_skins:
+            cmds.delete(old_skins)
+
+        skin_name = curve_transform.rsplit("_CRV", 1)[0] + "_SKN"
+        skin_cluster = cmds.skinCluster(
+            influence_joints, curve_transform,
+            toSelectedBones=True, bindMethod=0, skinMethod=0,
+            maximumInfluences=2, obeyMaxInfluences=False, dropoffRate=4,
+            n=skin_name
+        )[0]
+
+        # Permite pesos repartidos entre varias influencias al aplicar CV_WEIGHTS
+        cmds.setAttr(f"{skin_cluster}.maintainMaxInfluences", 0)
+
+        curve_shape = cmds.listRelatives(curve_transform, shapes=True)[0]
+        cv_count = cmds.getAttr(f"{curve_shape}.spans") + cmds.getAttr(f"{curve_shape}.degree")
+
+        for index in range(cv_count):
+            weights = self.CV_WEIGHTS.get(index)
+            if weights is None:
+                cmds.warning(f"[EyesModule] No hay pesos definidos para el cv[{index}] de {curve_transform}.")
+                continue
+
+            transform_values = [
+                (influence_joint, weight)
+                for influence_joint, weight in zip(influence_joints, weights)
+                if weight > 0.0
+            ]
+
+            cmds.skinPercent(
+                skin_cluster, f"{curve_transform}.cv[{index}]",
+                transformValue=transform_values
+            )
+
+        cmds.select(clear=True)
+
+        return skin_cluster
+
+    def _build_settings_group(self):
+        """
+        Crea el grupo de settings del modulo, con los atributos de follow de los
+        parpados. Transformaciones bloqueadas y ocultas: solo sirve de contenedor
+        de atributos, no se anima ni se mueve.
+
+        Se llama antes de los constraints, porque sus atributos son los que
+        conducen los pesos.
+        """
+        settings_name = f"{self.prefix}_eyeLidRigSettings_GRP"
+
+        if cmds.objExists(settings_name):
+            cmds.delete(settings_name)
+
+        settings_group = cmds.group(em=True, n=settings_name)
+
+        for long_name, nice_name in self.SETTINGS_ATTRIBUTES:
+            cmds.addAttr(
+                settings_group, ln=long_name, nn=nice_name,
+                at="float", min=0, max=1, dv=0.5, k=True
+            )
+
+        # Bloquea y oculta translate / rotate / scale y la visibilidad
+        for attr in ["translateX", "translateY", "translateZ",
+                     "rotateX", "rotateY", "rotateZ",
+                     "scaleX", "scaleY", "scaleZ", "visibility"]:
+            cmds.setAttr(f"{settings_group}.{attr}", lock=True, keyable=False, channelBox=False)
+
+        return settings_group
+
+    def _group_rig_module(self):
+        """
+        Mete todo el setup local (OFF, TRN y sus joints) bajo un unico grupo del
+        modulo, junto al grupo de settings ya creado.
+
+        Solo se emparentan los nodos que estan en la raiz de la escena: los OFF de
+        los Sub cuelgan del TRN de su principal y los joints cuelgan de su TRN,
+        asi que se arrastran solos y la jerarquia no se toca.
+        """
+        module_name = f"{self.prefix}_eyeLidRigModule_GRP"
+
+        if cmds.objExists(module_name):
+            # Saca lo que hubiera dentro antes de borrarlo, para no perder el setup
+            children = cmds.listRelatives(module_name, children=True, fullPath=True) or []
+            if children:
+                cmds.parent(children, world=True)
+            cmds.delete(module_name)
+
+        self.rig_module_group = cmds.group(em=True, n=module_name)
+
+        if self.settings_group and cmds.objExists(self.settings_group):
+            cmds.parent(self.settings_group, self.rig_module_group)
+
+        # Candidatos: todos los OFF del setup local (principales y Sub)
+        candidates = list(self.eye_local_offs.values()) + list(self.eye_sub_local_offs.values())
+
+        for node in candidates:
+            if not node or not cmds.objExists(node):
+                continue
+
+            # Solo los que estan sueltos en la raiz: los demas ya cuelgan de su TRN
+            if cmds.listRelatives(node, parent=True):
+                continue
+
+            cmds.parent(node, self.rig_module_group)
+
+        cmds.select(clear=True)
+
+        return self.rig_module_group
+
     def build(self):
         """
         Metodo principal del modulo. Construye los joints del ojo a partir de las guias,
         las curvas de los parpados y un control (con sus grupos y su setup local) por joint.
-        Las esquinas y los parpados central superior e inferior llevan un segundo control (Sub).
+        Las esquinas y los parpados central superior e inferior llevan un segundo control (Sub);
+        en esos casos el joint local solo se crea en el Sub, no en el principal.
+        Los controles intermedios (02 y 03) quedan conducidos por sus dos vecinos con el
+        reparto que manda el grupo de settings, se skinean las curvas a los joints locales
+        y se agrupa todo el setup del modulo.
         """
         self._build_eye_joints()
         if self.joints_group is None:
@@ -248,11 +586,13 @@ class EyesModule(object):
         self.eye_control_groups = {}
         self.eye_local_offs = {}
         self.eye_local_trns = {}
+        self.eye_local_joints = {}
 
         self.eye_sub_controls = {}
         self.eye_sub_control_groups = {}
         self.eye_sub_local_offs = {}
         self.eye_sub_local_trns = {}
+        self.eye_sub_local_joints = {}
 
         for guide, joint in self.eye_joints.items():
             ctrl_name = f"{self.prefix}_{guide}_CTRL"
@@ -307,9 +647,11 @@ class EyesModule(object):
             sub_off_name = f"{self.prefix}_{guide}SubLocal_OFF"
             sub_trn_name = f"{self.prefix}_{guide}SubLocal_TRN"
             if not cmds.objExists(sub_off_name):
+                # El OFF del Sub cuelga del TRN del principal: misma jerarquia que los controles
                 sub_local_off, sub_local_trn = self._build_off_network(
                     prefix=self.prefix, base_name=f"{guide}Sub",
-                    source_ctrl=sub_ctrl, source_ctrl_grp=sub_ctrl_grp
+                    source_ctrl=sub_ctrl, source_ctrl_grp=sub_ctrl_grp,
+                    parent_group=local_trn
                 )
             else:
                 sub_local_off, sub_local_trn = sub_off_name, sub_trn_name
@@ -318,6 +660,52 @@ class EyesModule(object):
             self.eye_sub_control_groups[guide] = sub_ctrl_grp
             self.eye_sub_local_offs[guide] = sub_local_off
             self.eye_sub_local_trns[guide] = sub_local_trn
+
+        # =========================================================
+        # GRUPO DE SETTINGS
+        # Va antes de los constraints porque sus atributos conducen los pesos.
+        # =========================================================
+        self.settings_group = self._build_settings_group()
+
+        # =========================================================
+        # CONSTRAINTS DE LOS CONTROLES INTERMEDIOS (02 y 03)
+        # El GRP del intermedio sigue a los dos controles vecinos, y su OFF local
+        # sigue a los dos TRN locales vecinos: mismo comportamiento en los joints.
+        # Los pesos los manda el atributo de follow (directo + reverse).
+        # =========================================================
+        self._constrain_in_between()
+
+        # =========================================================
+        # JOINTS DEL SETUP LOCAL (segunda pasada)
+        # Se crean ahora, con la jerarquia de OFF/TRN ya cerrada, para que
+        # queden como hojas y ningun OFF cuelgue de un joint.
+        # Si la guia tiene Sub, solo se crea el joint del Sub.
+        # =========================================================
+        for guide, local_trn in self.eye_local_trns.items():
+            if guide in self.sub_control_guides:
+                # Solo se queda el joint del Sub: se borra el del principal si venia de otra build
+                old_joint = local_trn.rsplit("_TRN", 1)[0] + "_JNT"
+                if cmds.objExists(old_joint):
+                    cmds.delete(old_joint)
+                self.eye_local_joints[guide] = None
+                continue
+
+            self.eye_local_joints[guide] = self._create_local_joint(local_trn)
+
+        for guide, sub_local_trn in self.eye_sub_local_trns.items():
+            self.eye_sub_local_joints[guide] = self._create_local_joint(sub_local_trn)
+
+        # =========================================================
+        # SKINNING DE LAS CURVAS A LOS JOINTS LOCALES
+        # =========================================================
+        self.upper_skin_cluster = self._skin_eyelid_curve(self.upper_curve, upper=True)
+        self.lower_skin_cluster = self._skin_eyelid_curve(self.lower_curve, upper=False)
+
+        # =========================================================
+        # AGRUPACION DEL MODULO
+        # Todo el setup local (OFF/TRN y sus joints) mas el grupo de settings.
+        # =========================================================
+        self._group_rig_module()
 
         cmds.select(clear=True)
 

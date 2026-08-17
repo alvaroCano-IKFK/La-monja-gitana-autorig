@@ -1,10 +1,12 @@
-import groups_module
 import maya.cmds as cmds
+import math
+import groups_module
 import guides_module
 import controlsLibrary
 from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 import rigRoot_module
+
 
 class EyebrowsModule(object):
 
@@ -14,11 +16,20 @@ class EyebrowsModule(object):
         self.side = side
         self.rig_name = rig_name
         self.prefix = f"{self.side}_{rig_name}_eyebrow"
-        
+
         self.group_maker = groups_module.ControlsGroups()
         self.root_instance = root_instance
-        self.control_style = "circleControl" 
-        
+        self.control_style = "circleControl"
+        # Separate shape hooks so Main / In-Mid-Out / tangents can each use a
+        # different shape from the library, matching the reference picture
+        # (big ellipse for Main, circles for In/Mid/Out, small square-ish
+        # handles for InTan/OutTan). Point these at your actual lib_name
+        # entries -- they default to control_style so nothing breaks if you
+        # leave them as is.
+        self.main_control_style = kwargs.get("main_control_style", self.control_style)
+        self.corner_control_style = kwargs.get("corner_control_style", self.control_style)
+        self.tangent_control_style = kwargs.get("tangent_control_style", self.control_style)
+
         self.rig_joints = []
         self.controls = []
         self.control_groups = []
@@ -30,32 +41,36 @@ class EyebrowsModule(object):
         ctrl_grp_all = cmds.group(em=True, n=f"{self.prefix}_ctrl_GRP", p=self.module_grp)
 
         created_joints = []
-        
+        base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
+
+        # ------------------------------------------------------------------
+        # 1. One joint per loop/guide -> these are the guide joints AND the
+        #    skin (bind) joints.
+        # ------------------------------------------------------------------
         for i in range(1, self.num_joints + 1):
-            base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
             guide_name = f"{self.side}_{base_prefix}_{i:02d}"
-            
+
             if cmds.objExists(guide_name):
                 pos = cmds.xform(guide_name, q=True, ws=True, t=True)
                 rot = cmds.xform(guide_name, q=True, ws=True, ro=True)
-                
+
                 cmds.select(clear=True)
                 jnt_name = f"{self.prefix}_{i:02d}_bind_JNT"
                 jnt = cmds.joint(name=jnt_name, p=pos)
                 cmds.setAttr(f"{jnt}.rotate", *rot)
                 created_joints.append(jnt)
-                
+
                 ctrl_name = f"{self.prefix}_{i:02d}_CTRL"
                 ctrl = controlsLibrary.create_control_from_lib(
                     lib_name=self.control_style,
                     final_name=ctrl_name
                 )
-                
+
                 ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
                 cmds.parent(ctrl_gen, ctrl_grp_all)
 
                 cmds.parentConstraint(ctrl, jnt, mo=True)
-                
+
                 self.controls.append(ctrl)
                 self.control_groups.append(ctrl_gen)
             else:
@@ -64,8 +79,115 @@ class EyebrowsModule(object):
         if created_joints:
             cmds.parent(created_joints[0], jnt_grp)
 
+        # guide joints double as the skin joints
+        self.rig_joints = created_joints
+
+        # ------------------------------------------------------------------
+        # 2. Main control in the middle of the joint set, 3 sub-controls
+        #    (In / Mid / Out) and 1 tangent control on each corner
+        #    (In and Out) sub-control -- naming/hierarchy per reference image.
+        # ------------------------------------------------------------------
+        main_ctrl = None
+        if created_joints:
+            main_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP", p=self.module_grp)
+
+            # "middle of the set of joints" -> the guide sitting in the middle
+            # of the chain (e.g. the 5th of 10), used directly as the
+            # reference for create_rig_hierarchy(), same as every other
+            # control -- no locator needed.
+            mid_idx = max(1, math.ceil(self.num_joints / 2.0))
+            mid_guide_name = f"{self.side}_{base_prefix}_{mid_idx:02d}"
+
+            main_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.main_control_style,
+                final_name=f"{self.prefix}_Main_CTRL"
+            )
+            main_ctrl_gen = self.group_maker.create_rig_hierarchy(main_ctrl, mid_guide_name)
+            cmds.parent(main_ctrl_gen, main_ctrl_grp)
+
+            # ------------------------------------------------------------
+            # 3. "slide" float attribute on the main control: default 1,
+            #    min 0, max 1.
+            # ------------------------------------------------------------
+            if not cmds.attributeQuery("slide", node=main_ctrl, exists=True):
+                cmds.addAttr(
+                    main_ctrl,
+                    longName="slide",
+                    attributeType="float",
+                    defaultValue=1.0,
+                    minValue=0.0,
+                    maxValue=1.0,
+                    keyable=True
+                )
+
+            self.controls.append(main_ctrl)
+            self.control_groups.append(main_ctrl_gen)
+
+            # ---- 3 sub-controls: In / Mid / Out ----------------------------
+            sub_indices = {
+                "In": 1,
+                "Mid": mid_idx,
+                "Out": self.num_joints,
+            }
+            corner_labels = ("In", "Out")  # the 2 extremes = "corner" controls
+
+            sub_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctrl_GRP", p=main_ctrl)
+
+            for label, idx in sub_indices.items():
+                sub_guide_name = f"{self.side}_{base_prefix}_{idx:02d}"
+                if not cmds.objExists(sub_guide_name):
+                    cmds.warning(f" No s'ha trobat la guia: {sub_guide_name}")
+                    continue
+
+                sub_ctrl_name = f"{self.prefix}_{label}_CTRL"
+                sub_ctrl = controlsLibrary.create_control_from_lib(
+                    lib_name=self.corner_control_style,
+                    final_name=sub_ctrl_name
+                )
+                sub_ctrl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
+                cmds.parent(sub_ctrl_gen, sub_ctrl_grp)
+
+                self.controls.append(sub_ctrl)
+                self.control_groups.append(sub_ctrl_gen)
+
+                # ---- 1 tangent control per corner control ----------------
+                if label in corner_labels:
+                    neighbour_idx = 2 if label == "In" else self.num_joints - 1
+                    neighbour_guide = f"{self.side}_{base_prefix}_{neighbour_idx:02d}"
+
+                    sub_pos = cmds.xform(sub_guide_name, q=True, ws=True, t=True)
+                    if cmds.objExists(neighbour_guide):
+                        nb_pos = cmds.xform(neighbour_guide, q=True, ws=True, t=True)
+                    else:
+                        nb_pos = sub_pos
+
+                    tangent_factor = 0.3
+                    tangent_pos = [
+                        sub_pos[0] + (nb_pos[0] - sub_pos[0]) * tangent_factor,
+                        sub_pos[1] + (nb_pos[1] - sub_pos[1]) * tangent_factor,
+                        sub_pos[2] + (nb_pos[2] - sub_pos[2]) * tangent_factor,
+                    ]
+
+                    tangent_loc = cmds.spaceLocator(n=f"{sub_ctrl_name}_tangent_TEMP")[0]
+                    cmds.xform(tangent_loc, ws=True, t=tangent_pos)
+
+                    tangent_ctrl_name = f"{self.prefix}_{label}Tan_CTRL"
+                    tangent_ctrl = controlsLibrary.create_control_from_lib(
+                        lib_name=self.tangent_control_style,
+                        final_name=tangent_ctrl_name
+                    )
+                    tangent_ctrl_gen = self.group_maker.create_rig_hierarchy(tangent_ctrl, tangent_loc)
+                    cmds.parent(tangent_ctrl_gen, sub_ctrl)
+                    cmds.delete(tangent_loc)
+
+                    self.controls.append(tangent_ctrl)
+                    self.control_groups.append(tangent_ctrl_gen)
+
+            # main control drives everything, including the per-loop controls
+            cmds.parent(ctrl_grp_all, main_ctrl)
+
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):
             cmds.parent(self.module_grp, rig_grp)
-            
+
         print(f"Build {self.prefix} complet amb èxit.")

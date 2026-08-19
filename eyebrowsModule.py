@@ -20,12 +20,7 @@ class EyebrowsModule(object):
         self.group_maker = groups_module.ControlsGroups()
         self.root_instance = root_instance
         self.control_style = "circleControl"
-        # Separate shape hooks so Main / In-Mid-Out / tangents can each use a
-        # different shape from the library, matching the reference picture
-        # (big ellipse for Main, circles for In/Mid/Out, small square-ish
-        # handles for InTan/OutTan). Point these at your actual lib_name
-        # entries -- they default to control_style so nothing breaks if you
-        # leave them as is.
+
         self.main_control_style = kwargs.get("main_control_style", self.control_style)
         self.corner_control_style = kwargs.get("corner_control_style", self.control_style)
         self.tangent_control_style = kwargs.get("tangent_control_style", self.control_style)
@@ -43,10 +38,6 @@ class EyebrowsModule(object):
         created_joints = []
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
-        # ------------------------------------------------------------------
-        # 1. One joint per loop/guide -> these are the guide joints AND the
-        #    skin (bind) joints.
-        # ------------------------------------------------------------------
         for i in range(1, self.num_joints + 1):
             guide_name = f"{self.side}_{base_prefix}_{i:02d}"
 
@@ -79,22 +70,12 @@ class EyebrowsModule(object):
         if created_joints:
             cmds.parent(created_joints[0], jnt_grp)
 
-        # guide joints double as the skin joints
         self.rig_joints = created_joints
 
-        # ------------------------------------------------------------------
-        # 2. Main control in the middle of the joint set, 3 sub-controls
-        #    (In / Mid / Out) and 1 tangent control on each corner
-        #    (In and Out) sub-control -- naming/hierarchy per reference image.
-        # ------------------------------------------------------------------
         main_ctrl = None
         if created_joints:
             main_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP", p=self.module_grp)
 
-            # "middle of the set of joints" -> the guide sitting in the middle
-            # of the chain (e.g. the 5th of 10), used directly as the
-            # reference for create_rig_hierarchy(), same as every other
-            # control -- no locator needed.
             mid_idx = max(1, math.ceil(self.num_joints / 2.0))
             mid_guide_name = f"{self.side}_{base_prefix}_{mid_idx:02d}"
 
@@ -105,10 +86,6 @@ class EyebrowsModule(object):
             main_ctrl_gen = self.group_maker.create_rig_hierarchy(main_ctrl, mid_guide_name)
             cmds.parent(main_ctrl_gen, main_ctrl_grp)
 
-            # ------------------------------------------------------------
-            # 3. "slide" float attribute on the main control: default 1,
-            #    min 0, max 1.
-            # ------------------------------------------------------------
             if not cmds.attributeQuery("slide", node=main_ctrl, exists=True):
                 cmds.addAttr(
                     main_ctrl,
@@ -123,13 +100,12 @@ class EyebrowsModule(object):
             self.controls.append(main_ctrl)
             self.control_groups.append(main_ctrl_gen)
 
-            # ---- 3 sub-controls: In / Mid / Out ----------------------------
             sub_indices = {
                 "In": 1,
                 "Mid": mid_idx,
                 "Out": self.num_joints,
             }
-            corner_labels = ("In", "Out")  # the 2 extremes = "corner" controls
+            corner_labels = ("In", "Out")  
 
             sub_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctrl_GRP", p=main_ctrl)
 
@@ -150,7 +126,6 @@ class EyebrowsModule(object):
                 self.controls.append(sub_ctrl)
                 self.control_groups.append(sub_ctrl_gen)
 
-                # ---- 1 tangent control per corner control ----------------
                 if label in corner_labels:
                     neighbour_idx = 2 if label == "In" else self.num_joints - 1
                     neighbour_guide = f"{self.side}_{base_prefix}_{neighbour_idx:02d}"
@@ -183,7 +158,6 @@ class EyebrowsModule(object):
                     self.controls.append(tangent_ctrl)
                     self.control_groups.append(tangent_ctrl_gen)
 
-            # main control drives everything, including the per-loop controls
             cmds.parent(ctrl_grp_all, main_ctrl)
 
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None

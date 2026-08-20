@@ -108,7 +108,7 @@ class EyebrowsModule(object):
                 sub_ctl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
                 cmds.parent(sub_ctl_gen, sub_ctl_grp)
 
-                rel_name = f"{self.side.lower()}_eyebrowsMain_REL"
+                rel_name = f"{self.side}_eyebrowsMain_REL"
                 rel_grp= cmds.group(em=True, n=rel_name)
 
                 temp_constraint_p = cmds.parentConstraint(main_ctl, rel_grp, mo=False)

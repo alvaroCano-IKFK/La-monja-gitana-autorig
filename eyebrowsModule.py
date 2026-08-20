@@ -130,8 +130,26 @@ class EyebrowsModule(object):
 
                 matrix_inputs = hierarchy_transforms + [main_ctl]
 
-                multMatrix_node= self.node_creator.create_node("multMatrix", n=f"{self.prefix}_main_multMatrix")
-                decMatrix_node = self.node_creator.create_node("decomposeMatrix", n=f"{self.prefix}_main_decomposeMatrix")
+                mult_node_creator = NodeCreator(
+                    side=self.side, 
+                    node_type="multMatrix", 
+                    base_name=f"{self.rig_name}_eyebrow", 
+                    name="main", 
+                    tag="matrix", 
+                    parent=None, 
+                    custom_suffix=None
+                )
+                multMatrix_node = mult_node_creator.create()
+                dec_node_creator = NodeCreator(
+                    side=self.side, 
+                    node_type="decomposeMatrix", 
+                    base_name=f"{self.rig_name}_eyebrow", 
+                    name="main", 
+                    tag="matrix", 
+                    parent=None, 
+                    custom_suffix=None
+                )
+                decMatrix_node = dec_node_creator.create()
 
                 for i, input_node in enumerate(matrix_inputs):
                     cmds.connectAttr(f"{input_node}.worldMatrix[0]", f"{multMatrix_node}.matrixIn[{i}]", f=True)

@@ -18,6 +18,7 @@ class EyebrowsModule(object):
         self.prefix = f"{self.side}_{rig_name}_eyebrow"
 
         self.group_maker = groups_module.ControlsGroups()
+        self.node_creator = NodeCreator()
         self.root_instance = root_instance
         self.control_style = "circleControl"
 

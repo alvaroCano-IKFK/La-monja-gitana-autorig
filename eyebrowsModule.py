@@ -33,7 +33,6 @@ class EyebrowsModule(object):
     def build(self):
         self.module_grp = cmds.group(em=True, n=f"{self.prefix}__GRP")
         jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP", p=self.module_grp)
-        ctrl_grp_all = cmds.group(em=True, n=f"{self.prefix}_ctrl_GRP", p=self.module_grp)
 
         created_joints = []
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
@@ -50,20 +49,6 @@ class EyebrowsModule(object):
                 jnt = cmds.joint(name=jnt_name, p=pos)
                 cmds.setAttr(f"{jnt}.rotate", *rot)
                 created_joints.append(jnt)
-
-                ctrl_name = f"{self.prefix}_{i:02d}_CTRL"
-                ctrl = controlsLibrary.create_control_from_lib(
-                    lib_name=self.control_style,
-                    final_name=ctrl_name
-                )
-
-                ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
-                cmds.parent(ctrl_gen, ctrl_grp_all)
-
-                cmds.parentConstraint(ctrl, jnt, mo=True)
-
-                self.controls.append(ctrl)
-                self.control_groups.append(ctrl_gen)
             else:
                 cmds.warning(f" No s'ha trobat la guia: {guide_name}")
 
@@ -74,21 +59,21 @@ class EyebrowsModule(object):
 
         main_ctrl = None
         if created_joints:
-            main_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP", p=self.module_grp)
+            main_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP", p=self.module_grp)
 
             mid_idx = max(1, math.ceil(self.num_joints / 2.0))
             mid_guide_name = f"{self.side}_{base_prefix}_{mid_idx:02d}"
 
-            main_ctrl = controlsLibrary.create_control_from_lib(
+            main_ctl = controlsLibrary.create_control_from_lib(
                 lib_name=self.main_control_style,
                 final_name=f"{self.prefix}_Main_CTRL"
             )
-            main_ctrl_gen = self.group_maker.create_rig_hierarchy(main_ctrl, mid_guide_name)
-            cmds.parent(main_ctrl_gen, main_ctrl_grp)
+            main_ctl_gen = self.group_maker.create_rig_hierarchy(main_ctl, mid_guide_name)
+            cmds.parent(main_ctl_gen, main_ctl_grp)
 
-            if not cmds.attributeQuery("slide", node=main_ctrl, exists=True):
+            if not cmds.attributeQuery("slide", node=main_ctl, exists=True):
                 cmds.addAttr(
-                    main_ctrl,
+                    main_ctl,
                     longName="slide",
                     attributeType="float",
                     defaultValue=1.0,
@@ -97,17 +82,17 @@ class EyebrowsModule(object):
                     keyable=True
                 )
 
-            self.controls.append(main_ctrl)
-            self.control_groups.append(main_ctrl_gen)
+            self.controls.append(main_ctl)
+            self.control_groups.append(main_ctl_gen)
 
             sub_indices = {
                 "In": 1,
                 "Mid": mid_idx,
                 "Out": self.num_joints,
             }
-            corner_labels = ("In", "Out")  
+            corner_labels = ("In", "Out")
 
-            sub_ctrl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctrl_GRP", p=main_ctrl)
+            sub_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctl_GRP", p=main_ctl_grp)
 
             for label, idx in sub_indices.items():
                 sub_guide_name = f"{self.side}_{base_prefix}_{idx:02d}"
@@ -120,11 +105,11 @@ class EyebrowsModule(object):
                     lib_name=self.corner_control_style,
                     final_name=sub_ctrl_name
                 )
-                sub_ctrl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
-                cmds.parent(sub_ctrl_gen, sub_ctrl_grp)
+                sub_ctl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
+                cmds.parent(sub_ctl_gen, sub_ctl_grp)
 
                 self.controls.append(sub_ctrl)
-                self.control_groups.append(sub_ctrl_gen)
+                self.control_groups.append(sub_ctl_gen)
 
                 if label in corner_labels:
                     neighbour_idx = 2 if label == "In" else self.num_joints - 1
@@ -146,22 +131,17 @@ class EyebrowsModule(object):
                     tangent_loc = cmds.spaceLocator(n=f"{sub_ctrl_name}_tangent_TEMP")[0]
                     cmds.xform(tangent_loc, ws=True, t=tangent_pos)
 
-                    tangent_ctrl_name = f"{self.prefix}_{label}Tan_CTRL"
-                    tangent_ctrl = controlsLibrary.create_control_from_lib(
+                    tangent_ctl_name = f"{self.prefix}_{label}Tan_CTRL"
+                    tangent_ctl = controlsLibrary.create_control_from_lib(
                         lib_name=self.tangent_control_style,
-                        final_name=tangent_ctrl_name
+                        final_name=tangent_ctl_name
                     )
-                    tangent_ctrl_gen = self.group_maker.create_rig_hierarchy(tangent_ctrl, tangent_loc)
-                    cmds.parent(tangent_ctrl_gen, sub_ctrl)
+                    tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, tangent_loc)
+                    cmds.parent(tangent_ctl_gen, sub_ctl_grp)
                     cmds.delete(tangent_loc)
 
-                    self.controls.append(tangent_ctrl)
-                    self.control_groups.append(tangent_ctrl_gen)
+                    self.controls.append(tangent_ctl)
+                    self.control_groups.append(tangent_ctl_gen)
 
-            cmds.parent(ctrl_grp_all, main_ctrl)
-
-        rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
-        if rig_grp and cmds.objExists(rig_grp):
-            cmds.parent(self.module_grp, rig_grp)
 
         print(f"Build {self.prefix} complet amb èxit.")

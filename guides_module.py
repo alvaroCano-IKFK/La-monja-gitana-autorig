@@ -467,14 +467,19 @@ class EyeGuides(object):
     """
     Crea les guies de l'ull: el centre, les dues cantonades i les sis joints de les parpelles.
     """
-    def __init__(self, eye_mid, eye_inner_corner, eye_outer_corner,
+    def __init__(self, eye_mid, eye_mid_end,eye_direct, 
+                 eye_inner_corner, eye_outer_corner,
                  eyelid_up, eyelid_low, eyelid_up02, eyelid_up03, eyelid_low02, eyelid_low03,
-                 eye_position, eye_inner_corner_position, eye_outer_corner_position,
+                 eye_position, eye_mid_end_position, eye_direct_position, 
+                 eye_inner_corner_position, eye_outer_corner_position,
                  eyelid_up_position, eyelid_low_position,
                  eyelid_up02_position, eyelid_up03_position,
                  eyelid_low02_position, eyelid_low03_position):
 
         self.eye_mid = eye_mid
+        self.eye_mid_end = eye_mid_end
+        self.eye_direct = eye_direct
+        
         self.eye_inner_corner = eye_inner_corner
         self.eye_outer_corner = eye_outer_corner
 
@@ -486,6 +491,9 @@ class EyeGuides(object):
         self.eyelid_low03 = eyelid_low03
 
         self.eye_position = eye_position
+        self.eye_mid_end_position = eye_mid_end_position
+        self.eye_direct_position = eye_direct_position
+        
         self.eye_inner_corner_position = eye_inner_corner_position
         self.eye_outer_corner_position = eye_outer_corner_position
 
@@ -502,6 +510,8 @@ class EyeGuides(object):
         # Parelles nom / posicio de totes les joints de l'ull
         joints_info = [
             (self.eye_mid, self.eye_position),
+            (self.eye_mid_end, self.eye_mid_end_position),
+            (self.eye_direct, self.eye_direct_position),
             (self.eye_inner_corner, self.eye_inner_corner_position),
             (self.eye_outer_corner, self.eye_outer_corner_position),
             (self.eyelid_up, self.eyelid_up_position),
@@ -600,6 +610,8 @@ class CharacterGuides(object):
         #Crea les guies de l'ull
         eye_instance = EyeGuides(
             "L_eye_mid",
+            "L_eye_mid_end",
+            "L_eye_direct",
             "L_eye_inner_corner",
             "L_eye_outer_corner",
             "L_eyelid_up",
@@ -609,6 +621,8 @@ class CharacterGuides(object):
             "L_eyelid_low02",
             "L_eyelid_low03",
             (2, 26, 9),
+            (2, 26, 10),
+            (2, 26, 20),
             (1, 26, 9),
             (3, 26, 9),
             (2, 27, 9),
@@ -618,6 +632,7 @@ class CharacterGuides(object):
             (1.3, 25.2, 9),
             (2.6, 25.2, 9)
         )
+        #cmds.parent(eye_instance.eye_mid, eye_instance.eye_mid_end)
         eye_instance.eye_guides()
         
         #Llista amb tots els grups de guies creats       

@@ -40,10 +40,14 @@ class EyesModule(object):
                  eyelid_low03="eyelid_low03",
                  root_instance=None,   
                  rig_name="Character",
-                 side="L"):
+                 side="L",
+                 eye_mid_end="eye_mid_end",
+                 eye_direct="eye_direct"):
         
 
         self.eye_mid = eye_mid
+        self.eye_mid_end = eye_mid_end
+        self.eye_direct = eye_direct
         self.eye_inner_corner = eye_inner_corner
         self.eye_outer_corner = eye_outer_corner
 
@@ -87,6 +91,14 @@ class EyesModule(object):
         # Joints creados a partir de las guias
         self.eye_joints = {}
         self.joints_group = None
+
+        # Cadena de aim del ojo: eye_mid_end cuelga del joint de eye_mid, y el
+        # control de eye_direct es el punto al que mira el ojo.
+        self.eye_mid_end_joint = None
+        self.eye_mid_joint_constraint = None
+        self.eye_direct_control = None
+        self.eye_direct_control_group = None
+        self.eye_mid_aim_constraint = None
 
         # Curvas de los parpados
         self.upper_curve = None
@@ -290,6 +302,165 @@ class EyesModule(object):
                 cmds.warning(f"[EyesModule] No se pudo constrenir el OFF local intermedio {guide}.")
 
         cmds.select(clear=True)
+
+    def _resolve_guide(self, guide):
+        """
+        Devuelve el nodo real de una guia, aceptandola con lado ('L_eye_mid')
+        o sin el ('eye_mid'). Misma tolerancia que _build_eye_joints.
+        """
+        if cmds.objExists(guide):
+            return guide
+        if cmds.objExists(f"{self.side}_{guide}"):
+            return f"{self.side}_{guide}"
+        return None
+
+    def _delete_local_setup(self, base_name):
+        """
+        Borra el setup local (_OFF con su _TRN y su _JNT dentro) de un control.
+
+        Hace falta para el eye_mid: si viene de una build anterior en la que si
+        lo tenia, esos nodos se quedarian sueltos sin conducir nada.
+        """
+        off_name = f"{self.prefix}_{base_name}Local_OFF"
+        if cmds.objExists(off_name):
+            cmds.delete(off_name)
+
+    # ------------------------------------------------------------------
+    # CADENA DE AIM DEL OJO
+    # ------------------------------------------------------------------
+    def _build_eye_mid_end_joint(self):
+        """
+        Crea el joint de la guia eye_mid_end y lo cuelga del joint de eye_mid.
+
+        Va aparte de _build_eye_joints a proposito: los joints de ese metodo
+        alimentan el bucle de controles y las curvas de los parpados, y este
+        no lleva control propio ni entra en ninguna curva. Solo cierra la
+        cadena para que el ojo tenga direccion.
+        """
+        mid_joint = self.eye_joints.get(self.eye_mid)
+        if not mid_joint or not cmds.objExists(mid_joint):
+            cmds.warning("[EyesModule] No existe el joint de eye_mid, no se crea la cadena.")
+            return None
+
+        guide_node = self._resolve_guide(self.eye_mid_end)
+        if guide_node is None:
+            cmds.warning(f"[EyesModule] No se encontro la guia {self.eye_mid_end}, "
+                         "no se crea el joint final del ojo.")
+            return None
+
+        joint_name = f"{self.prefix}_{self.eye_mid_end}_JNT"
+        if cmds.objExists(joint_name):
+            cmds.delete(joint_name)
+
+        cmds.select(clear=True)
+        end_joint = cmds.joint(name=joint_name)
+        cmds.matchTransform(end_joint, guide_node, position=True, rotation=True)
+
+        # Emparentado DESPUES del match: cmds.parent conserva la posicion
+        # mundial, asi que el joint se queda exactamente sobre su guia.
+        cmds.parent(end_joint, mid_joint)
+        cmds.select(clear=True)
+
+        self.eye_mid_end_joint = end_joint
+
+        return end_joint
+
+    def _constrain_eye_mid_joint(self):
+        """
+        El control de eye_mid conduce a su joint con un parentConstraint.
+
+        Este es el sustituto del setup local que llevaban los demas controles:
+        el eye_mid no necesita la red de OFF/TRN porque su joint no skinea
+        ninguna curva de parpado, solo tiene que seguir al control.
+        """
+        ctrl = self.eye_controls.get(self.eye_mid)
+        joint = self.eye_joints.get(self.eye_mid)
+
+        if not ctrl or not cmds.objExists(ctrl):
+            cmds.warning("[EyesModule] No existe el control de eye_mid, no se constriñe su joint.")
+            return None
+        if not joint or not cmds.objExists(joint):
+            cmds.warning("[EyesModule] No existe el joint de eye_mid, no se constriñe.")
+            return None
+
+        # Se rehace por si viene de una build anterior
+        old = cmds.listRelatives(joint, children=True, type="parentConstraint") or []
+        if old:
+            cmds.delete(old)
+
+        self.eye_mid_joint_constraint = cmds.parentConstraint(ctrl, joint, mo=True)[0]
+
+        return self.eye_mid_joint_constraint
+
+    def _build_eye_direct_control(self):
+        """
+        Control sobre la guia eye_direct, con su jerarquia de grupos.
+
+        Sin joint: es el punto al que mira el ojo, no deforma nada.
+        """
+        guide_node = self._resolve_guide(self.eye_direct)
+        if guide_node is None:
+            cmds.warning(f"[EyesModule] No se encontro la guia {self.eye_direct}, "
+                         "no se crea su control.")
+            return None, None
+
+        ctrl_name = f"{self.prefix}_{self.eye_direct}_CTRL"
+
+        if not cmds.objExists(ctrl_name):
+            ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainFk"],
+                final_name=ctrl_name
+            )
+            ctrl_grp = self.group_maker.create_rig_hierarchy(
+                ctrl, guide_node, match_rotation=True, world_space=True
+            )
+        else:
+            ctrl = ctrl_name
+            ctrl_grp = cmds.listRelatives(ctrl, parent=True)[0]
+
+        self.eye_direct_control = ctrl
+        self.eye_direct_control_group = ctrl_grp
+
+        return ctrl, ctrl_grp
+
+    def _aim_eye_mid_to_direct(self):
+        """
+        El _GRP del control de eye_mid apunta al control de eye_direct.
+
+        Opciones del constraint, tal cual las de la ventana:
+          - maintainOffset activado
+          - aimVector (1, 0, 0)
+          - upVector  (0, 1, 0)
+          - worldUpType 'scene' (Scene up)
+          - peso 1, sin ejes bloqueados
+
+        Se constriñe el _GRP y no el control para dejarle al animador los
+        canales del control libres por encima del aim.
+        """
+        mid_grp = self.eye_control_groups.get(self.eye_mid)
+        direct_ctrl = self.eye_direct_control
+
+        if not mid_grp or not cmds.objExists(mid_grp):
+            cmds.warning("[EyesModule] No existe el _GRP del control de eye_mid, no se aplica el aim.")
+            return None
+        if not direct_ctrl or not cmds.objExists(direct_ctrl):
+            cmds.warning("[EyesModule] No existe el control de eye_direct, no se aplica el aim.")
+            return None
+
+        old = cmds.listRelatives(mid_grp, children=True, type="aimConstraint") or []
+        if old:
+            cmds.delete(old)
+
+        self.eye_mid_aim_constraint = cmds.aimConstraint(
+            direct_ctrl, mid_grp,
+            maintainOffset=True,
+            aimVector=(1.0, 0.0, 0.0),
+            upVector=(0.0, 1.0, 0.0),
+            worldUpType="scene",
+            weight=1.0
+        )[0]
+
+        return self.eye_mid_aim_constraint
 
     def _build_eye_joints(self):
         """
@@ -576,6 +747,9 @@ class EyesModule(object):
         if self.joints_group is None:
             return None
 
+        # Cadena del ojo: eye_mid_end colgando del joint de eye_mid.
+        self._build_eye_mid_end_joint()
+
         self._build_eyelid_curves()
 
         # =========================================================
@@ -608,6 +782,16 @@ class EyesModule(object):
             else:
                 ctrl = ctrl_name
                 ctrl_grp = cmds.listRelatives(ctrl, parent=True)[0]
+
+            # El eye_mid se queda solo con el control: nada de OFF/TRN.
+            # Su joint no skinea ninguna curva de parpado, asi que no necesita
+            # el espacio local; va conducido por un parentConstraint directo
+            # (_constrain_eye_mid_joint) y el _GRP lo orienta el aim.
+            if guide == self.eye_mid:
+                self.eye_controls[guide] = ctrl
+                self.eye_control_groups[guide] = ctrl_grp
+                self._delete_local_setup(guide)
+                continue
 
             off_name = f"{self.prefix}_{guide}Local_OFF"
             trn_name = f"{self.prefix}_{guide}Local_TRN"
@@ -660,6 +844,15 @@ class EyesModule(object):
             self.eye_sub_control_groups[guide] = sub_ctrl_grp
             self.eye_sub_local_offs[guide] = sub_local_off
             self.eye_sub_local_trns[guide] = sub_local_trn
+
+        # =========================================================
+        # CONTROL DE EYE_DIRECT + AIM DEL OJO
+        # El _GRP del control de eye_mid apunta al control de eye_direct, y el
+        # joint de eye_mid sigue a su control: mover el direct rota el ojo.
+        # =========================================================
+        self._build_eye_direct_control()
+        self._aim_eye_mid_to_direct()
+        self._constrain_eye_mid_joint()
 
         # =========================================================
         # GRUPO DE SETTINGS

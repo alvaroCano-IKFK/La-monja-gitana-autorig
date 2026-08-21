@@ -2,7 +2,8 @@ import maya.cmds as cmds
 
 class Mirror(object):
     def __init__(self, clavicule_guide="L_clavicule", thigh_guide="L_hip", lip_end="L_lip_end",
-                eye_mid="L_eye_mid", eye_inner_corner="L_eye_inner_corner", eye_outer_corner="L_eye_outer_corner",
+                eye_mid="L_eye_mid", eye_mid_end="L_eye_mid_end", eye_direct = "L_eye_direct",
+                eye_inner_corner="L_eye_inner_corner", eye_outer_corner="L_eye_outer_corner",
                 eyelid_up="L_eyelid_up", eyelid_low="L_eyelid_low",
                 eyelid_up02="L_eyelid_up02", eyelid_up03="L_eyelid_up03",
                 eyelid_low02="L_eyelid_low02", eyelid_low03="L_eyelid_low03",
@@ -12,6 +13,8 @@ class Mirror(object):
         self.thigh_guide = thigh_guide
         self.lip_end = lip_end
         self.eye_mid = eye_mid
+        self.eye_mid_end = eye_mid_end
+        self.eye_direct = eye_direct
         self.eye_inner_corner = eye_inner_corner
         self.eye_outer_corner = eye_outer_corner
         self.eyelid_up = eyelid_up
@@ -27,6 +30,8 @@ class Mirror(object):
         self.r_hip = None
         self.r_lip_end = None
         self.r_eye_mid = None
+        self.r_eye_mid_end = None
+        self.r_eye_direct = None
         self.r_eye_inner_corner = None
         self.r_eye_outer_corner = None
         self.r_eyelid_up = None
@@ -107,4 +112,10 @@ class Mirror(object):
         else:
             cmds.warning(f"[Mirror] No se encontró {self.eyelid_low03} en la escena, no se puede mirrorizar el párpado inferior 03.")
             
+        if cmds.objExists(self.eye_mid_end):
+            res_eye_mid_end = cmds.mirrorJoint(self.eye_mid_end, myz=True, mb=True, sr=("L", "R"))
+            self.r_eye_mid_end = res_eye_mid_end[0]   
             
+        if cmds.objExists(self.eye_direct):
+            res_eye_direct = cmds.mirrorJoint(self.eye_direct, myz=True, mb=True, sr=("L", "R"))
+            self.r_eye_direct = res_eye_direct[0] 

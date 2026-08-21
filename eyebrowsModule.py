@@ -150,7 +150,7 @@ class EyebrowsModule(object):
                 decMatrix_node = dec_node_creator.create()
 
                 for i, input_node in enumerate(matrix_inputs):
-                    cmds.connectAttr(f"{input_node}.matrix[0]", f"{multMatrix_node}.matrixIn[{i}]", f=True)
+                    cmds.connectAttr(f"{input_node}.matrix", f"{multMatrix_node}.matrixIn[{i}]", f=True)
 
                 cmds.connectAttr(f"{multMatrix_node}.matrixSum", f"{decMatrix_node}.inputMatrix", f=True)
 

@@ -117,16 +117,17 @@ class EyebrowsModule(object):
                 cmds.parent(rel_grp, main_ctl_grp)
 
                 hierarchy_transforms = []
-                current_node = main_ctl
-                while current_node and current_node != main_ctl_grp:
-                    parents = cmds.listRelatives(current_node, parent=True, type="transform")
-                    if parents:
-                        hierarchy_transforms.append(current_node)
-                        current_node = parents[0]
-                    else:
-                        break
+                current_node = cmds.listRelatives(main_ctl, parent=True, type="transform")
 
-                matrix_inputs = hierarchy_transforms + [main_ctl]
+                while current_node:
+                    node_name = current_node[0]
+                    hierarchy_transforms.append(node_name)
+                    
+                    if node_name == main_ctl_grp:
+                        break
+                        
+                    current_node = cmds.listRelatives(node_name, parent=True, type="transform")
+                matrix_inputs = list(reversed(hierarchy_transforms)) + [main_ctl]
 
                 mult_node_creator = NodeCreator(
                     side=self.side, 

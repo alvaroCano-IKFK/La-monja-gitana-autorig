@@ -624,6 +624,189 @@ class MouthModule(object):
         return motionpath_node, locatorTracker
     
     # ------------------------------------------------------------------
+    # ORGANIZACION DEL OUTLINER
+    # Solo MUEVE nodos de sitio. No crea, no borra y no reconecta nada del rig:
+    # todos los grupos de organizacion se quedan en identidad (sin translate,
+    # rotate ni scale), asi que colgar cosas de ellos no cambia ni una sola
+    # matriz mundial. Si alguna vez mueves estos grupos a mano, si romperia.
+    # ------------------------------------------------------------------
+    def _ensure_group(self, group_name, parent_group=None):
+        """
+        Devuelve `group_name`, creandolo vacio en la raiz del mundo si no
+        existe. Idempotente: se puede llamar en cada build() sin duplicar.
+        """
+        if cmds.objExists(group_name):
+            group_node = group_name
+        else:
+            group_node = cmds.group(em=True, world=True, n=group_name)
+
+        if parent_group and cmds.objExists(parent_group):
+            current_parent = cmds.listRelatives(group_node, parent=True) or []
+            if not current_parent or current_parent[0] != parent_group:
+                cmds.parent(group_node, parent_group, relative=True)
+
+        return group_node
+
+    def _park_node(self, node_name, destination_group):
+        """
+        Mete `node_name` dentro de `destination_group` SOLO si el nodo esta
+        colgando de la raiz del mundo.
+
+        Si ya tiene padre (mirrorBehaviour_GRP, un _negative_GRP, el
+        lipLowerInverted_GRP, otro modulo...) no se toca: esa jerarquia si es
+        funcional y no es asunto del organizador.
+
+        El parent es RELATIVO a proposito:
+          - el grupo destino esta en identidad, asi que conservar los valores
+            locales conserva la matriz mundial exacta (skinClusters, uvPin,
+            offsetParentMatrix y constraints siguen dando lo mismo);
+          - evita que Maya intente escribir en translate/rotate de los locators
+            que van conectados a un motionPath o a un decomposeMatrix.
+        """
+        if not node_name or not cmds.objExists(node_name):
+            return False
+        if not cmds.objExists(destination_group):
+            return False
+        if cmds.listRelatives(node_name, parent=True):
+            return False
+
+        try:
+            cmds.parent(node_name, destination_group, relative=True)
+        except Exception as error:
+            cmds.warning(
+                f"MouthModule: no se pudo ordenar '{node_name}' dentro de "
+                f"'{destination_group}': {error}"
+            )
+            return False
+        return True
+
+    def _organize_outliner(self, control_groups=None):
+        """
+        Ordena en el outliner todo lo que este modulo deja suelto en la raiz.
+
+        Estructura resultante (compartida entre L y R, por eso va con prefijo C_):
+
+            C_<rig>_mouth_GRP
+                |- C_<rig>_mouthControls_GRP
+                |     |- C_<rig>_mouthCenterControls_GRP   (mid / upper / lower)
+                |     |- L_<rig>_mouthControls_GRP         (controles del lado L)
+                |     |- R_<rig>_mouthControls_GRP         (controles del lado R)
+                |- C_<rig>_mouthJoints_GRP                 (JNT + PreBind + freeze)
+                |- C_<rig>_mouthCurves_GRP                 (las 7 curvas)
+                |- C_<rig>_mouthLocators_GRP
+                |     |- C_<rig>_mouthProjected_GRP        (lipProjected / 01 / 02 / Global)
+                |     |- C_<rig>_mouthTrackers_GRP         (tracker_LOC y trackerGlobal_LOC)
+                |- C_<rig>_mouthSetup_GRP                  (Local_OFF, settings, inverted, mirror)
+
+        Se llama al final de build(), en los dos lados: en la primera pasada
+        ordena lo del centro y lo de ese lado, y en la segunda recoge lo nuevo.
+        Lo ya colocado se ignora por el chequeo de padre de _park_node().
+        """
+        rig = self.rig_name
+        center = f"C_{rig}"
+        sides = ["L", "R"]
+
+        # --- 1. Esqueleto de grupos ---
+        root_grp = self._ensure_group(f"{center}_mouth_GRP")
+        self.mouth_root_grp = root_grp
+
+        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP", root_grp)
+        center_controls_grp = self._ensure_group(f"{center}_mouthCenterControls_GRP", controls_grp)
+        joints_grp = self._ensure_group(f"{center}_mouthJoints_GRP", root_grp)
+        curves_grp = self._ensure_group(f"{center}_mouthCurves_GRP", root_grp)
+        locators_grp = self._ensure_group(f"{center}_mouthLocators_GRP", root_grp)
+        projected_grp = self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp)
+        trackers_grp = self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp)
+        setup_grp = self._ensure_group(f"{center}_mouthSetup_GRP", root_grp)
+
+        # El <lado>_mouthControls_GRP ya lo crea build(); aqui solo se recoloca.
+        side_controls_grp = self._ensure_group(f"{self.prefix}_mouthControls_GRP", controls_grp)
+        for side_code in sides:
+            other_side_controls = f"{side_code}_{rig}_mouthControls_GRP"
+            if cmds.objExists(other_side_controls):
+                self._park_node(other_side_controls, controls_grp)
+
+        # --- 2. Controles ---
+        # Los grupos raiz que me pasa build() (mid, end, upper, lower, levator,
+        # depresor, upperPinch, lowerPinch). Los que ya cuelgan de un
+        # _negative_GRP o del mirrorBehaviour_GRP se saltan solos.
+        for group_name in (control_groups or []):
+            if not group_name:
+                continue
+            is_center = group_name.startswith(f"{center}_")
+            self._park_node(group_name, center_controls_grp if is_center else side_controls_grp)
+
+        # Grupos de comportamiento negativo: van con los controles de su lado.
+        for side_code in sides:
+            side_prefix = f"{side_code}_{rig}"
+            destination = f"{side_code}_{rig}_mouthControls_GRP"
+            if not cmds.objExists(destination):
+                destination = controls_grp
+            for negative_group in [f"{side_prefix}_depresor_negative_GRP",
+                                   f"{side_prefix}_lowerPinch_negative_GRP"]:
+                self._park_node(negative_group, destination)
+
+        # --- 3. Curvas ---
+        for curve_name in [f"{center}_lipProjected_CRV",
+                           f"{center}_lipUpperLine_CRV",
+                           f"{center}_lipLowerLine_CRV",
+                           f"{center}_lipCurvatureLevator_CRV",
+                           f"{center}_lipCurvatureDepresor_CRV",
+                           f"{center}_lipCurvatureUpperPinch_CRV",
+                           f"{center}_lipCurvatureLowerPinch_CRV"]:
+            self._park_node(curve_name, curves_grp)
+
+        # --- 4. Joints (incluidos los PreBind y el freeze) ---
+        joint_names = [f"{center}_lipUpper_JNT",
+                       f"{center}_lipLower_JNT",
+                       f"{center}_lipUpperPreBind_JNT",
+                       f"{center}_lipLowerPreBind_JNT",
+                       f"{center}_freeze_JNT"]
+        for side_code in sides:
+            side_prefix = f"{side_code}_{rig}"
+            for base_name in ["levator", "depresor", "upperPinch", "lowerPinch"]:
+                joint_names.append(f"{side_prefix}_{base_name}_JNT")
+                joint_names.append(f"{side_prefix}_{base_name}PreBind_JNT")
+        for joint_name in joint_names:
+            self._park_node(joint_name, joints_grp)
+
+        # --- 5. Locators de proyeccion ---
+        projected_names = [f"{center}_lipProjected_LOC"]
+        for side_code in sides:
+            side_prefix = f"{side_code}_{rig}"
+            projected_names.extend([f"{side_prefix}_lipProjected_LOC",
+                                    f"{side_prefix}_lipProjected01_LOC",
+                                    f"{side_prefix}_lipProjected02_LOC",
+                                    f"{side_prefix}_lipProjectedGlobal_LOC"])
+        for locator_name in projected_names:
+            self._park_node(locator_name, projected_grp)
+
+        # --- 6. Trackers de los motionPath ---
+        for side_code in sides:
+            side_prefix = f"{side_code}_{rig}"
+            for base_name in ["levatorFollow", "depresorFollow",
+                              "upperPinchFollow", "lowerPinchFollow"]:
+                self._park_node(f"{side_prefix}_{base_name}_tracker_LOC", trackers_grp)
+                self._park_node(f"{side_prefix}_{base_name}_trackerGlobal_LOC", trackers_grp)
+
+        # --- 7. Setup local (OFF/TRN, settings y grupos de signo) ---
+        setup_names = [f"{center}_lipsSettings_GRP",
+                       f"{center}_lipLowerInverted_GRP",
+                       f"{center}_mouthCenterLocal_OFF",
+                       f"{center}_UpperLocal_OFF",
+                       f"{center}_LowerLocal_OFF"]
+        for side_code in sides:
+            side_prefix = f"{side_code}_{rig}"
+            setup_names.append(f"{side_prefix}_mouthLocalMirror_GRP")
+            setup_names.append(f"{side_prefix}_mouthLocal_OFF")
+            for base_name in ["levator", "depresor", "upperPinch", "lowerPinch"]:
+                setup_names.append(f"{side_prefix}_{base_name}Local_OFF")
+        for setup_node in setup_names:
+            self._park_node(setup_node, setup_grp)
+
+        return root_grp
+
+    # ------------------------------------------------------------------
     # BUILD
     # ------------------------------------------------------------------
     def build(self):
@@ -1459,5 +1642,21 @@ class MouthModule(object):
                         source_joint=lowerPinch_joint_side,
                         driver_target=lowerPinch_local_loc
                     )
+
+        # =========================================================
+        # 10. ORGANIZACION DEL OUTLINER
+        # Va al final a proposito: cuando todo existe y ya esta conectado.
+        # Solo mueve nodos a grupos en identidad, no toca el rig.
+        # =========================================================
+        self._organize_outliner(control_groups=[
+            mid_lip_grp,
+            end_lip_grp,
+            upper_lip_grp,
+            lower_lip_grp,
+            levator_ctrl_grp,
+            depresor_ctrl_grp,
+            upperPinch_ctrl_grp,
+            lowerPinch_ctrl_grp,
+        ])
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn

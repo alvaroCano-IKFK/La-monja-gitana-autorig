@@ -704,6 +704,151 @@ class JawModule(object):
         return bind_joints
 
     # ------------------------------------------------------------------
+    # ORGANIZACION DEL OUTLINER
+    # Solo MUEVE nodos de sitio. No crea rig, no borra y no reconecta nada:
+    # todos los grupos de organizacion se quedan en identidad (sin translate,
+    # rotate ni scale), asi que colgar cosas de ellos no cambia ni una sola
+    # matriz mundial. Si alguna vez mueves estos grupos a mano, si romperia.
+    # ------------------------------------------------------------------
+    def _ensure_group(self, group_name, parent_group=None):
+        """
+        Devuelve 'group_name', creandolo vacio en la raiz del mundo si no
+        existe. Idempotente: se puede llamar en cada build() sin duplicar.
+        """
+        if cmds.objExists(group_name):
+            group_node = group_name
+        else:
+            group_node = cmds.group(em=True, world=True, n=group_name)
+
+        if parent_group and cmds.objExists(parent_group):
+            current_parent = cmds.listRelatives(group_node, parent=True) or []
+            if not current_parent or current_parent[0] != parent_group:
+                cmds.parent(group_node, parent_group, relative=True)
+
+        return group_node
+
+    def _park_node(self, node_name, destination_group):
+        """
+        Mete 'node_name' dentro de 'destination_group' SOLO si el nodo esta
+        colgando de la raiz del mundo. Si ya tiene padre no se toca: esa
+        jerarquia si es funcional y no es asunto del organizador.
+
+        El parent es RELATIVO a proposito:
+          - el grupo destino esta en identidad, asi que conservar los valores
+            locales conserva la matriz mundial exacta (skinClusters, deltas
+            del jaw, offsetParentMatrix y constraints siguen dando lo mismo);
+          - evita que Maya intente escribir en el translate de los trackers,
+            que van conectados al allCoordinates de un motionPath.
+        """
+        if not node_name or not cmds.objExists(node_name):
+            return False
+        if not cmds.objExists(destination_group):
+            return False
+        if cmds.listRelatives(node_name, parent=True):
+            return False
+
+        try:
+            cmds.parent(node_name, destination_group, relative=True)
+        except Exception as error:
+            cmds.warning(
+                f"[Jaw] No se pudo ordenar '{node_name}' dentro de "
+                f"'{destination_group}': {error}"
+            )
+            return False
+        return True
+
+    def _organize_outliner(self, control_groups=None, joint_count=7):
+        """
+        Ordena en el outliner todo lo que deja suelto este modulo.
+
+        Estructura resultante:
+
+            C_<rig>_jaw_GRP
+                |- C_<rig>_jawControls_GRP      (jawUpper / jawLower)
+                |- C_<rig>_jawJoints_GRP        (jawUpper/Lower_JNT + jawCorner_JNT)
+                |     |- C_<rig>_jawBindJoints_GRP   (lipUpper/LowerBind##_JNT)
+                |- C_<rig>_jawCurves_GRP        (las dos JawPinchLine)
+                |- C_<rig>_jawLocators_GRP
+                |     |- C_<rig>_jawProjected_GRP    (lipProjectedJaw / GlobalJaw)
+                |     |- C_<rig>_jawTrackers_GRP     (Bind##_tracker_LOC)
+                |- C_<rig>_jawSetup_GRP         (jawUpperLocal_OFF / jawLowerLocal_OFF)
+
+        Los joints de bind van en su propio subgrupo porque son los unicos que
+        deforman la malla: asi se seleccionan de golpe para skinear.
+
+        Se llama al final de build(). Es idempotente y lo ya colocado se
+        ignora por el chequeo de padre de _park_node().
+        """
+        rig = self.rig_name
+        center = f"C_{rig}"
+
+        # --- 1. Esqueleto de grupos ---
+        root_grp = self._ensure_group(f"{center}_jaw_GRP")
+        self.jaw_root_grp = root_grp
+
+        controls_grp = self._ensure_group(f"{center}_jawControls_GRP", root_grp)
+        joints_grp = self._ensure_group(f"{center}_jawJoints_GRP", root_grp)
+        bind_joints_grp = self._ensure_group(f"{center}_jawBindJoints_GRP", joints_grp)
+        curves_grp = self._ensure_group(f"{center}_jawCurves_GRP", root_grp)
+        locators_grp = self._ensure_group(f"{center}_jawLocators_GRP", root_grp)
+        projected_grp = self._ensure_group(f"{center}_jawProjected_GRP", locators_grp)
+        trackers_grp = self._ensure_group(f"{center}_jawTrackers_GRP", locators_grp)
+        setup_grp = self._ensure_group(f"{center}_jawSetup_GRP", root_grp)
+
+        # --- 2. Controles ---
+        # Los _GRP raiz me los pasa build(): create_rig_hierarchy los devuelve
+        # y reconstruir su nombre a mano seria fragil.
+        for group_name in (control_groups or []):
+            self._park_node(group_name, controls_grp)
+
+        # --- 3. Curvas de pinch del jaw ---
+        for _, dup_curve in self._get_pinch_curve_pairs().values():
+            self._park_node(dup_curve, curves_grp)
+
+        # --- 4. Joints del jaw y comisuras ---
+        joint_names = [f"{self.prefix}_jawUpper_JNT",
+                       f"{self.prefix}_jawLower_JNT"]
+        for side_code in ["L", "R"]:
+            joint_names.append(f"{side_code}_{rig}_jawCorner_JNT")
+        for joint_name in joint_names:
+            self._park_node(joint_name, joints_grp)
+
+        # --- 5. Cadena final de bind (joints + sus trackers) ---
+        # Mismo reparto de lados que _build_final_lip_joints: de comisura a
+        # comisura, con el indice central en C.
+        mid_index = (joint_count - 1) / 2.0
+        for label in ["Upper", "Lower"]:
+            for i in range(joint_count):
+                if i < mid_index:
+                    bind_side = "L"
+                elif i > mid_index:
+                    bind_side = "R"
+                else:
+                    bind_side = "C"
+
+                bind_name = f"{bind_side}_{rig}_lip{label}Bind{i:02d}"
+                self._park_node(f"{bind_name}_JNT", bind_joints_grp)
+                self._park_node(f"{bind_name}_tracker_LOC", trackers_grp)
+
+        # --- 6. Locators con la mandibula aplicada ---
+        for label in ["Upper", "Lower"]:
+            self._park_node(f"{center}_lipProjectedJaw{label}_LOC", projected_grp)
+            self._park_node(f"{center}_lipProjectedGlobalJaw{label}_LOC", projected_grp)
+
+        # --- 7. Setup local (OFF/TRN de los dos controles) ---
+        for base_name in ["jawUpper", "jawLower"]:
+            self._park_node(f"{self.prefix}_{base_name}Local_OFF", setup_grp)
+
+        return root_grp
+
+    def organize_outliner(self):
+        """
+        Version publica y sin argumentos, para volver a barrer la raiz despues
+        de que hayan corrido otros modulos. Idempotente.
+        """
+        return self._organize_outliner()
+
+    # ------------------------------------------------------------------
     # BUILD
     # ------------------------------------------------------------------
     def build(self):
@@ -911,6 +1056,11 @@ class JawModule(object):
         # 6. JOINTS FINALES SOBRE LAS LINEAS DE PINCH DEL JAW
         lip_bind_joints = self._build_final_lip_joints(jaw_pinch_lines)
         self.lip_bind_joints = lip_bind_joints
+
+        # 7. ORGANIZACION DEL OUTLINER
+        # Al final a proposito: cuando todo existe y ya esta conectado.
+        # Solo mueve nodos a grupos en identidad, no toca el rig.
+        self._organize_outliner(control_groups=[jaw_upper_grp, jaw_lower_grp])
 
         print(f"[Jaw] Upper lip driven: {upper_driven_local} / {upper_driven_global}")
         print(f"[Jaw] Lower lip driven: {lower_driven_local} / {lower_driven_global}")

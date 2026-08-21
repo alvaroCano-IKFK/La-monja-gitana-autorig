@@ -92,6 +92,7 @@ class EyebrowsModule(object):
             }
             corner_labels = ("In", "Out")
 
+            sub_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctl_GRP", p=main_ctl)
 
             for label, idx in sub_indices.items():
                 sub_guide_name = f"{self.side}_{base_prefix}_{idx:02d}"
@@ -105,58 +106,16 @@ class EyebrowsModule(object):
                     final_name=sub_ctrl_name
                 )
                 sub_ctl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
-                cmds.parent(sub_ctl_gen, main_ctl)
+                cmds.parent(sub_ctl_gen, sub_ctl_grp)
 
                 rel_name = f"{self.side}_eyebrows{label}Main_REL"
-                rel_grp= cmds.group(em=True, n=rel_name)
+                rel_grp = cmds.group(em=True, n=rel_name)
 
                 temp_constraint_p = cmds.parentConstraint(main_ctl, rel_grp, mo=False)
                 temp_constraint_s = cmds.parentConstraint(sub_ctrl, rel_grp, mo=False)
                 cmds.delete(temp_constraint_p, temp_constraint_s)
 
-                cmds.parent(rel_grp, main_ctl_grp)
-
-                hierarchy_transforms = []
-                current_node = main_ctl
-                while current_node and current_node != main_ctl_grp:
-                    parents = cmds.listRelatives(current_node, parent=True, type="transform")
-                    if parents:
-                        hierarchy_transforms.append(current_node)
-                        current_node = parents[0]
-                    else:
-                        break
-
-                matrix_inputs = hierarchy_transforms + [main_ctl]
-
-                mult_node_creator = NodeCreator(
-                    side=self.side, 
-                    node_type="multMatrix", 
-                    base_name=f"{self.rig_name}_eyebrow", 
-                    name="main", 
-                    tag="matrix", 
-                    parent=None, 
-                    custom_suffix=None
-                )
-                multMatrix_node = mult_node_creator.create()
-                dec_node_creator = NodeCreator(
-                    side=self.side, 
-                    node_type="decomposeMatrix", 
-                    base_name=f"{self.rig_name}_eyebrow", 
-                    name="main", 
-                    tag="matrix", 
-                    parent=None, 
-                    custom_suffix=None
-                )
-                decMatrix_node = dec_node_creator.create()
-
-                for i, input_node in enumerate(matrix_inputs):
-                    cmds.connectAttr(f"{input_node}.worldMatrix[0]", f"{multMatrix_node}.matrixIn[{i}]", f=True)
-
-                cmds.connectAttr(f"{multMatrix_node}.matrixSum", f"{decMatrix_node}.inputMatrix", f=True)
-
-                cmds.connectAttr(f"{decMatrix_node}.outputTranslate", f"{rel_grp}.translate", f=True)
-                cmds.connectAttr(f"{decMatrix_node}.outputRotate", f"{rel_grp}.rotate", f=True)
-                cmds.connectAttr(f"{decMatrix_node}.outputScale", f"{rel_grp}.scale", f=True)
+                cmds.parent(rel_grp, main_ctl)
 
                 self.controls.append(sub_ctrl)
                 self.control_groups.append(sub_ctl_gen)
@@ -187,9 +146,8 @@ class EyebrowsModule(object):
                         final_name=tangent_ctl_name
                     )
                     tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, tangent_loc)
-                    cmds.parent(tangent_ctl_gen, main_ctl)
+                    cmds.parent(tangent_ctl_gen, sub_ctl_grp)
                     cmds.delete(tangent_loc)
 
                     self.controls.append(tangent_ctl)
                     self.control_groups.append(tangent_ctl_gen)
-

@@ -114,7 +114,7 @@ class EyebrowsModule(object):
                 temp_constraint_s = cmds.parentConstraint(sub_ctrl, rel_grp, mo=False)
                 cmds.delete(temp_constraint_p, temp_constraint_s)
 
-                cmds.parent(rel_grp, main_ctl_grp)
+                cmds.parent(rel_grp, sub_ctl_gen)
 
                 hierarchy_transforms = []
                 current_node = cmds.listRelatives(main_ctl, parent=True, type="transform")
@@ -188,9 +188,8 @@ class EyebrowsModule(object):
                         final_name=tangent_ctl_name
                     )
                     tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, tangent_loc)
-                    cmds.parent(tangent_ctl_gen, main_ctl)
+                    cmds.parent(tangent_ctl_gen, sub_ctrl)
                     cmds.delete(tangent_loc)
 
                     self.controls.append(tangent_ctl)
                     self.control_groups.append(tangent_ctl_gen)
-

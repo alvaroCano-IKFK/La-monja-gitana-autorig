@@ -92,7 +92,6 @@ class EyebrowsModule(object):
             }
             corner_labels = ("In", "Out")
 
-            sub_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_sub_ctl_GRP", p=main_ctl_grp)
 
             for label, idx in sub_indices.items():
                 sub_guide_name = f"{self.side}_{base_prefix}_{idx:02d}"
@@ -106,7 +105,7 @@ class EyebrowsModule(object):
                     final_name=sub_ctrl_name
                 )
                 sub_ctl_gen = self.group_maker.create_rig_hierarchy(sub_ctrl, sub_guide_name)
-                cmds.parent(sub_ctl_gen, sub_ctl_grp)
+                cmds.parent(sub_ctl_gen, main_ctl)
 
                 rel_name = f"{self.side}_eyebrows{label}Main_REL"
                 rel_grp= cmds.group(em=True, n=rel_name)
@@ -188,11 +187,9 @@ class EyebrowsModule(object):
                         final_name=tangent_ctl_name
                     )
                     tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, tangent_loc)
-                    cmds.parent(tangent_ctl_gen, sub_ctl_grp)
+                    cmds.parent(tangent_ctl_gen, main_ctl)
                     cmds.delete(tangent_loc)
 
                     self.controls.append(tangent_ctl)
                     self.control_groups.append(tangent_ctl_gen)
 
-
-        print(f"Build {self.prefix} complet amb èxit.")

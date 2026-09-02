@@ -697,6 +697,48 @@ class EyesModule(object):
                 cmds.setAttr(f"{old_ctrl}.{attr_name}", lock=False)
                 cmds.deleteAttr(f"{old_ctrl}.{attr_name}")
 
+    def _offset_eye_mid_shape(self):
+        """
+        Lleva la shape del control de eye_mid hasta la posicion del joint de
+        eye_mid_end. Se mueven solo los CV de la curva en world space, asi que
+        el transform y su pivote se quedan exactamente donde estaban.
+
+        Idempotente: deja un atributo marca en el control para no volver a
+        aplicar el offset si se relanza la build sobre la misma escena (el
+        control sobrevive entre builds y se desplazaria dos veces).
+        """
+        ctrl = self.eye_controls.get(self.eye_mid)
+        if not ctrl or not cmds.objExists(ctrl):
+            cmds.warning("[EyesModule] No existe el control de eye_mid, no se mueve la shape.")
+            return None
+
+        end_joint = self.eye_mid_end_joint
+        if not end_joint or not cmds.objExists(end_joint):
+            cmds.warning("[EyesModule] No existe el joint de eye_mid_end, no se mueve la shape.")
+            return None
+
+        if cmds.attributeQuery("shapeOffsetToEnd", node=ctrl, exists=True):
+            return ctrl
+
+        shapes = cmds.listRelatives(ctrl, shapes=True, type="nurbsCurve", fullPath=True) or []
+        if not shapes:
+            cmds.warning(f"[EyesModule] {ctrl} no tiene shapes de curva, no se mueve nada.")
+            return None
+
+        # Referencia: el pivote del control, que es justo lo que no se toca.
+        ctrl_position = cmds.xform(ctrl, q=True, ws=True, rp=True)
+        end_position = cmds.xform(end_joint, q=True, ws=True, t=True)
+        offset = [end_position[i] - ctrl_position[i] for i in range(3)]
+
+        for shape in shapes:
+            cmds.move(offset[0], offset[1], offset[2], f"{shape}.cv[*]",
+                      relative=True, worldSpace=True)
+
+        cmds.addAttr(ctrl, ln="shapeOffsetToEnd", at="bool", dv=True, k=False)
+        cmds.setAttr(f"{ctrl}.shapeOffsetToEnd", lock=True)
+
+        return ctrl
+
     def _add_blink_attributes(self):
         """
         Anade al control de eye_mid el separador de atributos extra y los tres
@@ -929,6 +971,10 @@ class EyesModule(object):
         self._build_eye_direct_control()
         self._aim_eye_mid_to_direct()
         self._constrain_eye_mid_joint()
+
+        # La shape del control de eye_mid se dibuja sobre el joint de
+        # eye_mid_end; el transform y el pivote no se mueven.
+        self._offset_eye_mid_shape()
 
         # =========================================================
         # GRUPO DE SETTINGS

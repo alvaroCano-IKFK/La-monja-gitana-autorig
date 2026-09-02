@@ -13,6 +13,11 @@ class MouthModule(object):
     BLEND01_INDEX = {"L": 3, "R": 5}
     BLEND02_INDEX = {"L": 4, "R": 6}
 
+    # Desplazamiento en Y de las shapes de los controles de labio: los de upper
+    # suben +Y y los de lower bajan -Y. Solo mueve los CV de la curva, ni el
+    # transform ni el pivote. Ponlo a 0 para desactivarlo.
+    SHAPE_OFFSET_Y = 1.0
+
     def __init__(self, boca_surface="boca_surface", 
                  lip_mid="lip_mid", 
                  lip_end="lip_end", 
@@ -812,6 +817,70 @@ class MouthModule(object):
     # ------------------------------------------------------------------
     # BUILD
     # ------------------------------------------------------------------
+    def _offset_lip_shape(self, ctrl, offset_y):
+        """
+        Mueve en Y solo los CV de la shape de 'ctrl'. El transform y su pivote se
+        quedan donde estan, asi que ningun constraint ni el skinning se enteran.
+
+        El movimiento va en world space a proposito: varios de estos controles
+        cuelgan de grupos con scaleY negativo (lipLower_GRP, depresor_negative_GRP,
+        lowerPinch_negative_GRP) y en espacio local el signo saldria invertido.
+
+        Idempotente: marca el control con un atributo para no aplicar el offset
+        dos veces. Hace falta porque los controles sobreviven entre builds y los
+        centrales los comparten los dos lados.
+        """
+        if not ctrl or not cmds.objExists(ctrl):
+            return None
+        if not offset_y:
+            return None
+        if cmds.attributeQuery("shapeOffsetY", node=ctrl, exists=True):
+            return ctrl
+
+        shapes = cmds.listRelatives(ctrl, shapes=True, type="nurbsCurve", fullPath=True) or []
+        if not shapes:
+            cmds.warning(f"[MouthModule] {ctrl} no tiene shapes de curva, no se mueve nada.")
+            return None
+
+        for shape in shapes:
+            cmds.move(0, offset_y, 0, f"{shape}.cv[*]", relative=True, worldSpace=True)
+
+        cmds.addAttr(ctrl, ln="shapeOffsetY", at="double", dv=offset_y, k=False)
+        cmds.setAttr(f"{ctrl}.shapeOffsetY", lock=True)
+
+        return ctrl
+
+    def _offset_lip_shapes(self):
+        """
+        Sube las shapes de los controles de upper y baja las de lower, usando
+        SHAPE_OFFSET_Y. Los centrales son unicos para todo el rig; levator,
+        depresor y los pinch son del lado que este construyendo.
+        """
+        offset = self.SHAPE_OFFSET_Y
+        if not offset:
+            return []
+
+        upper_controls = [
+            f"C_{self.rig_name}_lipUpper_GRP",
+            f"{self.prefix}_levator_CTRL",
+            f"{self.prefix}_upperPinch_CTRL",
+        ]
+        lower_controls = [
+            f"C_{self.rig_name}_lipLower_GRP",
+            f"{self.prefix}_depresor_CTRL",
+            f"{self.prefix}_lowerPinch_CTRL",
+        ]
+
+        moved = []
+        for ctrl in upper_controls:
+            if self._offset_lip_shape(ctrl, offset):
+                moved.append(ctrl)
+        for ctrl in lower_controls:
+            if self._offset_lip_shape(ctrl, -offset):
+                moved.append(ctrl)
+
+        return moved
+
     def build(self):
         # 1. CONTROL CENTRAL — se construye una única vez y se reutiliza en el lado R
         center_name = f"C_{self.rig_name}_mid_LIP_CTRL"
@@ -1681,6 +1750,12 @@ class MouthModule(object):
                         source_joint=lowerPinch_joint_side,
                         driver_target=lowerPinch_local_loc
                     )
+
+        # =========================================================
+        # 9.9 OFFSET EN Y DE LAS SHAPES DE LOS CONTROLES DE LABIO
+        # Solo CV: upper arriba, lower abajo. Pivotes intactos.
+        # =========================================================
+        self._offset_lip_shapes()
 
         # =========================================================
         # 10. ORGANIZACION DEL OUTLINER

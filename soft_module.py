@@ -22,6 +22,29 @@ class SoftIkModule(object):
         )
         return creator.create()
 
+    def _parent_into_rig(self, node, parent_node):
+        """
+        Mete 'node' bajo 'parent_node' y le fuerza la escala local a 1.
+
+        Lo segundo no es opcional: cmds.parent conserva la matriz de mundo, asi
+        que si el padre ya viene escalado Maya compensa metiendo la inversa en
+        la escala local del hijo, y el nodo se quedaria sin heredar el
+        Global_Scale, que es justo lo que se busca aqui.
+        """
+        if not parent_node or not cmds.objExists(parent_node):
+            cmds.warning(f"[{self.prefix}] Sin padre para {node}: el soft no heredara "
+                         "el Global_Scale.")
+            return node
+
+        current = cmds.listRelatives(node, parent=True)
+        if not current or current[0] != parent_node:
+            cmds.parent(node, parent_node)
+
+        for axis in "XYZ":
+            cmds.setAttr(f"{node}.scale{axis}", 1)
+
+        return node
+
     def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt,
                       goal_ctrl=None):
         """
@@ -52,8 +75,16 @@ class SoftIkModule(object):
         # goal_ctrl con mo=True: es el goal_ctrl "trasladado" al sitio donde
         # de verdad tiene que acabar el handle. Sin esto el handle se clava
         # encima de la bola del pie y la pierna se encoge.
+        # Los TRN del soft tienen que vivir en el MISMO espacio de escala que el
+        # ikHandle. Sueltos en la raiz de la escena no heredan el Global_Scale, y
+        # entonces: (a) el translateX normalizado nunca se vuelve a multiplicar por
+        # la escala, y (b) el offset con mo=True del goal se queda horneado en
+        # unidades sin escalar. Las dos cosas revientan la pierna al escalar.
+        soft_parent = (cmds.listRelatives(ik_hdl, parent=True) or [None])[0]
+
         soft_goal_node = cmds.group(empty=True, name=f"{self.prefix}_softGoal_TRN")
         cmds.matchTransform(soft_goal_node, ik_hdl, pos=True, rot=True)
+        self._parent_into_rig(soft_goal_node, soft_parent)
         cmds.parentConstraint(goal_ctrl, soft_goal_node, mo=True)
 
         # Asegurar que el atributo Soft existe, si no, lo creamos
@@ -210,7 +241,8 @@ class SoftIkModule(object):
         softTransform_node = cmds.group(empty=True, name=f"{self.prefix}_softTransform_TRN")
         cmds.parent(softTransform_node, softOffset_node)
         cmds.matchTransform(softOffset_node, root_jnt, pos=True, rot=True)
-        
+        self._parent_into_rig(softOffset_node, soft_parent)
+
         cmds.pointConstraint(root_ctrl, softOffset_node, mo=False)
         
         # El aim va al soft_goal_node: asi el softTransform viaja sobre la

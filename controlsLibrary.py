@@ -4,8 +4,8 @@ from functools import partial
 import os
 import json
 
-# --- CONFIGURACIÓN DE PATHS ---
-BASE_PATH = r"C:\Users\Usuario\Documents\GitHub\La-monja-gitana-autorig03"
+# --- CONFIGURACION DE PATHS ---
+BASE_PATH = r"C:\Users\a.cano\Documents\GitHub\La-monja-gitana-autorig"
 CONTROLS_DIR = os.path.join(BASE_PATH, "control_library")
 
 # Asegurar que la carpeta existe
@@ -35,7 +35,7 @@ def get_curve_data(shape):
 def build_curve(data, name):
     return cmds.curve(n=name, d=data["degree"], p=data["cvs"], k=data["knots"])
 
-# --- LÓGICA DE GUARDADO ---
+# --- LOGICA DE GUARDADO ---
 
 def save_control(*args):
     sel = cmds.ls(sl=True, type="transform")
@@ -64,7 +64,7 @@ def save_control(*args):
 
     shapes = cmds.listRelatives(sel[0], s=True, type="nurbsCurve", fullPath=True)
     if not shapes:
-        cmds.warning("La selección no tiene shapes de curva")
+        cmds.warning("La seleccion no tiene shapes de curva")
         return
 
     shapes_data = [get_curve_data(s) for s in shapes]
@@ -74,13 +74,13 @@ def save_control(*args):
         "shapes": shapes_data
     }
 
-    # Escritura explícita en UTF-8
+    # Escritura explicita en UTF-8
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(control_data, f, indent=4, ensure_ascii=False)
     
-    print(f"ÉXITO: Control guardado en {file_path}")
+    print(f"EXITO: Control guardado en {file_path}")
 
-# --- LÓGICA DE IMPORTACIÓN ---
+# --- LOGICA DE IMPORTACION ---
 
 def load_json_file(list_ui, *args):
     selected_items = cmds.textScrollList(list_ui, q=True, si=True)
@@ -90,7 +90,7 @@ def load_json_file(list_ui, *args):
 
     full_path = os.path.join(CONTROLS_DIR, selected_items[0])
     
-    # Lectura explícita en UTF-8
+    # Lectura explicita en UTF-8
     with open(full_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -115,7 +115,7 @@ def load_json_file(list_ui, *args):
     if cmds.window("ImportSelectorWin", exists=True):
         cmds.deleteUI("ImportSelectorWin")
         
-    print(f"ÉXITO: Control '{final_name}' importado.")
+    print(f"EXITO: Control '{final_name}' importado.")
 
 def show_import_selector(*args):
     if not os.path.exists(CONTROLS_DIR):
@@ -124,14 +124,14 @@ def show_import_selector(*args):
     all_files = [f for f in os.listdir(CONTROLS_DIR) if f.endswith('.json')]
     
     if not all_files:
-        cmds.warning("No se encontraron archivos JSON en la librería.")
+        cmds.warning("No se encontraron archivos JSON en la libreria.")
         return
 
     win = "ImportSelectorWin"
     if cmds.window(win, exists=True):
         cmds.deleteUI(win)
 
-    cmds.window(win, title="Librería de Controles", w=250, h=350, s=True)
+    cmds.window(win, title="Libreria de Controles", w=250, h=350, s=True)
     cmds.columnLayout(adj=True, m=10)
     
     cmds.text(l="Archivos disponibles:", al="left", h=25)
@@ -156,7 +156,7 @@ def ControladorUI():
     cmds.text(l="LIBRARY MANAGER", fn="boldLabelFont", h=20)
     
     cmds.button(l="GUARDAR CONTROL (JSON)", h=40, bgc=(0.5, 0.35, 0.35), c=save_control)
-    cmds.button(l="ABRIR LIBRERÍA", h=40, bgc=(0.35, 0.45, 0.55), c=show_import_selector)
+    cmds.button(l="ABRIR LIBRERIA", h=40, bgc=(0.35, 0.45, 0.55), c=show_import_selector)
     
     cmds.separator(h=5, style="none")
     cmds.showWindow(win)
@@ -166,15 +166,15 @@ if __name__ == "__main__":
     
 def create_control_from_lib(lib_name, final_name):
     """
-    Crea un controlador desde la librería sin usar la UI.
+    Crea un controlador desde la libreria sin usar la UI.
     :param lib_name: Nombre del archivo JSON (sin .json)
-    :param final_name: Nombre que tendrá el control en Maya
+    :param final_name: Nombre que tendra el control en Maya
     :return: str con el nombre del transform creado
     """
     file_path = os.path.join(CONTROLS_DIR, f"{lib_name}.json")
     
     if not os.path.exists(file_path):
-        cmds.warning(f"No se encontró el control {lib_name} en la librería. Usando círculo por defecto.")
+        cmds.warning(f"No se encontro el control {lib_name} en la libreria. Usando circulo por defecto.")
         return cmds.circle(n=final_name, nr=(0, 1, 0))[0]
 
     with open(file_path, "r", encoding="utf-8") as f:
@@ -195,4 +195,3 @@ def create_control_from_lib(lib_name, final_name):
     
     return cmds.rename(main_ctrl, final_name)
     #xd
-    

@@ -28,6 +28,14 @@ class EyesModule(object):
         ("Low03FollowLow", "Low 03 Follow Low"),
     ]
 
+    # Atributos extra de los controles centrales de los parpados:
+    # (nombre_largo, nombre_visible, valor_por_defecto). Todos van de -1 a 1.
+    BLINK_ATTRIBUTES = [
+        ("upperBlink", "Upper Blink", 0.0),
+        ("lowerBlink", "Lower Blink", 0.0),
+        ("blinkHeight", "Blink Height", 0.2),
+    ]
+
     def __init__(self, 
                  eye_mid="eye_mid",
                  eye_inner_corner="eye_inner_corner",
@@ -63,7 +71,9 @@ class EyesModule(object):
         self.group_maker = ControlsGroups()
         self.rig_name = rig_name
         self.root_instance = root_instance
-        self.styles = {"mainFk": "circleControl"}
+        self.styles = {"mainFk": "circleControl",
+                       "eyelid":"eyelid",
+                       "eyelidSub": "eyelidSub",}
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
@@ -408,7 +418,7 @@ class EyesModule(object):
 
         if not cmds.objExists(ctrl_name):
             ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["eyelid"],
                 final_name=ctrl_name
             )
             ctrl_grp = self.group_maker.create_rig_hierarchy(
@@ -663,6 +673,66 @@ class EyesModule(object):
 
         return skin_cluster
 
+    def _clean_old_blink_attributes(self):
+        """
+        Quita el separador y los atributos de blink de los controles de
+        eyelid_up / eyelid_low, donde se creaban en builds anteriores.
+        Solo borra los atributos de BLINK_ATTRIBUTES y el separador: nada mas.
+        """
+        old_controls = [
+            self.eye_controls.get(self.eyelid_up),
+            self.eye_controls.get(self.eyelid_low),
+        ]
+
+        attr_names = ["extraAttrSep"] + [name for name, _, _ in self.BLINK_ATTRIBUTES]
+
+        for old_ctrl in old_controls:
+            if not old_ctrl or not cmds.objExists(old_ctrl):
+                continue
+
+            for attr_name in attr_names:
+                if not cmds.attributeQuery(attr_name, node=old_ctrl, exists=True):
+                    continue
+
+                cmds.setAttr(f"{old_ctrl}.{attr_name}", lock=False)
+                cmds.deleteAttr(f"{old_ctrl}.{attr_name}")
+
+    def _add_blink_attributes(self):
+        """
+        Anade al control de eye_mid el separador de atributos extra y los tres
+        floats de blink.
+
+        Idempotente: si el atributo ya existe en el control no se vuelve a crear,
+        asi que se puede relanzar la build sin que reviente.
+        """
+        ctrl = self.eye_controls.get(self.eye_mid)
+        if not ctrl or not cmds.objExists(ctrl):
+            cmds.warning(f"[EyesModule] No existe el control de {self.eye_mid}, "
+                         "no se anaden los atributos de blink.")
+            return None
+
+        # Los atributos vivian en los parpados: se limpian de ahi antes de nada.
+        self._clean_old_blink_attributes()
+
+        if not cmds.attributeQuery("extraAttrSep", node=ctrl, exists=True):
+            cmds.addAttr(ctrl, ln="extraAttrSep", nn="EXTRA_ATTR",
+                         at="enum", en="------", k=False)
+
+        # Con k=False el enum existe pero no se ve: hay que marcarlo en el
+        # Channel Box y bloquearlo para que se pinte como separador.
+        cmds.setAttr(f"{ctrl}.extraAttrSep", channelBox=True, lock=True)
+
+        for long_name, nice_name, default_value in self.BLINK_ATTRIBUTES:
+            if cmds.attributeQuery(long_name, node=ctrl, exists=True):
+                continue
+
+            cmds.addAttr(
+                ctrl, ln=long_name, nn=nice_name,
+                at="float", min=-1, max=1, dv=default_value, k=True
+            )
+
+        return ctrl
+
     def _build_settings_group(self):
         """
         Crea el grupo de settings del modulo, con los atributos de follow de los
@@ -772,7 +842,7 @@ class EyesModule(object):
             ctrl_name = f"{self.prefix}_{guide}_CTRL"
             if not cmds.objExists(ctrl_name):
                 ctrl = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
+                    lib_name=self.styles["eyelid"],
                     final_name=ctrl_name
                 )
 
@@ -815,7 +885,7 @@ class EyesModule(object):
             sub_ctrl_name = f"{self.prefix}_{guide}Sub_CTRL"
             if not cmds.objExists(sub_ctrl_name):
                 sub_ctrl = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
+                    lib_name=self.styles["eyelidSub"],
                     final_name=sub_ctrl_name
                 )
 
@@ -844,6 +914,12 @@ class EyesModule(object):
             self.eye_sub_control_groups[guide] = sub_ctrl_grp
             self.eye_sub_local_offs[guide] = sub_local_off
             self.eye_sub_local_trns[guide] = sub_local_trn
+
+        # =========================================================
+        # ATRIBUTOS EXTRA DE BLINK EN EL CONTROL DEL OJO
+        # Separador + upperBlink / lowerBlink / blinkHeight en el control de eye_mid.
+        # =========================================================
+        self._add_blink_attributes()
 
         # =========================================================
         # CONTROL DE EYE_DIRECT + AIM DEL OJO

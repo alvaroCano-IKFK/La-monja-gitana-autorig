@@ -876,13 +876,7 @@ class JawModule(object):
                 final_name=f"{self.prefix}_jawUpper_CTRL"
             )
         
-        cmds.addAttr(jaw_upper_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
-        cmds.setAttr(f"{jaw_upper_ctrl}.extraAttrSep", cb=True)  
-        cmds.setAttr(f"{jaw_upper_ctrl}.extraAttrSep", l=True)
-        
-        cmds.addAttr(jaw_upper_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
-        cmds.addAttr(jaw_upper_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
-        cmds.addAttr(jaw_upper_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
+
 
         
         
@@ -919,6 +913,13 @@ class JawModule(object):
             jaw_lower_ctrl, self.jaw_root, match_rotation=True, world_space=True
         )
 
+        cmds.addAttr(jaw_lower_ctrl, ln = "extraAttrSep",nn = "EXTRA_ATTR",at = "enum",en = "------" ,k=False)
+        cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", cb=True)  
+        cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", l=True)
+        
+        cmds.addAttr(jaw_lower_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
+        cmds.addAttr(jaw_lower_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
+        cmds.addAttr(jaw_lower_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0)
         #LOWER CONTROL OFFSET
         self._offset_control_shape(jaw_lower_ctrl, move=(0, -2, 10))
         
@@ -975,7 +976,7 @@ class JawModule(object):
         cmds.setAttr(f"{floatMath02_node}.operation", 1) #Subtract
         
         cmds.connectAttr(f"{clamp_node}.outputR", f"{floatMath02_node}.floatA")
-        cmds.connectAttr(f"{jaw_upper_ctrl}.collision", f"{floatMath02_node}.floatB")
+        cmds.connectAttr(f"{jaw_lower_ctrl}.collision", f"{floatMath02_node}.floatB")
 
         # El resultado entra en el SDK del upper.
         # create_rig_hierarchy monta GRP > SPC > OFF > SDK > ANIM pero solo

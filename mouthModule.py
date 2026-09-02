@@ -26,7 +26,10 @@ class MouthModule(object):
         self.group_maker = ControlsGroups()
         self.rig_name = rig_name
         self.root_instance = root_instance
-        self.styles = {"mainFk": "circleControl"}
+        self.styles = {"mainFk": "circleControl",
+                       "mouthUpper":"mouthUpper",
+                       "mouthLower": "mouthLower",
+                       "mouthSquare":"mouthSquare"}
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
@@ -814,7 +817,7 @@ class MouthModule(object):
         center_name = f"C_{self.rig_name}_mid_LIP_CTRL"
         if not cmds.objExists(center_name):
             mid_lip = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["mouthSquare"],
                 final_name=f"{self.prefix}_mid_LIP_CTRL"
             )
             mid_lip = cmds.rename(mid_lip, center_name)
@@ -859,7 +862,7 @@ class MouthModule(object):
         upper_lip_name = f"C_{self.rig_name}_lipUpper_GRP"
         if not cmds.objExists(upper_lip_name):
             mid_lipUpper = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
+                    lib_name=self.styles["mouthUpper"],
                     final_name=f"C_{self.rig_name}_mid_lipUpper_CTRL"
             )
             mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
@@ -883,7 +886,7 @@ class MouthModule(object):
         lower_lip_name = f"C_{self.rig_name}_lipLower_GRP"
         if not cmds.objExists(lower_lip_name):
             mid_lipLower = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mainFk"],
+                    lib_name=self.styles["mouthLower"],
                     final_name=f"C_{self.rig_name}_mid_lipLower_CTRL"
             )
 
@@ -1006,7 +1009,7 @@ class MouthModule(object):
         levator_name = f"{self.prefix}_levator_CTRL"
         if not cmds.objExists(levator_name):
             levator_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["mouthUpper"],
                 final_name=levator_name
             )
             
@@ -1020,7 +1023,7 @@ class MouthModule(object):
         depresor_name = f"{self.prefix}_depresor_CTRL"
         if not cmds.objExists(depresor_name):
             depresor_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["mouthLower"],
                 final_name=depresor_name
             )
             
@@ -1029,7 +1032,7 @@ class MouthModule(object):
             )
             depresor_negative = cmds.group(depresor_ctrl_grp, n=f"{self.prefix}_depresor_negative_GRP")
             cmds.setAttr(f"{self.prefix}_depresor_negative_GRP.scaleY", -1)
-            cmds.parent(depresor_ctrl_grp, depresor_negative)
+            #cmds.parent(depresor_ctrl_grp, depresor_negative)
         else:
             depresor_ctrl = depresor_name
             depresor_ctrl_grp = cmds.listRelatives(depresor_ctrl, parent=True)[0]
@@ -1096,7 +1099,7 @@ class MouthModule(object):
         upperPinch_name = f"{self.prefix}_upperPinch_CTRL"
         if not cmds.objExists(upperPinch_name):
             upperPinch_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["mouthUpper"],
                 final_name=upperPinch_name
             )
 
@@ -1110,7 +1113,7 @@ class MouthModule(object):
         lowerPinch_name = f"{self.prefix}_lowerPinch_CTRL"
         if not cmds.objExists(lowerPinch_name):
             lowerPinch_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["mouthLower"],
                 final_name=lowerPinch_name
             )
 
@@ -1119,7 +1122,7 @@ class MouthModule(object):
             )
             lowerPinch_negative = cmds.group(lowerPinch_ctrl_grp, n=f"{self.prefix}_lowerPinch_negative_GRP")
             cmds.setAttr(f"{self.prefix}_lowerPinch_negative_GRP.scaleY", -1)
-            cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
+            #cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
         else:
             lowerPinch_ctrl = lowerPinch_name
             lowerPinch_ctrl_grp = cmds.listRelatives(lowerPinch_ctrl, parent=True)[0]
@@ -1283,7 +1286,7 @@ class MouthModule(object):
         lowerSkinning = None
 
         if cmds.objExists(upper_curve_name):
-            existing_upper_skin = cmds.listConnections(upper_curve_name, type="skinCluster")
+            existing_upper_skin = cmds.ls(cmds.listHistory(upper_curve_name) or [], type="skinCluster")
             if not existing_upper_skin:
                 upperSkinning = cmds.skinCluster(
                     freeze_joint, upper_joint, upper_curve_name,
@@ -1310,7 +1313,7 @@ class MouthModule(object):
         self._connect_joint_lock_weights(upper_joint, upperSkinning)
 
         if cmds.objExists(lower_curve_name):
-            existing_lower_skin = cmds.listConnections(lower_curve_name, type="skinCluster")
+            existing_lower_skin = cmds.ls(cmds.listHistory(lower_curve_name) or [], type="skinCluster")
             if not existing_lower_skin:
                 lowerSkinning = cmds.skinCluster(
                     freeze_joint, lower_joint, lower_curve_name,
@@ -1358,16 +1361,25 @@ class MouthModule(object):
         lowerPinchSkinning = None
 
         if cmds.objExists(levator_curve_name) and cmds.objExists(L_levator_joint) and cmds.objExists(R_levator_joint):
-            existing_levator_skin = cmds.listConnections(levator_curve_name, type="skinCluster")
+            existing_levator_skin = cmds.ls(cmds.listHistory(levator_curve_name) or [], type="skinCluster")
             if not existing_levator_skin:
                 levatorSkinning = cmds.skinCluster(
                     freeze_joint, L_levator_joint, R_levator_joint, levator_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
+                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
+                # no le toca a ningun lado; sin esta linea se queda con el peso
+                # automatico del bind y un joint de un lado se lo lleva entero.
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_levator_joint, 0.5)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_levator_joint, 0.5)])
+                # Los cv de las otras curvas de la cadena: tambien solo freeze,
+                # asi heredan su deformacion sin anadir nada encima.
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[1]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[5]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv que si conduce esta curva, uno por lado.
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[2]", transformValue=[(freeze_joint, 0.5), (L_levator_joint, 0.5)])
+                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[4]", transformValue=[(freeze_joint, 0.5), (R_levator_joint, 0.5)])
             else:
                 levatorSkinning = existing_levator_skin[0]
 
@@ -1378,16 +1390,25 @@ class MouthModule(object):
         self._connect_joint_lock_weights(R_levator_joint, levatorSkinning)
 
         if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
-            existing_depresor_skin = cmds.listConnections(depresor_curve_name, type="skinCluster")
+            existing_depresor_skin = cmds.ls(cmds.listHistory(depresor_curve_name) or [], type="skinCluster")
             if not existing_depresor_skin:
                 depresorSkinning = cmds.skinCluster(
                     freeze_joint, L_depresor_joint, R_depresor_joint, depresor_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
+                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
+                # no le toca a ningun lado; sin esta linea se queda con el peso
+                # automatico del bind y un joint de un lado se lo lleva entero.
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_depresor_joint, 0.5)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
+                # Los cv de las otras curvas de la cadena: tambien solo freeze,
+                # asi heredan su deformacion sin anadir nada encima.
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[1]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv que si conduce esta curva, uno por lado.
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[2]", transformValue=[(freeze_joint, 0.5), (L_depresor_joint, 0.5)])
+                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[4]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
             else:
                 depresorSkinning = existing_depresor_skin[0]
 
@@ -1398,14 +1419,23 @@ class MouthModule(object):
         self._connect_joint_lock_weights(R_depresor_joint, depresorSkinning)
 
         if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
-            existing_upperPinch_skin = cmds.listConnections(upperPinch_curve_name, type="skinCluster")
+            existing_upperPinch_skin = cmds.ls(cmds.listHistory(upperPinch_curve_name) or [], type="skinCluster")
             if not existing_upperPinch_skin:
                 upperPinchSkinning = cmds.skinCluster(
                     freeze_joint, L_upperPinch_joint, R_upperPinch_joint, upperPinch_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
+                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
+                # no le toca a ningun lado; sin esta linea se queda con el peso
+                # automatico del bind y un joint de un lado se lo lleva entero.
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv de las otras curvas de la cadena: tambien solo freeze,
+                # asi heredan su deformacion sin anadir nada encima.
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[2]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[4]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv que si conduce esta curva, uno por lado.
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_upperPinch_joint, 0.5)])
                 cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_upperPinch_joint, 0.5)])
             else:
@@ -1418,14 +1448,23 @@ class MouthModule(object):
         self._connect_joint_lock_weights(R_upperPinch_joint, upperPinchSkinning)
 
         if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
-            existing_lowerPinch_skin = cmds.listConnections(lowerPinch_curve_name, type="skinCluster")
+            existing_lowerPinch_skin = cmds.ls(cmds.listHistory(lowerPinch_curve_name) or [], type="skinCluster")
             if not existing_lowerPinch_skin:
                 lowerPinchSkinning = cmds.skinCluster(
                     freeze_joint, L_lowerPinch_joint, R_lowerPinch_joint, lowerPinch_curve_name,
                     tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
                 )[0]
+                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
+                # no le toca a ningun lado; sin esta linea se queda con el peso
+                # automatico del bind y un joint de un lado se lo lleva entero.
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv de las otras curvas de la cadena: tambien solo freeze,
+                # asi heredan su deformacion sin anadir nada encima.
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[2]", transformValue=[(freeze_joint, 1.0)])
+                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[4]", transformValue=[(freeze_joint, 1.0)])
+                # Los cv que si conduce esta curva, uno por lado.
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_lowerPinch_joint, 0.5)])
                 cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_lowerPinch_joint, 0.5)])
             else:

@@ -116,6 +116,15 @@ class EyesModule(object):
         self.upper_skin_cluster = None
         self.lower_skin_cluster = None
 
+        # Sistema de blink
+        self.blink_height_curve = None
+        self.upper_blinked_curve = None
+        self.lower_blinked_curve = None
+        self.upper_negate_curve = None
+        self.lower_negate_curve = None
+        self.blink_blend_shapes = {}
+        self.blink_curves_group = None
+
         # Controles y setup local
         self.eye_controls = {}
         self.eye_control_groups = {}
@@ -805,6 +814,200 @@ class EyesModule(object):
 
         return settings_group
 
+    # ------------------------------------------------------------------
+    # SISTEMA DE BLINK
+    # ------------------------------------------------------------------
+    def _duplicate_eyelid_curve(self, source_curve, name):
+        """
+        Duplica una curva de parpado y la deja suelta en la raiz de la escena.
+
+        cmds.duplicate copia la forma actual sin arrastrar el skinCluster, que
+        es justo lo que hace falta para un target de blendShape.
+        """
+        if cmds.objExists(name):
+            cmds.delete(name)
+
+        duplicated = cmds.duplicate(source_curve, n=name)[0]
+
+        if cmds.listRelatives(duplicated, parent=True):
+            cmds.parent(duplicated, world=True)
+
+        return duplicated
+
+    def _build_blink_curves(self):
+        """
+        Crea las cinco curvas del sistema de blink a partir de las dos lineas
+        de parpado ya construidas y skinneadas.
+
+        Las dos NegateBlink nacen como copias exactas de su original: son la
+        pose de apertura y hay que esculpirlas a mano. Mientras no se toquen,
+        su peso no cambia nada.
+        """
+        upper, lower = self.upper_curve, self.lower_curve
+
+        if not upper or not cmds.objExists(upper) or not lower or not cmds.objExists(lower):
+            cmds.warning("[EyesModule] Faltan las lineas de parpado, no se crea el blink.")
+            return None
+
+        self.blink_height_curve = self._duplicate_eyelid_curve(
+            lower, f"{self.prefix}_eyelidBlinkHeight_CRV")
+        self.upper_blinked_curve = self._duplicate_eyelid_curve(
+            upper, f"{self.prefix}_eyelidUpperBlinked_CRV")
+        self.lower_blinked_curve = self._duplicate_eyelid_curve(
+            lower, f"{self.prefix}_eyelidLowerBlinked_CRV")
+        self.upper_negate_curve = self._duplicate_eyelid_curve(
+            upper, f"{self.prefix}_eyelidUpperNegateBlink_CRV")
+        self.lower_negate_curve = self._duplicate_eyelid_curve(
+            lower, f"{self.prefix}_eyelidLowerNegateBlink_CRV")
+
+        return [self.blink_height_curve,
+                self.upper_blinked_curve, self.lower_blinked_curve,
+                self.upper_negate_curve, self.lower_negate_curve]
+
+    def _build_blink_blendshapes(self):
+        """
+        Monta los tres blendShape del blink. El primer nodo de cada llamada a
+        cmds.blendShape es el target de indice 0, el ultimo es la base.
+
+            BlinkHeight   <- eyelidUpperLine        (peso: blinkHeight)
+            UpperBlinked  <- UpperNegateBlink, BlinkHeight
+            LowerBlinked  <- BlinkHeight, LowerNegateBlink
+
+        La BlinkHeight es a la vez base del primero y target de los otros dos:
+        por eso el blinkHeight coloca la linea de cierre y los dos parpados la
+        siguen sin tener que recalcular nada.
+        """
+        blend_shapes = {}
+
+        definitions = [
+            ("blinkHeight",  f"{self.prefix}_eyelidBlinkHeight_BLS",
+             self.blink_height_curve, [self.upper_curve]),
+            ("upperBlinked", f"{self.prefix}_eyelidUpperBlinked_BLS",
+             self.upper_blinked_curve, [self.upper_negate_curve, self.blink_height_curve]),
+            ("lowerBlinked", f"{self.prefix}_eyelidLowerBlinked_BLS",
+             self.lower_blinked_curve, [self.blink_height_curve, self.lower_negate_curve]),
+        ]
+
+        for key, name, base, targets in definitions:
+            if cmds.objExists(name):
+                cmds.delete(name)
+
+            if not base or not cmds.objExists(base):
+                cmds.warning(f"[EyesModule] Falta la base {base}, no se crea {name}.")
+                continue
+            if not all(t and cmds.objExists(t) for t in targets):
+                cmds.warning(f"[EyesModule] Faltan targets para {name}.")
+                continue
+
+            blend_shapes[key] = cmds.blendShape(*targets, base, n=name)[0]
+
+        self.blink_blend_shapes = blend_shapes
+
+        return blend_shapes
+
+    def _build_blink_range_network(self, attribute, blend_shape, positive_index, negative_index, base_name):
+        """
+        Parte el rango -1..1 de un atributo de blink en dos pesos.
+
+        Un unico clamp hace las dos mitades: el canal R deja pasar solo lo
+        positivo (min 0, max 1) y el canal G solo lo negativo (min -1, max 0).
+        Lo negativo sale con signo, asi que un floatMath lo multiplica por -1
+        antes de entrar en el peso, que no admite valores por debajo de cero.
+        """
+        clamp_name = f"{self.prefix}_{base_name}BlinkRanges_CLM"
+        negate_name = f"{self.prefix}_{base_name}BlinkNegate_FLM"
+
+        for name in (clamp_name, negate_name):
+            if cmds.objExists(name):
+                cmds.delete(name)
+
+        clamp = cmds.createNode("clamp", n=clamp_name)
+        cmds.setAttr(f"{clamp}.minR", 0)
+        cmds.setAttr(f"{clamp}.maxR", 1)
+        cmds.setAttr(f"{clamp}.minG", -1)
+        cmds.setAttr(f"{clamp}.maxG", 0)
+
+        cmds.connectAttr(attribute, f"{clamp}.inputR", force=True)
+        cmds.connectAttr(attribute, f"{clamp}.inputG", force=True)
+
+        negate = cmds.createNode("floatMath", n=negate_name)
+        cmds.setAttr(f"{negate}.operation", 2)   # Multiply
+        cmds.setAttr(f"{negate}.floatA", -1)
+        cmds.connectAttr(f"{clamp}.outputG", f"{negate}.floatB", force=True)
+
+        cmds.connectAttr(f"{clamp}.outputR",
+                         f"{blend_shape}.weight[{positive_index}]", force=True)
+        cmds.connectAttr(f"{negate}.outFloat",
+                         f"{blend_shape}.weight[{negative_index}]", force=True)
+
+        return clamp, negate
+
+    def _connect_blink_attributes(self):
+        """
+        Engancha los atributos del control de eye_mid a los pesos.
+
+        blinkHeight va directo al unico peso del primer blendShape; upperBlink
+        y lowerBlink pasan por su clamp para repartirse entre el target de
+        cierre (BlinkHeight) y el de apertura (NegateBlink).
+        """
+        ctrl = self.eye_controls.get(self.eye_mid)
+        if not ctrl or not cmds.objExists(ctrl):
+            cmds.warning("[EyesModule] No existe el control de eye_mid, el blink queda sin conectar.")
+            return None
+
+        blend_shapes = self.blink_blend_shapes or {}
+
+        height_bls = blend_shapes.get("blinkHeight")
+        if height_bls:
+            cmds.connectAttr(f"{ctrl}.blinkHeight",
+                             f"{height_bls}.weight[0]", force=True)
+
+        # En UpperBlinked el target 0 es la apertura y el 1 el cierre;
+        # en LowerBlinked es al reves, igual que en la escena de referencia.
+        upper_bls = blend_shapes.get("upperBlinked")
+        if upper_bls:
+            self._build_blink_range_network(
+                attribute=f"{ctrl}.upperBlink", blend_shape=upper_bls,
+                positive_index=1, negative_index=0, base_name="eyelidUpper")
+
+        lower_bls = blend_shapes.get("lowerBlinked")
+        if lower_bls:
+            self._build_blink_range_network(
+                attribute=f"{ctrl}.lowerBlink", blend_shape=lower_bls,
+                positive_index=0, negative_index=1, base_name="eyelidLower")
+
+        return ctrl
+
+    def _build_blink_system(self):
+        """
+        Curvas, blendShapes y red de drivers del blink, en ese orden.
+        Se reconstruye entero en cada build porque _build_eyelid_curves borra y
+        recrea las lineas originales, y con ellas mueren sus deformadores.
+        """
+        if not self._build_blink_curves():
+            return None
+
+        self._build_blink_blendshapes()
+        self._connect_blink_attributes()
+
+        group_name = f"{self.prefix}_eyelidBlinkCurves_GRP"
+        if cmds.objExists(group_name):
+            cmds.delete(group_name)
+
+        curves = [self.blink_height_curve,
+                  self.upper_blinked_curve, self.lower_blinked_curve,
+                  self.upper_negate_curve, self.lower_negate_curve]
+        curves = [c for c in curves if c and cmds.objExists(c)]
+
+        self.blink_curves_group = cmds.group(curves, n=group_name)
+
+        if self.rig_module_group and cmds.objExists(self.rig_module_group):
+            cmds.parent(self.blink_curves_group, self.rig_module_group)
+
+        cmds.select(clear=True)
+
+        return self.blink_curves_group
+
     def _group_rig_module(self):
         """
         Mete todo el setup local (OFF, TRN y sus joints) bajo un unico grupo del
@@ -1021,6 +1224,13 @@ class EyesModule(object):
         # Todo el setup local (OFF/TRN y sus joints) mas el grupo de settings.
         # =========================================================
         self._group_rig_module()
+
+        # =========================================================
+        # SISTEMA DE BLINK
+        # Va al final: necesita las lineas ya skinneadas, el control de
+        # eye_mid con sus atributos y el grupo del modulo ya creado.
+        # =========================================================
+        self._build_blink_system()
 
         cmds.select(clear=True)
 

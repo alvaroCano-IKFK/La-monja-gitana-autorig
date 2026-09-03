@@ -1,3 +1,5 @@
+import math
+
 import maya.cmds as cmds    
 import guides_module
 import controlsLibrary
@@ -35,6 +37,11 @@ class EyesModule(object):
         ("lowerBlink", "Lower Blink", 0.0),
         ("blinkHeight", "Blink Height", 0.2),
     ]
+
+    # Cuanto se separan las curvas NegateBlink de su original, como fraccion del
+    # radio del parpado. Es la pose de apertura de partida: 0.0 las deja como
+    # copias exactas (peso sin efecto) y valores mayores abren mas el ojo.
+    NEGATE_OFFSET = 0.25
 
     def __init__(self, 
                  eye_mid="eye_mid",
@@ -823,6 +830,12 @@ class EyesModule(object):
 
         cmds.duplicate copia la forma actual sin arrastrar el skinCluster, que
         es justo lo que hace falta para un target de blendShape.
+
+        Lo que si arrastra es la shape intermedia (la Orig del skinCluster de la
+        linea de origen), que llega muerta y con el nombre de la copia. Se borra
+        aqui: si no, luego hay dos shapes con nombre parecido colgando de la
+        misma curva y tanto getAttr como el que busca la Orig del blendShape se
+        lian.
         """
         if cmds.objExists(name):
             cmds.delete(name)
@@ -831,6 +844,14 @@ class EyesModule(object):
 
         if cmds.listRelatives(duplicated, parent=True):
             cmds.parent(duplicated, world=True)
+
+        leftovers = [
+            shape
+            for shape in cmds.listRelatives(duplicated, shapes=True, fullPath=True) or []
+            if cmds.getAttr(f"{shape}.intermediateObject")
+        ]
+        if leftovers:
+            cmds.delete(leftovers)
 
         return duplicated
 
@@ -863,6 +884,168 @@ class EyesModule(object):
         return [self.blink_height_curve,
                 self.upper_blinked_curve, self.lower_blinked_curve,
                 self.upper_negate_curve, self.lower_negate_curve]
+
+    def _get_deformed_shape(self, transform):
+        """
+        Shape visible (la que no es intermediateObject) de un transform.
+
+        Devuelve el nombre largo: con nombre corto, si en la escena hay otro
+        nodo que se llame igual, cmds.getAttr devuelve una lista con el valor de
+        todos los que coinciden en vez de un unico valor.
+        """
+        if not transform or not cmds.objExists(transform):
+            return None
+
+        shapes = cmds.listRelatives(
+            transform, shapes=True, noIntermediate=True, fullPath=True) or []
+
+        return shapes[0] if shapes else None
+
+    def _get_original_shape(self, transform):
+        """
+        Shape Orig (intermediateObject) que alimenta a los deformadores del
+        transform. Solo existe si la curva ya tiene un deformador encima, asi
+        que esto se llama despues de crear los blendShape.
+        """
+        shape = self._get_deformed_shape(transform)
+        if not shape:
+            return None
+
+        plugs = cmds.deformableShape(shape, originalGeometry=True) or []
+        if plugs and plugs[0]:
+            return plugs[0].split(".")[0]
+
+        # Por si deformableShape no devuelve nada: primer intermediate del transform
+        for candidate in cmds.listRelatives(transform, shapes=True, fullPath=True) or []:
+            if cmds.getAttr(f"{candidate}.intermediateObject"):
+                return candidate
+
+        return None
+
+    def _connect_live_blink_bases(self):
+        """
+        Conecta el worldSpace de las lineas de parpado skinneadas al .create de
+        la Orig de cada curva del blink.
+
+            eyelidLowerLine -> BlinkHeight_CRVShapeOrig.create
+            eyelidUpperLine -> UpperBlinked_CRVShapeOrig.create
+            eyelidLowerLine -> LowerBlinked_CRVShapeOrig.create
+
+        Sin estas conexiones la base de cada blendShape es la copia congelada
+        del momento de la build: al mover un control la linea original se
+        deforma pero las curvas del blink se quedan clavadas donde estaban.
+        Con la conexion la base es la propia linea deformada, asi que todas las
+        curvas siguen a los controles y el blink se aplica encima: las Blinked
+        cierran hacia donde este la BlinkHeight en ese momento, no hacia una
+        posicion fija.
+
+        La cadena queda encadenada sola: la BlinkHeight tiene base viva y su
+        propia salida es target de las dos Blinked, que tambien tienen base
+        viva.
+        """
+        pairs = [
+            (self.lower_curve, self.blink_height_curve),
+            (self.upper_curve, self.upper_blinked_curve),
+            (self.lower_curve, self.lower_blinked_curve),
+        ]
+
+        connected = []
+
+        for source_curve, target_curve in pairs:
+            source_shape = self._get_deformed_shape(source_curve)
+            orig_shape = self._get_original_shape(target_curve)
+
+            if not source_shape or not orig_shape:
+                cmds.warning(
+                    f"[EyesModule] No se puede conectar la base viva de {target_curve}.")
+                continue
+
+            cmds.connectAttr(f"{source_shape}.worldSpace[0]",
+                             f"{orig_shape}.create", force=True)
+            connected.append(orig_shape)
+
+        return connected
+
+    def _offset_negate_curves(self, factor=None):
+        """
+        Separa las dos curvas NegateBlink de su original empujando sus CVs hacia
+        fuera del centro del ojo, para que su arco quede mas largo que el del
+        resto de curvas.
+
+        Son los targets de apertura: al abrir mas el ojo el parpado se aleja del
+        globo ocular y su arco se alarga, pero las dos esquinas se quedan
+        clavadas. Por eso cv[0] y el ultimo no se tocan y el empuje lleva un
+        falloff que es maximo en el centro del parpado.
+
+        Recien duplicadas son copias exactas de su original y su peso no hace
+        nada. Esto deja una pose de apertura de partida ya utilizable, que sigue
+        siendo esculpible CV a CV despues.
+        """
+        factor = self.NEGATE_OFFSET if factor is None else factor
+
+        if not factor:
+            return []
+
+        center_joint = f"{self.prefix}_{self.eye_mid}_JNT"
+        if not cmds.objExists(center_joint):
+            cmds.warning("[EyesModule] Sin joint de eye_mid no se offsetean las NegateBlink.")
+            return None
+
+        center = cmds.xform(center_joint, q=True, ws=True, t=True)
+
+        offset_curves = []
+
+        for curve in (self.upper_negate_curve, self.lower_negate_curve):
+            if not curve or not cmds.objExists(curve):
+                continue
+
+            shape = self._get_deformed_shape(curve)
+            if not shape:
+                cmds.warning(f"[EyesModule] {curve} no tiene shape, no se offsetea.")
+                continue
+
+            # Los CVs se cuentan listandolos, no con spans + degree: asi no
+            # depende de que getAttr resuelva bien el nombre de la shape.
+            cvs = cmds.ls(f"{shape}.cv[*]", flatten=True) or []
+            cv_count = len(cvs)
+            if cv_count < 3:
+                continue
+
+            last_index = cv_count - 1
+
+            positions = [cmds.pointPosition(cv, world=True) for cv in cvs]
+
+            # Radio de referencia: distancia media de la curva al centro del ojo,
+            # para que el offset escale con el tamano del personaje.
+            distances = [
+                math.sqrt(sum((p - c) ** 2 for p, c in zip(position, center)))
+                for position in positions
+            ]
+            radius = sum(distances) / len(distances)
+
+            for index in range(1, last_index):
+                position = positions[index]
+
+                direction = [p - c for p, c in zip(position, center)]
+                length = math.sqrt(sum(v ** 2 for v in direction))
+                if length < 1e-6:
+                    continue
+                direction = [v / length for v in direction]
+
+                # 0 en las esquinas, 1 en el centro del parpado
+                falloff = math.sin(math.pi * index / float(last_index))
+                amount = radius * factor * falloff
+
+                cmds.xform(
+                    cvs[index], worldSpace=True,
+                    translation=[p + d * amount for p, d in zip(position, direction)]
+                )
+
+            offset_curves.append(curve)
+
+        cmds.select(clear=True)
+
+        return offset_curves
 
     def _build_blink_blendshapes(self):
         """
@@ -987,7 +1170,16 @@ class EyesModule(object):
         if not self._build_blink_curves():
             return None
 
+        # El offset de las NegateBlink va antes de los blendShape: asi la pose
+        # de apertura ya esta puesta cuando se calculan los primeros deltas.
+        self._offset_negate_curves()
+
         self._build_blink_blendshapes()
+
+        # Despues de los blendShape, que son los que crean las Orig que hay que
+        # conectar, y antes de los drivers.
+        self._connect_live_blink_bases()
+
         self._connect_blink_attributes()
 
         group_name = f"{self.prefix}_eyelidBlinkCurves_GRP"

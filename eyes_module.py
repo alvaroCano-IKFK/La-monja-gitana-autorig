@@ -57,11 +57,15 @@ class EyesModule(object):
     # distancia. Solo define hasta donde llega la rampa antes de clampear.
     LOOP_RADIUS_RANGE = 0.5
 
-    # Atributo de fleshy en el control de eye_mid: (nombre, nice name, defecto)
-    FLESHY_ATTRIBUTE = ("fleshy", "Fleshy", 0.2)
+    # Atenuadores de cada setup de fleshy. Van al input2 del multDoubleLinear
+    # que alimenta al blender, asi que el atributo del control sigue yendo de 0 a
+    # 1 pero lo que llega de verdad es solo esta fraccion. Las esquinas estan
+    # mucho mas ancladas que el centro del parpado, por eso van bajas.
+    FLESHY_LIDS_MULT = 1.0
+    FLESHY_CORNERS_MULT = 0.35
 
     # Si el fleshy tiene que llegar tambien al setup local que conduce los joints.
-    # Ver _build_fleshy_local para el porque.
+    # Ver _build_fleshy_setup para el porque.
     FLESHY_DRIVE_LOCAL = True
 
     def __init__(self, 
@@ -118,22 +122,32 @@ class EyesModule(object):
             self.eyelid_low,
         ]
 
-        # Controles que se cuelgan del grupo de fleshy: los cuatro principales
-        # del parpado. Los intermedios (02 y 03) no hace falta tocarlos, porque
-        # ya van constrainidos a estos y les siguen solos.
-        self.fleshy_guides = [
-            self.eyelid_up,
-            self.eyelid_low,
-            self.eye_inner_corner,
-            self.eye_outer_corner,
+        # Setups de fleshy, cada uno con su atributo, su atenuador y su cadena
+        # de grupos independiente. Los parpados y las esquinas van por separado
+        # porque las esquinas se pasan de largo con el mismo valor.
+        # Los intermedios (02 y 03) no aparecen: ya van constrainidos a estos y
+        # les siguen solos.
+        self.fleshy_setups = [
+            {
+                "key": "lids",
+                "name": "eyeFleshy",
+                "attribute": "fleshy",
+                "nice_name": "Fleshy",
+                "multiplier": self.FLESHY_LIDS_MULT,
+                "guides": [self.eyelid_up, self.eyelid_low],
+            },
+            {
+                "key": "corners",
+                "name": "eyeFleshyCorners",
+                "attribute": "fleshyCorners",
+                "nice_name": "Fleshy Corners",
+                "multiplier": self.FLESHY_CORNERS_MULT,
+                "guides": [self.eye_inner_corner, self.eye_outer_corner],
+            },
         ]
 
-        self.fleshy_attribute = None
-        self.fleshy_blend = None
-        self.fleshy_off = None
-        self.fleshy_trn = None
-        self.fleshy_local_off = None
-        self.fleshy_local_trn = None
+        # key -> {blend, multiplier, attribute, off, trn, local_off, local_trn}
+        self.fleshy_nodes = {}
 
         # Guias intermedias: cada una queda entre dos guias que la conducen y
         # su reparto lo manda un atributo del grupo de settings.
@@ -866,90 +880,138 @@ class EyesModule(object):
 
         return ctrl
 
-    def _add_fleshy_attribute(self):
+    def _add_fleshy_attribute(self, setup):
         """
-        Anade el float de fleshy al control de eye_mid.
+        Anade al control de eye_mid el float de un setup de fleshy.
 
-        A 0 los parpados no se enteran de por donde mira el ojo; a 1 le siguen
-        del todo. Por eso el defecto es 0: enchufar el sistema no cambia nada
-        hasta que alguien sube el valor a mano.
+        A 0 esos controles no se enteran de por donde mira el ojo; a 1 le siguen
+        todo lo que permita su multiplicador. El defecto es 0, asi que montar el
+        sistema no cambia nada hasta que alguien lo sube a mano.
         """
         ctrl = self.eye_controls.get(self.eye_mid)
         if not ctrl or not cmds.objExists(ctrl):
             cmds.warning(f"[EyesModule] No existe el control de {self.eye_mid}, "
-                         "no se anade el atributo de fleshy.")
+                         "no se anaden los atributos de fleshy.")
             return None
 
-        long_name, nice_name, default_value = self.FLESHY_ATTRIBUTE
+        long_name = setup["attribute"]
 
         if not cmds.attributeQuery(long_name, node=ctrl, exists=True):
-            cmds.addAttr(ctrl, ln=long_name, nn=nice_name,
-                         at="float", min=0, max=1, dv=default_value, k=True)
+            cmds.addAttr(ctrl, ln=long_name, nn=setup["nice_name"],
+                         at="float", min=0, max=1, dv=0.0, k=True)
 
-        self.fleshy_attribute = f"{ctrl}.{long_name}"
+        return f"{ctrl}.{long_name}"
 
-        return self.fleshy_attribute
-
-    def _build_fleshy_blend(self):
+    def _build_fleshy_delta(self, joint):
         """
-        blendColors que mezcla entre 'quieto' y 'la rotacion del ojo'.
+        Devuelve el decomposeMatrix que da cuanto ha girado el ojo DESDE SU
+        REPOSO, expresado en el marco de ese reposo.
 
-            eye_mid_JNT.rotateY -> BLC.color1G
-            eye_mid_JNT.rotateZ -> BLC.color1B
-            ctrl.fleshy         -> BLC.blender
+            eye_mid_JNT.worldMatrix[0] -> MMX.matrixIn[0]
+            <inversa del reposo>          MMX.matrixIn[1]
+            MMX.matrixSum              -> DCM.inputMatrix
+
+        Por que hace falta esto y no vale leer joint.rotateY directamente:
+        _build_eye_joints coloca los joints con matchTransform, que escribe la
+        orientacion en rotate y deja jointOrient a cero. O sea que joint.rotate
+        en reposo NO es cero, lleva la orientacion de fabrica del ojo.
+
+        En la L eso pasa medio desapercibido porque el ojo mira casi de frente y
+        el reposo son unos pocos grados. En la R el ojo mira al otro lado y el
+        reposo esta cerca de +-180: al meter esa rotacion absoluta en el grupo,
+        el parpado entero se da la vuelta. De ahi las vueltas de la curva.
+
+        Con la delta, el valor que entra vale cero en reposo en los dos lados y
+        se queda siempre en angulos pequenos, lejos del salto de +-180 donde el
+        Euler se vuelve loco. Y el multiplicador pasa a escalar algo que
+        significa lo que dice: los grados que el ojo ha girado.
+
+        La red es una sola para los dos setups: la delta es la misma, lo unico
+        que cambia entre parpados y esquinas es cuanto se le hace caso.
+        """
+        multiply_name = f"{self.prefix}_eyeFleshyDelta_MMX"
+        decompose_name = f"{self.prefix}_eyeFleshyDelta_DCM"
+
+        for node_name in (multiply_name, decompose_name):
+            if cmds.objExists(node_name):
+                cmds.delete(node_name)
+
+        multiply = cmds.createNode("multMatrix", n=multiply_name)
+        cmds.connectAttr(f"{joint}.worldMatrix[0]", f"{multiply}.matrixIn[0]")
+
+        # Inversa del reposo, congelada como valor: el aim del ojo ya esta
+        # montado y el direct en su sitio, asi que esta es la pose de partida.
+        rest_inverse = cmds.getAttr(f"{joint}.worldInverseMatrix[0]")
+        cmds.setAttr(f"{multiply}.matrixIn[1]", *rest_inverse, type="matrix")
+
+        decompose = cmds.createNode("decomposeMatrix", n=decompose_name)
+        cmds.connectAttr(f"{multiply}.matrixSum", f"{decompose}.inputMatrix")
+
+        return decompose
+
+    def _build_fleshy_blend(self, setup, driver_attribute, delta):
+        """
+        Red que mezcla entre 'quieto' y 'lo que ha girado el ojo'.
+
+            ctrl.<atributo>   -> MDL.input1
+            <multiplicador>      MDL.input2
+            MDL.output        -> BLC.blender
+            DCM.outputRotateY -> BLC.color1G
+            DCM.outputRotateZ -> BLC.color1B
+
+        El DCM es la delta de _build_fleshy_delta, no los canales del joint: en
+        reposo vale cero en los dos lados, asi que color2 si puede ir a ceros y
+        la mezcla es directamente 'cuanto de lo girado se le pasa al parpado'.
 
         Solo entran Y y Z porque son los dos ejes por los que mira el ojo:
         arriba-abajo y lado a lado. El giro sobre su propio eje no tiene que
         arrastrar el parpado.
 
-        Los defaults del nodo no son cero, asi que hay que pisarlos: color2 es lo
-        que sale con fleshy a 0, y color1R no lo conduce nadie. Si no se ponen a
-        mano, el grupo saldria rotado de fabrica.
+        El multiplicador va en el blender y no en la salida por comodidad: el
+        atributo sigue yendo de 0 a 1 en el channel box y lo que se atenua es la
+        cantidad de delta que llega.
         """
-        joint = self.eye_joints.get(self.eye_mid)
-        if not joint or not cmds.objExists(joint):
-            cmds.warning(f"[EyesModule] No existe el joint de {self.eye_mid}, "
-                         "no se monta el fleshy.")
-            return None
+        base_name = f"{self.prefix}_{setup['name']}"
 
-        if not self.fleshy_attribute or not cmds.objExists(self.fleshy_attribute):
-            return None
+        for node_name in (f"{base_name}_MDL", f"{base_name}_BLC"):
+            if cmds.objExists(node_name):
+                cmds.delete(node_name)
 
-        node_name = f"{self.prefix}_eyeFleshy_BLC"
-        if cmds.objExists(node_name):
-            cmds.delete(node_name)
+        # Atenuador: se toca en input2 sin recablear nada.
+        multiplier = cmds.createNode("multDoubleLinear", n=f"{base_name}_MDL")
+        cmds.connectAttr(driver_attribute, f"{multiplier}.input1")
+        cmds.setAttr(f"{multiplier}.input2", setup["multiplier"])
 
-        blend = cmds.createNode("blendColors", n=node_name)
+        blend = cmds.createNode("blendColors", n=f"{base_name}_BLC")
+        cmds.connectAttr(f"{multiplier}.output", f"{blend}.blender")
 
-        for channel in "RGB":
-            cmds.setAttr(f"{blend}.color2{channel}", 0)
-        cmds.setAttr(f"{blend}.color1R", 0)
+        cmds.connectAttr(f"{delta}.outputRotateX", f"{blend}.color1R")
+        cmds.connectAttr(f"{delta}.outputRotateY", f"{blend}.color1G")
 
-        cmds.connectAttr(f"{joint}.rotateX", f"{blend}.color1R")
-        cmds.connectAttr(f"{joint}.rotateY", f"{blend}.color1G")
-        cmds.connectAttr(self.fleshy_attribute, f"{blend}.blender")
+        # El eje X no lo conduce nadie y los defaults del nodo no son cero
+        # cmds.setAttr(f"{blend}.color1R", 0)
+        # for channel in "RGB":
+        #     cmds.setAttr(f"{blend}.color2{channel}", 0)
 
-        self.fleshy_blend = blend
+        return blend, multiplier
 
-        return blend
-
-    def _build_fleshy_groups(self, base_name):
+    def _build_fleshy_groups(self, base_name, joint):
         """
-        Crea la pareja de grupos del fleshy: uno quieto en el centro del ojo y su
-        duplicado colgando de el.
+        Crea la pareja de grupos de un setup de fleshy: uno quieto en el centro
+        del ojo y su duplicado colgando de el.
 
         El de dentro se hace duplicando al de fuera y no creando otro y
         matcheandolo: al duplicar y emparentar, el hijo queda con los canales a
-        cero limpios, que es lo que hace falta para que la rotacion que le entre
-        se lea tal cual y no sumada a un offset.
+        cero limpios.
 
-        El pivote de los dos esta en el centro del ojo, asi que lo que cuelgue
-        del hijo orbita alrededor del globo ocular en vez de girar sobre si mismo.
+        El match es de posicion Y rotacion. La delta que va a entrar en el rotate
+        esta medida en el marco del reposo del ojo, asi que el grupo tiene que
+        estar orientado igual que ese reposo para que los ejes signifiquen lo
+        mismo a los dos lados de la conexion.
+
+        El pivote si esta en el centro del ojo, que es lo que hace que lo que
+        cuelgue orbite alrededor del globo ocular en vez de girar sobre si mismo.
         """
-        joint = self.eye_joints.get(self.eye_mid)
-        if not joint or not cmds.objExists(joint):
-            return None
-
         off_name = f"{base_name}_OFF"
         trn_name = f"{base_name}_TRN"
 
@@ -971,7 +1033,7 @@ class EyesModule(object):
 
         return off_group, trn_group
 
-    def _connect_fleshy_rotation(self, trn_group):
+    def _connect_fleshy_rotation(self, blend, trn_group):
         """
         Mete la salida del blendColors en la rotacion del grupo.
 
@@ -979,91 +1041,100 @@ class EyesModule(object):
         blendColors no, asi Maya mete su unitConversion en cada canal y no hay
         sorpresas con la conversion del compuesto entero.
         """
-        if not self.fleshy_blend or not trn_group:
-            return None
-
         for channel, axis in (("R", "X"), ("G", "Y"), ("B", "Z")):
-            cmds.connectAttr(f"{self.fleshy_blend}.output{channel}",
+            cmds.connectAttr(f"{blend}.output{channel}",
                              f"{trn_group}.rotate{axis}", force=True)
 
         return trn_group
 
-    def _build_fleshy_controls(self):
+    def _build_fleshy_chain(self, blend, base_name, joint, targets):
         """
-        Cuelga las jerarquias de control de los cuatro parpados principales del
-        grupo de fleshy, para que orbiten con el ojo.
+        Grupos + conexion + emparentado de una rama del fleshy.
 
-        cmds.parent conserva la posicion mundial, asi que los controles no se
-        mueven de donde estaban: solo cambian de padre.
+        El orden importa: primero se conecta la rotacion y solo despues se
+        cuelgan los targets. En reposo la delta es cero, asi que el grupo esta a
+        ceros cuando cmds.parent calcula los offsets locales y nada salta de
+        sitio al montarlo.
         """
-        groups = self._build_fleshy_groups(f"{self.prefix}_eyeFleshy")
+        groups = self._build_fleshy_groups(base_name, joint)
         if not groups:
             return None
 
-        self.fleshy_off, self.fleshy_trn = groups
-        self._connect_fleshy_rotation(self.fleshy_trn)
+        off_group, trn_group = groups
+        self._connect_fleshy_rotation(blend, trn_group)
 
-        for guide in self.fleshy_guides:
-            control_group = self.eye_control_groups.get(guide)
-            if not control_group or not cmds.objExists(control_group):
+        for node in targets:
+            if not node or not cmds.objExists(node):
                 continue
-            cmds.parent(control_group, self.fleshy_trn)
+            cmds.parent(node, trn_group)
 
-        return self.fleshy_trn
-
-    def _build_fleshy_local(self):
-        """
-        Repite el mismo par de grupos en el setup local y cuelga de el los OFF
-        locales de esos cuatro controles.
-
-        Hace falta porque el setup local lee ctrl.matrix, o sea la matriz LOCAL
-        del control respecto a su propio ANIM. Eso quiere decir que solo se entera
-        de lo que el animador mueve el control, no de donde este colgado su GRP.
-        Sin esta parte, subir el fleshy inclinaria los controles en pantalla pero
-        los joints (y por tanto la malla) no se moverian ni un milimetro.
-
-        Al colgar los OFF locales de un grupo que rota igual que el de los
-        controles, la deformacion acompana al gesto. Si el montaje de referencia
-        no lleva esto, se apaga con FLESHY_DRIVE_LOCAL.
-        """
-        if not self.FLESHY_DRIVE_LOCAL:
-            return None
-
-        groups = self._build_fleshy_groups(f"{self.prefix}_eyeFleshyLocal")
-        if not groups:
-            return None
-
-        self.fleshy_local_off, self.fleshy_local_trn = groups
-        self._connect_fleshy_rotation(self.fleshy_local_trn)
-
-        for guide in self.fleshy_guides:
-            local_off = self.eye_local_offs.get(guide)
-            if not local_off or not cmds.objExists(local_off):
-                continue
-            cmds.parent(local_off, self.fleshy_local_trn)
-
-        return self.fleshy_local_trn
+        return off_group, trn_group
 
     def _build_fleshy_setup(self):
         """
-        Monta el fleshy entero: atributo, blendColors y los grupos que orbitan.
+        Monta los setups de fleshy: uno para los parpados y otro, aparte y con su
+        propio atributo y su propio atenuador, para las esquinas.
+
+        Van separados porque las esquinas estan mucho mas ancladas
+        anatomicamente que el centro del parpado: con el mismo valor se pasan de
+        largo. Cada uno tiene su cadena entera (atributo, blendColors, grupos),
+        asi que se regulan por separado sin tocarse.
+
+        Cada setup se duplica ademas en el lado local. Hace falta porque el setup
+        local lee ctrl.matrix, o sea la matriz LOCAL del control respecto a su
+        propio ANIM: solo se entera de lo que el animador mueve el control, no de
+        donde este colgado su GRP. Sin esa parte, subir el atributo inclinaria los
+        controles en pantalla pero los joints no se moverian. Se apaga con
+        FLESHY_DRIVE_LOCAL.
 
         Va despues de los controles (necesita sus GRP y sus OFF locales) y antes
         de _constrain_in_between y _group_rig_module, para que los constraints y
         la agrupacion se hagan con la jerarquia ya en su sitio final.
         """
-        if not self._add_fleshy_attribute():
+        joint = self.eye_joints.get(self.eye_mid)
+        if not joint or not cmds.objExists(joint):
             return None
 
-        if not self._build_fleshy_blend():
-            return None
+        self.fleshy_nodes = {}
 
-        self._build_fleshy_controls()
-        self._build_fleshy_local()
+        # Una sola delta para los dos setups
+        delta = self._build_fleshy_delta(joint)
+
+        for setup in self.fleshy_setups:
+            driver_attribute = self._add_fleshy_attribute(setup)
+            if not driver_attribute:
+                continue
+
+            built = self._build_fleshy_blend(setup, driver_attribute, delta)
+            if not built:
+                continue
+
+            blend, multiplier = built
+            base_name = f"{self.prefix}_{setup['name']}"
+
+            data = {"blend": blend, "multiplier": multiplier,
+                    "attribute": driver_attribute, "local_off": None}
+
+            control_groups = [self.eye_control_groups.get(guide)
+                              for guide in setup["guides"]]
+            control_chain = self._build_fleshy_chain(
+                blend, base_name, joint, control_groups)
+            if control_chain:
+                data["off"], data["trn"] = control_chain
+
+            if self.FLESHY_DRIVE_LOCAL:
+                local_offs = [self.eye_local_offs.get(guide)
+                              for guide in setup["guides"]]
+                local_chain = self._build_fleshy_chain(
+                    blend, f"{base_name}Local", joint, local_offs)
+                if local_chain:
+                    data["local_off"], data["local_trn"] = local_chain
+
+            self.fleshy_nodes[setup["key"]] = data
 
         cmds.select(clear=True)
 
-        return self.fleshy_blend
+        return self.fleshy_nodes
 
     def _build_settings_group(self):
         """
@@ -2252,7 +2323,7 @@ class EyesModule(object):
         # grupo de fleshy local, que ahora es quien tiene colgados los OFF de los
         # cuatro parpados principales.
         candidates = list(self.eye_local_offs.values()) + list(self.eye_sub_local_offs.values())
-        candidates.append(self.fleshy_local_off)
+        candidates.extend(data.get("local_off") for data in self.fleshy_nodes.values())
 
         for node in candidates:
             if not node or not cmds.objExists(node):

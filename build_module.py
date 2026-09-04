@@ -16,7 +16,6 @@ import rigRoot_module
 import mirror_module
 import skinning_module
 import guides_module
-import build_module
 import body_module
 import spaceSwitching_module
 import headSpace_module
@@ -26,22 +25,51 @@ import pvPin_module
 import mouthModule
 import jaw_module
 import eyes_module
+import progress_module
 
 
 
 class BuildRig(object):
-    
-    def build(self):
-        """Este es el método que llama el botón BUILD de la UI"""
+
+    # Numero de llamadas a prog.step() que hay en _build_steps().
+    # Si anades o quitas pasos, actualiza este numero o la barra se
+    # quedara corta / larga.
+    TOTAL_STEPS = 23
+
+    def build(self, show_progress=True):
+        """
+        Metodo que llama el boton BUILD de la UI.
+        Solo se encarga de abrir la barra de progreso y delegar el trabajo
+        real en _build_steps(). Asi la logica de construccion sigue limpia.
+        """
         print("Iniciando construcción del Rig...")
+
+        if not show_progress:
+            # Modo silencioso: util para tests o para lanzarlo en batch.
+            prog = progress_module.RigProgress(total=self.TOTAL_STEPS)
+            prog.enabled = False
+            return self._build_steps(prog)
+
+        with progress_module.rig_progress(
+                title="La monja gitana autorig",
+                total=self.TOTAL_STEPS,
+                mode="window") as prog:
+            self._build_steps(prog)
+
+        print("Rig construido.")
+
+    def _build_steps(self, prog):
+        """Construccion real del rig. 'prog' es la barra de progreso."""
         #Llista amb tots els grups de guies creats       
     
         # 0. CONSTRUIR ROOT RIG (NUEVO - va primero)
+        prog.step("Root rig")
         self.root_rig = rigRoot_module.RigRoot(rig_name="Character")
         self.root_rig.build()
         #self.root_rig.mirrorControls()
 
         # 0. CONSTRUIR BODY
+        prog.step("Body")
         self.body_rig = body_module.BodyModule(
                 rig_name="Character",
                 root_instance=self.root_rig
@@ -50,6 +78,7 @@ class BuildRig(object):
 
 
         # 1. CONSTRUIR ESPINA
+        prog.step("Espina")
         self.spine_rig = spine_module.SpineModule(
                 root_guide="root", 
                 chest_guide="chest", 
@@ -60,11 +89,13 @@ class BuildRig(object):
 
         #CONSTRUIR CHEST
             
+        prog.step("Chest")
         self.chest_rig = chest_module.ChestModule(chest_guide = "chest",root_instance=self.root_rig)
             
         self.chest_rig.build()   
 
         # 2. CONSTRUIR BRAZO (Aquí estaba el fallo, faltaba llamar al módulo)
+        prog.step("Brazo izquierdo")
         self.arm_rig = limbs_module.LimbModule(
                 shoulder_guide="L_shoulder",
                 elbow_guide="L_elbow",
@@ -76,6 +107,7 @@ class BuildRig(object):
             )
         self.arm_rig.build()
         
+        prog.step("Brazo derecho")
         self.mirror_arm_rig = limbs_module.LimbModule(
                 shoulder_guide="R_shoulder",
                 elbow_guide="R_elbow",
@@ -90,6 +122,7 @@ class BuildRig(object):
 
 
         #4. CONSTRRUIR DEDOS
+        prog.step("Dedos izquierda")
         self.fingers_rig = fingers_module.FingersModule( 
                 wrist_guide="L_wrist", 
                 rig_name ="Arm",
@@ -97,6 +130,7 @@ class BuildRig(object):
                 root_instance=self.root_rig)
         self.fingers_rig.build()
         
+        prog.step("Dedos derecha")
         self.mirror_fingers_rig = fingers_module.FingersModule(
                 wrist_guide="R_wrist",
                 rig_name="Arm",
@@ -108,6 +142,7 @@ class BuildRig(object):
         shoulder_jnt = "L_Arm_shoulder_bind_JNT"
             
         # CONSTRUIR CUELLO
+        prog.step("Cuello")
         self.neck_rig = neck_module.NeckModule(
                 neck_root="neck_root", 
                 neck_end="neck_end", 
@@ -118,12 +153,14 @@ class BuildRig(object):
             
         #CONSTRRUIR HIP
             
+        prog.step("Hip")
         self.hip_rig = hip_module.HipModule(root_guide ="root",root_instance=self.root_rig)
             
         self.hip_rig.build()
             
 
         # En el método build de CharacterGuides
+        prog.step("Pierna izquierda")
         self.leg_rig = leg_module.LegModule(
                 thigh_guide="L_hip",
                 knee_guide="L_knee",
@@ -137,6 +174,7 @@ class BuildRig(object):
             )
         self.leg_rig.build()
 
+        prog.step("Pierna derecha")
         self.mirror_leg_rig = leg_module.LegModule(
                 thigh_guide="R_hip",
                 knee_guide="R_knee",
@@ -151,6 +189,7 @@ class BuildRig(object):
             )
         self.mirror_leg_rig.build() 
 
+        prog.step("Boca izquierda")
         self.mouth_rig = mouthModule.MouthModule(
                 boca_surface="boca_surface",
                 lip_mid="C_lip_mid",
@@ -161,6 +200,7 @@ class BuildRig(object):
             )
         self.mouth_rig.build()
         
+        prog.step("Boca derecha")
         self.mirror_mouth_rig = mouthModule.MouthModule(
                 boca_surface="boca_surface",
                 lip_mid="C_lip_mid",
@@ -171,6 +211,7 @@ class BuildRig(object):
             )
         self.mirror_mouth_rig.build()
         
+        prog.step("Mandibula")
         self.jaw_rig = jaw_module.JawModule(
                 jaw_root="jaw_root",
                 jaw_end="jaw_end",
@@ -180,6 +221,7 @@ class BuildRig(object):
             )
         self.jaw_rig.build()
         
+        prog.step("Ojos izquierda")
         self.eyes_rig = eyes_module.EyesModule(
                 root_instance=self.root_rig,
                 rig_name="Character",
@@ -187,6 +229,7 @@ class BuildRig(object):
             )
         self.eyes_rig.build()
 
+        prog.step("Ojos derecha")
         self.mirror_eyes_rig = eyes_module.EyesModule(
                 root_instance=self.root_rig,
                 rig_name="Character",
@@ -195,12 +238,14 @@ class BuildRig(object):
         self.mirror_eyes_rig.build()
 
         # Importamos el módulo de skinning
+        prog.step("Skinning")
         skn = skinning_module.SkinningModule(
                 rig_name="Character",
                 root_instance=self.root_rig
             )
         skn.build()
         
+        prog.step("Soft IK piernas")
         soft_leg_L = soft_module.SoftIkModule(side="L", prefix="Leg")
         soft_leg_L_result = soft_leg_L.apply_soft_ik(
             ik_ctrl="L_Leg_legIk_CTRL",
@@ -227,6 +272,7 @@ class BuildRig(object):
             goal_ctrl="R_Leg_footBall_CTRL"
         )
 
+        prog.step("Soft IK brazos")
         soft_arm_L = soft_module.SoftIkModule(side="L", prefix="Arm")
         soft_arm_L_result = soft_arm_L.apply_soft_ik(
             ik_ctrl="L_Arm_armIk_CTRL",
@@ -254,6 +300,7 @@ class BuildRig(object):
         #========================================================================
         #PV PIN
         #========================================================================
+        prog.step("Pole vector pins")
         pv_pin_L = pvPin_module.Pv_pin(side="L", name="Arm")
         pv_pin_leg_L = pvPin_module.Pv_pin(side="L", name="leg")
         pv_pin_leg_L.setup_pole_vector_pin(
@@ -302,6 +349,7 @@ class BuildRig(object):
         # =========================================================================
         # CONFIGURACIÓN DE SPACES (DYNAMIC PARENTS) - ANTES DEL SKINNING
         # =========================================================================
+        prog.step("Space switching")
         print("[Spaces] Iniciando la creación de sistemas Dynamic Parent (_SPC)...")
 
         # 2. Espacios para las Manos IK (Brazos)
@@ -408,6 +456,7 @@ class BuildRig(object):
         # =============================================================================
         #
         #
+        prog.step("Head spaces")
         self.head_spaces = headSpace_module.HeadSpacesModule(
              rig_name         = "Character",
              head_ctrl        = "Character_head_CTRL",

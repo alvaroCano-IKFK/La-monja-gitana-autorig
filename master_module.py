@@ -1,5 +1,6 @@
 import ui_module
 import guides_module
+import faceOrganizer_module
 import spine_module
 import importlib
 import limbs_module
@@ -32,6 +33,7 @@ import progress_module
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez
+    importlib.reload(faceOrganizer_module)
     importlib.reload(spine_module)
     importlib.reload(guides_module)
     importlib.reload(ui_module)

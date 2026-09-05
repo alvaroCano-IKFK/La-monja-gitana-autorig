@@ -68,6 +68,47 @@ class EyesModule(object):
     # Ver _build_fleshy_setup para el porque.
     FLESHY_DRIVE_LOCAL = True
 
+    # Corrige el signo de la traslacion del setup local en el lado R.
+    #
+    # Las guias del ojo derecho estan en mirror BEHAVIOUR respecto al
+    # izquierdo: sus ejes son los del espejo de L pero negados, o sea que el
+    # ojo derecho esta girado 180 grados sobre la X del mundo, no reflejado.
+    # Esa convencion es la correcta para ROTACIONES (los mismos valores de
+    # rotate dan movimientos simetricos) pero es la contraria para
+    # TRASLACIONES, y este sistema mueve todo por traslacion: lee ctrl.matrix
+    # y mete su outputTranslate en el _Local_TRN.
+    #
+    # En el body esto no se nota porque los controles viven dentro del
+    # mirrorBehaviour_GRP y su scaleX = -1 arregla el signo. Aqui no sirve:
+    # ctrl.matrix es LOCAL y no se entera de sus padres, y el _Local_OFF donde
+    # se reaplica esta fuera de ese grupo.
+    #
+    # Como los ejes de R son los del espejo de L negados en los tres, la
+    # correccion es negar las tres componentes. Se hace en la conexion y no
+    # con un scale -1 en el OFF (que seria equivalente) para no meter escalas
+    # negativas en los joints que skinean las curvas.
+    #
+    # Ponlo a False para volver al comportamiento de antes.
+    MIRROR_R_TRANSLATION = True
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, -1.0, -1.0)
+
+    # La otra mitad del mismo problema, esta vez en el lado del animador.
+    #
+    # Con MIRROR_R_TRANSLATION el sistema ya se mueve en espejo, pero el gizmo
+    # del control sigue en orientacion de behaviour, asi que el control tira
+    # hacia un lado y el parpado hacia el otro. La solucion es voltearle los
+    # ejes al grupo del control con el mismo signo.
+    #
+    # scale y no rotate a proposito: la shape se dibuja alrededor del origen
+    # del grupo, asi que el control no se mueve de sitio, solo cambian las
+    # direcciones de sus canales.
+    #
+    # Y no afecta al sistema: lo que este lee es ctrl.matrix, que es la matriz
+    # del control DENTRO de su _GRP y no se entera de la escala del grupo. El
+    # _Local_OFF tampoco, porque se matcheo con posicion y rotacion.
+    MIRROR_R_CONTROL_AXES = True
+    MIRROR_R_CONTROL_SCALE = (-1.0, -1.0, -1.0)
+
     def __init__(self, 
                  eye_mid="eye_mid",
                  eye_inner_corner="eye_inner_corner",
@@ -270,12 +311,91 @@ class EyesModule(object):
 
         cmds.connectAttr(f"{source_ctrl}.matrix", f"{mult_node}.matrixIn[0]")
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
-        cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
+
+        translate_source = f"{decompose_node}.outputTranslate"
+        if self.side == "R" and self.MIRROR_R_TRANSLATION:
+            translate_source = self._build_translation_mirror(
+                prefix, base_name, decompose_node)
+
+        cmds.connectAttr(translate_source, f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
         cmds.connectAttr(f"{decompose_node}.outputScale", f"{local_trn}.scale")
         cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
 
         return local_off, local_trn
+
+    def _build_translation_mirror(self, prefix, base_name, decompose_node):
+        """
+        Mete un multiplyDivide entre el decomposeMatrix y el _Local_TRN para
+        invertir el signo de la traslacion en el lado R.
+
+        Solo toca translate: la rotacion se queda como esta porque con
+        orientaciones en mirror behaviour las rotaciones ya salen simetricas.
+        Ver el comentario de MIRROR_R_TRANSLATION arriba de la clase.
+
+        Devuelve el plug que hay que conectar al translate del TRN.
+        """
+        node_name = f"{prefix}_{base_name}LocalMirror_MDV"
+
+        if not cmds.objExists(node_name):
+            node_name = cmds.createNode("multiplyDivide", name=node_name)
+
+        cmds.setAttr(f"{node_name}.operation", 1)  # 1 = multiplicar
+        for index, axis in enumerate("XYZ"):
+            cmds.setAttr(f"{node_name}.input2{axis}",
+                         self.MIRROR_R_TRANSLATION_SIGN[index])
+
+        cmds.connectAttr(f"{decompose_node}.outputTranslate",
+                         f"{node_name}.input1", force=True)
+
+        return f"{node_name}.output"
+
+    def _mirror_control_axes(self):
+        """
+        Voltea los ejes de los grupos de control del lado R.
+
+        Que se queda fuera y por que:
+
+        - Los Sub. Cuelgan del control principal, asi que heredan el volteo.
+          Si se les pusiera tambien, se cancelaria.
+        - El eye_mid. Su joint va con un parentConstraint contra el control y
+          su _GRP con un aimConstraint contra el eye_direct: meterle escala
+          negativa se lo pasaria al joint del ojo. Ademas ese control se usa
+          girando, y las rotaciones ya salen simetricas con orientaciones en
+          mirror behaviour.
+
+        Se llama despues del fleshy y ANTES de _constrain_in_between: los
+        controles intermedios se colocan con un parentConstraint con mo=True
+        contra sus vecinos, y ese offset tiene que medirse con los ejes ya
+        volteados o los cuatro se desplazan hacia el centro del ojo.
+        """
+        if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
+            return []
+
+        targets = [ctrl_grp for guide, ctrl_grp in self.eye_control_groups.items()
+                   if guide != self.eye_mid]
+
+        if self.eye_direct_control_group:
+            targets.append(self.eye_direct_control_group)
+
+        flipped = []
+        for group_node in targets:
+            if not group_node or not cmds.objExists(group_node):
+                continue
+
+            for index, axis in enumerate("XYZ"):
+                plug = f"{group_node}.scale{axis}"
+                if cmds.getAttr(plug, lock=True) or cmds.listConnections(
+                        plug, source=True, destination=False):
+                    cmds.warning(f"[EyesModule] '{plug}' esta bloqueado o "
+                                 f"conectado, no se voltea.")
+                    continue
+                cmds.setAttr(plug, self.MIRROR_R_CONTROL_SCALE[index])
+
+            flipped.append(group_node)
+
+        print(f"[EyesModule] Ejes volteados en {len(flipped)} grupos de control.")
+        return flipped
 
     def _create_local_joint(self, local_trn):
         """
@@ -2477,6 +2597,19 @@ class EyesModule(object):
         # para que se hagan con la jerarquia ya en su sitio.
         # =========================================================
         self._build_fleshy_setup()
+
+        # =========================================================
+        # EJES DE LOS CONTROLES DEL LADO R
+        # Aqui y no al final: los controles intermedios se colocan con un
+        # parentConstraint contra sus dos vecinos y con mo=True, asi que el
+        # offset tiene que medirse con la escala ya volteada. Si se voltea
+        # despues, ese offset se aplica sobre un marco invertido y los cuatro
+        # intermedios se meten hacia el centro del ojo.
+        #
+        # Y despues del fleshy porque ese paso reparenta los _GRP de parpados
+        # y esquinas: asi se voltea lo que ya esta en su sitio definitivo.
+        # =========================================================
+        self._mirror_control_axes()
 
         # =========================================================
         # GRUPO DE SETTINGS

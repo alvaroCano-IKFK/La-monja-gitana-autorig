@@ -6,6 +6,7 @@ import json
 import spine_module
 import limbs_module
 import fingers_module
+import toes_module
 import neck_module
 import chest_module
 import hip_module
@@ -34,7 +35,7 @@ class BuildRig(object):
     # Numero de llamadas a prog.step() que hay en _build_steps().
     # Si anades o quitas pasos, actualiza este numero o la barra se
     # quedara corta / larga.
-    TOTAL_STEPS = 23
+    TOTAL_STEPS = 25
 
     def build(self, show_progress=True):
         """
@@ -188,6 +189,31 @@ class BuildRig(object):
                 hip_instance=self.hip_rig
             )
         self.mirror_leg_rig.build() 
+
+        # 5. CONSTRUIR DEDOS DEL PIE
+        #    Van despues de las piernas (necesitan {prefix}_ball_bind_JNT) y
+        #    ANTES del skinning, para que entren en el esqueleto _ENV.
+        prog.step("Dedos pie izquierdo")
+        self.toes_rig = toes_module.ToesModule(
+                ball_guide="L_ball",
+                tip_guide="L_toe_tip",
+                heel_guide="L_heel",
+                rig_name="Leg",
+                side="L",
+                root_instance=self.root_rig
+            )
+        self.toes_rig.build()
+
+        prog.step("Dedos pie derecho")
+        self.mirror_toes_rig = toes_module.ToesModule(
+                ball_guide="R_ball",
+                tip_guide="R_toe_tip",
+                heel_guide="R_heel",
+                rig_name="Leg",
+                side="R",
+                root_instance=self.root_rig
+            )
+        self.mirror_toes_rig.build()
 
         prog.step("Boca izquierda")
         self.mouth_rig = mouthModule.MouthModule(

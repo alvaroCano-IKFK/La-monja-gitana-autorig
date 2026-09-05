@@ -392,6 +392,67 @@ class FootGuides(object):
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
 
+
+############################################################
+# TOES (dits del peu)
+############################################################
+
+class ToesGuides(object):
+    """
+    Crea les guies dels dits del peu, penjades de la guia del ball.
+
+    Cada dit es una cadena de 4 joints (proximal, mitja, distal i punta), que es
+    exactament el que necessita el ToesModule per fer IK amb la falange distal
+    lliure, igual que a la ma.
+
+    Els offsets son relatius a la posicio del ball. La Y baixa una mica joint a
+    joint per donar als dits una corba natural cap avall: aixo li serveix al
+    modul per detectar sol el pla de flexio, sense haver de forcar cap eix.
+
+    Si vols mes o menys joints per dit, nomes cal afegir o treure tuples: el
+    modul llegeix la cadena de guies sencera, sigui de la llargada que sigui.
+    """
+
+    # Offsets (X, Y, Z) respecte del ball. X negatiu = costat intern (dit gros).
+    DEFAULT_TOES = {
+        "bigToe":   [(-1.00, 0.00, 0.20), (-1.02, -0.05, 1.30),
+                     (-1.04, -0.18, 2.00), (-1.05, -0.35, 2.45)],
+        "indexToe": [(-0.40, 0.00, 0.25), (-0.42, -0.05, 1.30),
+                     (-0.44, -0.18, 1.95), (-0.45, -0.35, 2.35)],
+        "midToe":   [(0.20, 0.00, 0.22), (0.22, -0.05, 1.20),
+                     (0.24, -0.18, 1.80), (0.25, -0.35, 2.15)],
+        "ringToe":  [(0.75, 0.00, 0.15), (0.78, -0.05, 1.05),
+                     (0.80, -0.18, 1.60), (0.82, -0.35, 1.90)],
+        "pinkyToe": [(1.25, 0.00, 0.05), (1.30, -0.05, 0.85),
+                     (1.32, -0.18, 1.30), (1.34, -0.35, 1.55)],
+    }
+
+    def __init__(self, foot_instance, side="L", toe_data=None):
+        self.foot = foot_instance
+        self.side = side
+        self.toe_data = toe_data if toe_data else self.DEFAULT_TOES
+        self.toes = []
+
+    def toes_guides(self):
+        # El ball es el "metatars": tots els dits pengen d'ell
+        ball = self.foot.ball_name
+
+        if not cmds.objExists(ball):
+            cmds.warning("No existe la guia del ball ({0}): no puedo crear los "
+                         "dedos del pie.".format(ball))
+            return
+
+        # Reaprofita FingerGuides, que ja crea una cadena a partir d'offsets
+        for name, offsets in self.toe_data.items():
+            toe_name = "{0}_{1}".format(self.side, name)
+
+            toe = FingerGuides(ball, toe_name, offsets)
+            toe.finger_guides()
+            self.toes.append(toe)
+
+        cmds.select(clear=True)
+        return self.toes
+
 ############################################################
 #BOCA🫦
 ############################################################
@@ -597,6 +658,10 @@ class CharacterGuides(object):
             (0,-2,-3)
         )
         foot_instance.foot_guides()
+
+        #Crea les guies dels dits del peu a partir del ball
+        toes_instance = ToesGuides(foot_instance, side="L")
+        toes_instance.toes_guides()
        
        
         #Crea les guies de la boca
@@ -663,5 +728,3 @@ class CharacterGuides(object):
         #Agrupa totes les guies sota un únic grup principal
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
-
-        

@@ -17,9 +17,43 @@ class SkinningModule(object):
         # Cualquier joint cuyo nombre CONTENGA alguno de estos strings será ignorado.
         # Añade o quita patrones según tu rig antes de llamar a build().
         # Ejemplos: "_IK_", "_FK_", "_twist_", "_helper_", "_ribbon_"
+        #
+        # OJO: la comparación es sensible a mayúsculas. Si tus joints de limbs
+        # se llaman "..._IK_JNT" los dos primeros patrones no filtran nada;
+        # míralo en el print de exclusiones que hace build().
         self.exclude_patterns = [
             "_ik_",
             "_fk_",
+
+            # ----------------------------------------------------------
+            # BOCA / JAW
+            # Todo lo que deforma una CURVA de la cadena, no la malla.
+            # Lo único que se skinea de esta zona son los 14
+            # lip{Upper,Lower}Bind##_JNT y jawUpper_JNT / jawLower_JNT.
+            # ----------------------------------------------------------
+            "PreBind",        # todos los prebind (solo alimentan bindPreMatrix)
+            "_freeze_",       # ancla central de los skinCluster de las curvas
+            "_levator_",      # deforma lipCurvatureLevator_CRV
+            "_depresor_",     # deforma lipCurvatureDepresor_CRV
+            "Pinch_JNT",      # upperPinch_JNT / lowerPinch_JNT
+            "_jawCorner_",    # solo conduce las JawPinchLine
+
+            # ----------------------------------------------------------
+            # OJOS
+            # Lo único que se skinea es eye_mid_JNT (globo) y los
+            # eyelid{Upper,Lower}Loop##AimEnd_JNT (uno por loop de párpado).
+            # ----------------------------------------------------------
+            "Local_JNT",              # setup local de párpados (incluye los Sub)
+            "Aim_JNT",                # raíz de la cadena de aim (NO toca AimEnd_JNT)
+            "_eye_mid_end_",          # end de la cadena de aim del globo
+            "_eye_inner_corner_",
+            "_eye_outer_corner_",
+            "_eyelid_up_",
+            "_eyelid_up02_",
+            "_eyelid_up03_",
+            "_eyelid_low_",
+            "_eyelid_low02_",
+            "_eyelid_low03_",
         ]
 
         # Joints a excluir por NOMBRE EXACTO (útil para casos puntuales).
@@ -28,6 +62,20 @@ class SkinningModule(object):
             "Character_localChest_JNT", 
             "Character_chestFix_JNT",
             "Character_hipEnd_JNT",
+
+            # Conducen lipUpperLine_CRV / lipLowerLine_CRV.
+            # Van por nombre exacto y no por patrón porque "lipUpper" también
+            # está dentro de lipUpperBind00_JNT, que SÍ hay que skinear.
+            "C_Character_lipUpper_JNT",
+            "C_Character_lipLower_JNT",
+        ]
+
+        # Exclusión por EXPRESIÓN REGULAR, para lo que un substring no puede
+        # distinguir. Caso de uso: los marcadores de loop del párpado terminan
+        # en "Loop##_JNT" y los de la cadena de aim en "Loop##AimEnd_JNT", así
+        # que hace falta anclar al final del nombre.
+        self.exclude_regex = [
+            r"Loop\d+_JNT$",   # marcadores de posición de los loops del párpado
         ]
 
         # --- RE-PARENTING MANUAL ---
@@ -60,6 +108,9 @@ class SkinningModule(object):
             return True
         for pattern in self.exclude_patterns:
             if pattern in joint_name:
+                return True
+        for pattern in getattr(self, "exclude_regex", []):
+            if re.search(pattern, joint_name):
                 return True
         return False
 

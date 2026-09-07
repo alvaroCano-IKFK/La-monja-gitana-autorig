@@ -728,3 +728,4 @@ class CharacterGuides(object):
         #Agrupa totes les guies sota un únic grup principal
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
+        cmds.xform(self.all_guides_grp, ws=True, piv=(0, 0, 0))

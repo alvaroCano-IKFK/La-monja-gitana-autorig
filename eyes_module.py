@@ -2416,6 +2416,149 @@ class EyesModule(object):
 
         return self.loop_aim_group
 
+    # ------------------------------------------------------------------
+    # ORGANIZACION DEL OUTLINER
+    #
+    # Mismo reparto que leg_module y limbs_module: el SISTEMA cuelga del
+    # <rig>_rig_GRP y los CONTROLES del <rig>_local_CTL.
+    #
+    #     <rig>_rig_GRP
+    #         |- C_<rig>_face_GRP
+    #              |- C_<rig>_eyes_GRP
+    #                   |- L_<rig>_eyes_GRP
+    #                   |- R_<rig>_eyes_GRP
+    #
+    #     <rig>_local_CTL
+    #         |- C_<rig>_faceControls_GRP
+    #              |- C_<rig>_eyesControls_GRP
+    #                   |- L_<rig>_eyesControls_GRP
+    #                   |- R_<rig>_eyesControls_GRP
+    #
+    # El <rig>_mirrorBehaviour_GRP no se usa: los faciales van con sistema
+    # local. Nada entra ahi y nada sale de ahi.
+    # ------------------------------------------------------------------
+    def _ensure_group(self, group_name, parent_group=None):
+        """
+        Devuelve `group_name`, creandolo vacio en la raiz del mundo si no
+        existe. Idempotente: se puede llamar en cada build sin duplicar.
+        """
+        if cmds.objExists(group_name):
+            group_node = group_name
+        else:
+            group_node = cmds.group(em=True, world=True, n=group_name)
+
+        if parent_group and cmds.objExists(parent_group):
+            current_parent = cmds.listRelatives(group_node, parent=True) or []
+            if not current_parent or current_parent[0] != parent_group:
+                cmds.parent(group_node, parent_group, relative=True)
+
+        return group_node
+
+    def _park_node(self, node_name, destination_group):
+        """
+        Mete `node_name` en `destination_group` SOLO si esta suelto en la raiz
+        de la escena.
+
+        Si ya tiene padre no se toca: esa jerarquia si es funcional (un OFF de
+        Sub que cuelga del TRN de su principal, un _GRP dentro del TRN del
+        fleshy, lo que hubiera en el mirrorBehaviour_GRP).
+
+        El parent es RELATIVO: el grupo destino esta en identidad, asi que
+        conservar los valores locales conserva la matriz de mundo exacta y no
+        se mueve nada.
+        """
+        if not node_name or not cmds.objExists(node_name):
+            return False
+        if not cmds.objExists(destination_group):
+            return False
+        if cmds.listRelatives(node_name, parent=True):
+            return False
+
+        try:
+            cmds.parent(node_name, destination_group, relative=True)
+        except Exception as error:
+            cmds.warning(f"EyesModule: no se pudo ordenar '{node_name}' dentro "
+                         f"de '{destination_group}': {error}")
+            return False
+        return True
+
+    def _face_systems_root(self):
+        """C_<rig>_face_GRP, bajo el rig_GRP. Compartido con boca y jaw."""
+        rig_grp = f"{self.rig_name}_rig_GRP"
+        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
+            rig_grp = self.root_instance.get_rig_grp()
+
+        parent = rig_grp if cmds.objExists(rig_grp) else None
+        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
+
+    def _face_controls_root(self):
+        """C_<rig>_faceControls_GRP, bajo el local_CTL. Compartido con boca y jaw."""
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
+
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+
+    def _organize_outliner(self):
+        """
+        Ordena lo que este modulo deja suelto en la raiz.
+
+        Se llama al final de build(). Es idempotente y lo ya colocado se
+        ignora por el chequeo de padre de _park_node().
+        """
+        rig = self.rig_name
+        center = f"C_{rig}"
+
+        # --- 1. Esqueleto ---
+        systems_grp = self._ensure_group(f"{center}_eyes_GRP", self._face_systems_root())
+        side_systems_grp = self._ensure_group(f"{self.prefix}_eyes_GRP", systems_grp)
+
+        controls_grp = self._ensure_group(f"{center}_eyesControls_GRP",
+                                          self._face_controls_root())
+        side_controls_grp = self._ensure_group(f"{self.prefix}_eyesControls_GRP",
+                                               controls_grp)
+
+        # --- 2. Controles ---
+        # Raices del fleshy: despues de _build_fleshy_setup son ellas las que
+        # cuelgan los _GRP de parpados y esquinas, asi que es lo que se mueve.
+        control_roots = [data.get("off") for data in self.fleshy_nodes.values()]
+
+        # Los que no pasan por el fleshy: intermedios, eye_mid y eye_direct.
+        # Los Sub cuelgan de su control principal y se arrastran solos.
+        fleshy_guides = {guide for setup in self.fleshy_setups
+                         for guide in setup["guides"]}
+        control_roots.extend(ctrl_grp for guide, ctrl_grp
+                             in self.eye_control_groups.items()
+                             if guide not in fleshy_guides)
+        control_roots.append(self.eye_direct_control_group)
+
+        for group_node in control_roots:
+            self._park_node(group_node, side_controls_grp)
+
+        # --- 3. Sistema ---
+        # _group_rig_module ya recogio los OFF del setup local, y el grupo de
+        # joints, las curvas de blink y los loops ya se meten ahi segun se
+        # crean. Aqui se coloca ese grupo y se barre lo que quede suelto.
+        self._park_node(self.rig_module_group, side_systems_grp)
+        self._park_node(self.joints_group, side_systems_grp)
+
+        # Red de seguridad, para no depender de una lista de nombres que se
+        # queda corta en cuanto el modulo cree un nodo nuevo. Solo _GRP y _CRV:
+        # las guias no llevan esos sufijos y se quedan fuera.
+        for pattern in (f"{self.prefix}_*_GRP", f"{self.prefix}_*_CRV"):
+            for node in cmds.ls(pattern, type="transform") or []:
+                self._park_node(node, side_systems_grp)
+
+        return side_systems_grp
+
+    def organize_outliner(self):
+        """
+        Version publica, para volver a barrer la raiz despues de que hayan
+        corrido otros modulos. Idempotente.
+        """
+        return self._organize_outliner()
+
     def _group_rig_module(self):
         """
         Mete todo el setup local (OFF, TRN y sus joints) bajo un unico grupo del
@@ -2679,6 +2822,12 @@ class EyesModule(object):
         # skinning.
         # =========================================================
         self._build_loop_aims()
+
+        # =========================================================
+        # ORGANIZACION DEL OUTLINER
+        # Lo ultimo: cuando ya no queda nada por crear ni por reparentar.
+        # =========================================================
+        self._organize_outliner()
 
         cmds.select(clear=True)
 

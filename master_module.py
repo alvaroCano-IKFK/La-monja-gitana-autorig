@@ -30,6 +30,7 @@ import mirror_module
 import jaw_module
 import eyes_module
 import progress_module
+import guides_io_module
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez
@@ -64,6 +65,7 @@ def run():
     importlib.reload(jaw_module)
     importlib.reload(eyes_module)
     importlib.reload(progress_module)
+    importlib.reload(guides_io_module)
     
     ui = ui_module.UI()
     ui.main_UI()

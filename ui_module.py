@@ -10,11 +10,12 @@ import reorient_module
 import mirror_module
 import build_module
 import eyes_module
+import guides_io_module
 
 
 class UI(object):
 
-    def __init__(self,name = "AutoRig_Master"):
+    def __init__(self, name="AutoRig_Master"):
         self.name = name
         self.character = guides_module.CharacterGuides()
         self.reorienter = reorient_module.Reorienter()
@@ -27,36 +28,36 @@ class UI(object):
 
     def main_UI(self):
         window_name = self.name
-        if cmds.window(window_name, exists=True): cmds.deleteUI(window_name)
-        
+        if cmds.window(window_name, exists=True):
+            cmds.deleteUI(window_name)
+
         win = cmds.window(window_name, title="AutoRig Master", w=300)
         main_layout = cmds.columnLayout(adj=True)
-        
-        # SECCIÓN DE PARTES
-        cmds.frameLayout(l="1. Create Guides", marginHeight=5)
-        cmds.rowLayout(nc=2, ad2=True)
-        #cmds.button(l="Arm Guides", c=default_arm_guides, h=40)
-        cmds.button(l="Guides",c=lambda x: self.character.create_guides(), h=40)
-        cmds.setParent("..")
-        
-        # SECCIÓN DE CONSTRUCCIÓN
-        cmds.frameLayout(l="2. Build Rig", marginHeight=5)
-        cmds.button(l="BUILD", c=lambda x: self.builder.build(), bgc=(0.3, 0.5, 0.3))      
-        cmds.frameLayout(l="3. Data Management", collapsable=True, cl=True)
-        cmds.columnLayout(adj=True)
-        cmds.button(l="Export Guides")
-        cmds.separator(h=10)
-        cmds.button(l="Import Guides")
-        cmds.separator(h=10)
-        cmds.button(l="Reorient Arm Guides", c=lambda x: self.reorienter.run_reorient())        
-        cmds.separator(h=10)
-        cmds.button(l="Mirror", c= lambda x: self.mirror_guides.mirror())
 
-        # SECCION DE SETS DE LOOP DE LOS OJOS
-        # Volvemos al layout raiz antes de abrir la seccion, para no colgarla
-        # dentro del frameLayout anterior.
+        # ------------------------------------------------------------------
+        # 1. GUIAS
+        # ------------------------------------------------------------------
+        cmds.frameLayout(l="1. Create Guides", collapsable=True, cl=True, marginHeight=5)
+        cmds.columnLayout(adj=True)
+        cmds.button(l="Guides", c=lambda x: self.character.create_guides(), h=40)
         cmds.setParent(main_layout)
-        cmds.frameLayout(l="4. Eye Loop Sets", collapsable=True, cl=True, marginHeight=5)
+
+        # ------------------------------------------------------------------
+        # 2. DATA MANAGEMENT
+        # ------------------------------------------------------------------
+        cmds.frameLayout(l="2. Data Management", collapsable=True, cl=True, marginHeight=5)
+        cmds.columnLayout(adj=True)
+        cmds.button(l="Export Guides", c=lambda x: self._export_guides())
+        cmds.separator(h=10)
+        cmds.button(l="Import Guides", c=lambda x: self._import_guides())
+        cmds.separator(h=10)
+        cmds.button(l="Mirror", c=lambda x: self.mirror_guides.mirror())
+        cmds.setParent(main_layout)
+
+        # ------------------------------------------------------------------
+        # 3. EYE LOOP SETS
+        # ------------------------------------------------------------------
+        cmds.frameLayout(l="3. Eye Loop Sets", collapsable=True, cl=True, marginHeight=5)
         cmds.columnLayout(adj=True)
 
         self.rig_name_field = cmds.textFieldGrp(
@@ -77,10 +78,37 @@ class UI(object):
         cmds.separator(h=8)
         cmds.button(l="Check Loop Sets", c=lambda x: self._report_loop_sets())
 
-        cmds.setParent("..")
-        cmds.setParent("..")
+        cmds.setParent(main_layout)
+
+        # ------------------------------------------------------------------
+        # 4. BUILD
+        # ------------------------------------------------------------------
+        cmds.frameLayout(l="4. Build Rig", collapsable=True, cl=True, marginHeight=5)
+        cmds.columnLayout(adj=True)
+        cmds.button(l="BUILD", c=lambda x: self.builder.build(),
+                    bgc=(0.3, 0.5, 0.3), h=40)
+        cmds.setParent(main_layout)
 
         cmds.showWindow(win)
+
+    # ------------------------------------------------------------------
+    # EXPORT / IMPORT DE GUIAS
+    # ------------------------------------------------------------------
+    def _export_guides(self):
+        """
+        Vuelca guides_GRP entero a un JSON. El propio modulo abre el file
+        dialog, aqui no se decide la ruta.
+        """
+
+        return guides_io_module.export_guides()
+
+    def _import_guides(self):
+        """
+        Reconstruye las guias desde un JSON. Si ya hay guias en la escena el
+        modulo pregunta antes de borrarlas.
+        """
+
+        return guides_io_module.import_guides()
 
     # ------------------------------------------------------------------
     # SETS DE LOOP DE LOS OJOS
@@ -113,7 +141,8 @@ class UI(object):
         side, rig_name = self._get_eye_naming()
 
         return eyes_module.EyesModule.report_loop_sets(side, rig_name)
-    
+
+
 if __name__ == "__main__":
-    ui_instance = UI()  # Crear una instancia de la clase UI
-    ui_instance.main_UI()  # Llamar al método main_UI
+    ui_instance = UI()
+    ui_instance.main_UI()

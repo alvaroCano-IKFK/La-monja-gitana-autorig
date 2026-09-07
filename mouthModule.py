@@ -688,6 +688,55 @@ class MouthModule(object):
             return False
         return True
 
+    # ------------------------------------------------------------------
+    # RAICES COMPARTIDAS DE LA CARA
+    #
+    # Mismo reparto que leg_module y limbs_module: el SISTEMA cuelga del
+    # <rig>_rig_GRP y los CONTROLES del <rig>_local_CTL.
+    #
+    # El <rig>_mirrorBehaviour_GRP no se usa: los faciales van con sistema
+    # local. Lo que ya estuviera dentro se queda dentro, porque _park_node no
+    # mueve nada que ya tenga padre.
+    #
+    # Los dos grupos son compartidos por la boca, el jaw y los ojos. Como
+    # _ensure_group es idempotente, el primer modulo que corra los crea y los
+    # demas se los encuentran hechos.
+    # ------------------------------------------------------------------
+    def _face_systems_root(self):
+        """C_<rig>_face_GRP, bajo el rig_GRP."""
+        rig_grp = f"{self.rig_name}_rig_GRP"
+        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
+            rig_grp = self.root_instance.get_rig_grp()
+
+        parent = rig_grp if cmds.objExists(rig_grp) else None
+        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
+
+    def _face_controls_root(self):
+        """C_<rig>_faceControls_GRP, bajo el local_CTL."""
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
+
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+
+    def _make_world_driven(self, group_name):
+        """
+        inheritsTransform = 0 en grupos cuyos hijos ya reciben una matriz de
+        MUNDO (offsetParentMatrix del uvPin, motionPath).
+
+        Hace falta desde que esto cuelga del rig_GRP, que esta scaleConstrained
+        al globalCtl: sin esto, al escalar el rig esos nodos se transformarian
+        dos veces.
+        """
+        if group_name and cmds.objExists(group_name):
+            try:
+                if cmds.getAttr(f"{group_name}.inheritsTransform"):
+                    cmds.setAttr(f"{group_name}.inheritsTransform", 0)
+            except Exception:
+                pass
+        return group_name
+
     def _organize_outliner(self, control_groups=None):
         """
         Ordena en el outliner todo lo que este modulo deja suelto en la raiz.
@@ -715,16 +764,23 @@ class MouthModule(object):
         sides = ["L", "R"]
 
         # --- 1. Esqueleto de grupos ---
-        root_grp = self._ensure_group(f"{center}_mouth_GRP")
+        # El sistema va al rig_GRP y los controles al local_CTL, cada rama por
+        # su lado, en vez de todo junto colgando de la raiz de la escena.
+        root_grp = self._ensure_group(f"{center}_mouth_GRP", self._face_systems_root())
         self.mouth_root_grp = root_grp
 
-        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP", root_grp)
+        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP",
+                                          self._face_controls_root())
         center_controls_grp = self._ensure_group(f"{center}_mouthCenterControls_GRP", controls_grp)
         joints_grp = self._ensure_group(f"{center}_mouthJoints_GRP", root_grp)
         curves_grp = self._ensure_group(f"{center}_mouthCurves_GRP", root_grp)
         locators_grp = self._ensure_group(f"{center}_mouthLocators_GRP", root_grp)
-        projected_grp = self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp)
-        trackers_grp = self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp)
+        # Estos dos reciben matriz de mundo (uvPin y motionPath), asi que no
+        # deben heredar la escala del rig_GRP.
+        projected_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp))
+        trackers_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp))
         setup_grp = self._ensure_group(f"{center}_mouthSetup_GRP", root_grp)
 
         # El <lado>_mouthControls_GRP ya lo crea build(); aqui solo se recoloca.

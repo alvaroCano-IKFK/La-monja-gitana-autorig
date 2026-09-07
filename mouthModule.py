@@ -6,12 +6,27 @@ from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 import rigRoot_module
 
+#CONECTAR TODA LA JERARQUIA DE GRUPOS DE LOS CONTROLES AL MMX Y SI EL SIDE ES R 
+#PONERLE UNA NUEVA MATRIZ CON SCALE X EN -1
+
 class MouthModule(object):
 
     # Índices fijos de coordinate[] / outputMatrix[] en el uvPin compartido
     RAW_INDEX = {"L": 0, "R": 1, "C": 2}
     BLEND01_INDEX = {"L": 3, "R": 5}
     BLEND02_INDEX = {"L": 4, "R": 6}
+
+    # Matriz de espejo en X. Se anade como ultima entrada del multMatrix de los
+    # controles del lado R para devolver el delta a espacio no espejado, porque
+    # su _GRP lleva un scaleX = -1 que la cadena de matrices no recoge (el _GRP
+    # se queda fuera a proposito, ver _get_ctrl_matrix_chain).
+    #
+    # En el Attribute Editor no la veras como scaleX = -1: Maya descompone esta
+    # matriz como rotateY = 180 y scaleZ = -1, que es la misma transformacion.
+    MIRROR_X_MATRIX = [-1.0, 0.0, 0.0, 0.0,
+                        0.0, 1.0, 0.0, 0.0,
+                        0.0, 0.0, 1.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0]
 
     # Desplazamiento en Y de las shapes de los controles de labio: los de upper
     # suben +Y y los de lower bajan -Y. Solo mueve los CV de la curva, ni el
@@ -81,7 +96,33 @@ class MouthModule(object):
             source=True, destination=False
         )
         return bool(conns)
+    
+    def _get_ctrl_matrix_chain(self, source_ctrl, source_ctrl_grp):
+        """
+        Devuelve [CTRL, ANIM, SDK, OFF, SPC]: el control y todos los grupos que
+        tiene por encima SIN incluir el _GRP.
 
+        El _GRP se queda fuera a proposito: el local_off ya esta matcheado a el
+        (create_space_tracking_hierarchy con target_joint=source_ctrl_grp), asi
+        que si tambien entrase aqui su transformacion se aplicaria dos veces.
+        """
+        chain = [source_ctrl]
+        node = source_ctrl
+
+        while True:
+            parent = cmds.listRelatives(node, parent=True)
+            if not parent:
+                break
+
+            parent = parent[0]
+            if parent == source_ctrl_grp:
+                break
+
+            chain.append(parent)
+            node = parent
+
+        return chain
+    
     def _build_cps_network(self, prefix, cps_name, base_name, source_ctrl, source_ctrl_grp):
         """
         Crea el space-tracking + closestPointOnSurface (CPS) crudo de un control.
@@ -106,7 +147,13 @@ class MouthModule(object):
             name="Local", tag="CTRL", parent=None, custom_suffix=None
         ).create()
 
-        cmds.connectAttr(f"{source_ctrl}.matrix", f"{mult_node}.matrixIn[0]")
+        # Antes solo entraba source_ctrl.matrix, que es la matriz del control
+        # DENTRO de su ANIM. Todo lo que pasara por encima (los constraints en
+        # el SPC, los grupos con scale negativo en el OFF/SDK) se perdia.
+        matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
+        for index, node in enumerate(matrix_chain):
+            cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
+
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
         cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
@@ -300,6 +347,20 @@ class MouthModule(object):
             parent_group=None
         )
 
+        # El lado R se saca del prefix y no de self.side porque por aqui tambien
+        # pasan el Upper y el Lower con prefix "C_...", que no se tienen que
+        # espejar. La comisura tampoco entra: esa va por _build_cps_network.
+        is_right = prefix.startswith("R_")
+
+        # scaleX = -1 en el PRIMER grupo de la jerarquia de este control (su
+        # _GRP), no en el grupo comun donde cuelgan todos.
+        #
+        # Va DESPUES de create_space_tracking_hierarchy a proposito: esa funcion
+        # hace un matchTransform con rot=True contra este mismo nodo, y si ya
+        # tuviese la escala negativa la rotacion saldria mal extraida.
+        if is_right:
+            cmds.setAttr(f"{source_ctrl_grp}.scaleX", -1)
+
         mult_node = NodeCreator(
             side=prefix, node_type="multMatrix", base_name=base_name,
             name="Local", tag="CTRL", parent=None, custom_suffix=None
@@ -313,7 +374,17 @@ class MouthModule(object):
             name="Local", tag="CTRL", parent=None, custom_suffix=None
         ).create()
 
-        cmds.connectAttr(f"{source_ctrl}.matrix", f"{mult_node}.matrixIn[0]")
+        # Misma cadena que en _build_cps_network: el delta del control tiene que
+        # llevar dentro todos los grupos que tiene por encima hasta el _GRP.
+        matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
+        for index, node in enumerate(matrix_chain):
+            cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
+
+        # Y al final de la cadena, el espejo que compensa el scaleX = -1 del _GRP.
+        if is_right:
+            cmds.setAttr(f"{mult_node}.matrixIn[{len(matrix_chain)}]",
+                         self.MIRROR_X_MATRIX, type="matrix")
+
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
         cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")

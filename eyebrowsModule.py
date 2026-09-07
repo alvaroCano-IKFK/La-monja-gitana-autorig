@@ -29,18 +29,11 @@ class EyebrowsModule(object):
         self.controls = []
         self.control_groups = []
 
-        # NOTE: kept for backward compatibility with any external code that
-        # reads this attribute. Joints and controls are no longer parented
-        # under a single shared "module" group (see build()), so this stays
-        # unused / None.
         self.module_grp = None
-
-        # Top level roots, kept separate on purpose.
         self.joints_grp = None
         self.controls_grp = None
         self.local_grp = None
 
-        # Local (matrix driven) mirror hierarchy bookkeeping.
         self.local_joints = {}
         self.local_transforms = {}
         self.local_curve = None
@@ -49,7 +42,6 @@ class EyebrowsModule(object):
     # Matrix chain helpers
     # ------------------------------------------------------------------
     def _build_relative_matrix(self, driver_ctrl, top_grp, node_base_name, node_name_tag):
-
         hierarchy_transforms = []
         current_node = cmds.listRelatives(driver_ctrl, parent=True, type="transform")
 
@@ -94,7 +86,6 @@ class EyebrowsModule(object):
         return decMatrix_node
 
     def _connect_decompose_to_transform(self, decompose_node, target):
-
         for out_attr, in_attr in (
             ("outputTranslate", "translate"),
             ("outputRotate", "rotate"),
@@ -105,7 +96,7 @@ class EyebrowsModule(object):
             if not cmds.isConnected(src, dest):
                 cmds.connectAttr(src, dest, f=True)
 
-    def _create_relative_group(self, driver_ctrl, driven_ctrl, parent_grp, top_grp, rel_name):
+    def _create_relative_group(self, driver_ctrl, driven_ctrl, parent_grp, top_grp, rel_name, node_tag="main"):
         rel_grp = cmds.group(em=True, n=rel_name)
 
         temp_constraint_p = cmds.parentConstraint(driver_ctrl, rel_grp, mo=False)
@@ -118,30 +109,28 @@ class EyebrowsModule(object):
             driver_ctrl=driver_ctrl,
             top_grp=top_grp,
             node_base_name=f"{self.rig_name}_eyebrow",
-            node_name_tag="main"
+            node_name_tag=node_tag
         )
         self._connect_decompose_to_transform(decompose_node, rel_grp)
 
-        return rel_grp
+        return rel_grp, decompose_node
 
     # ------------------------------------------------------------------
     # Local joint helper
     # ------------------------------------------------------------------
     def _create_local_joint(self, parent_trn, name):
-
         cmds.select(clear=True)
         jnt = cmds.joint(name=name)
         cmds.parent(jnt, parent_trn, relative=True)
         return jnt
 
     # ------------------------------------------------------------------
-    # Bezier curve
+    # Bezier curve (Sense locators ni conversions de NURBS a Bezier)
     # ------------------------------------------------------------------
     def _create_local_bezier_curve(self):
-
         required_labels = ("In", "InTan", "Mid", "OutTan", "Out")
         if not all(label in self.local_joints for label in required_labels):
-            cmds.warning(" No es poden trobar tots els joints locals necessaris per crear la bezierCurve.")
+            cmds.warning("No es poden trobar tots els joints locals necessaris per crear la bezierCurve.")
             return None
 
         in_jnt = self.local_joints["In"]
@@ -156,21 +145,12 @@ class EyebrowsModule(object):
         out_tan_pos = cmds.xform(out_tan_jnt, q=True, ws=True, t=True)
         out_pos = cmds.xform(out_jnt, q=True, ws=True, t=True)
 
-        # Estimate the Mid anchor's tangent handles along the In->Out
-        # direction so the curve stays close to the original, roughly
-        # linear guide placement. Tune tangent_scale to taste.
+        # Càlcul vectorial de les tangents del Mid
         tangent_scale = 0.15
         mid_dir = [out_pos[axis] - in_pos[axis] for axis in range(3)]
         mid_in_tan_pos = [mid_pos[axis] - mid_dir[axis] * tangent_scale for axis in range(3)]
         mid_out_tan_pos = [mid_pos[axis] + mid_dir[axis] * tangent_scale for axis in range(3)]
 
-        line_crv = cmds.curve(d=1, p=[in_pos, mid_pos, out_pos], n=f"{self.prefix}_local_curve_TEMP")
-        bezier_result = cmds.nurbsCurveToBezier(line_crv)
-        bezier_crv = bezier_result[0] if bezier_result else line_crv
-        bezier_crv = cmds.rename(bezier_crv, f"{self.prefix}_local_BCRV")
-
-        # CV order for an open cubic bezier with 3 anchors / 2 spans:
-        # [InAnchor, InTangentOut, MidTangentIn, MidAnchor, MidTangentOut, OutTangentIn, OutAnchor]
         cv_positions = [
             in_pos,
             in_tan_pos,
@@ -180,16 +160,26 @@ class EyebrowsModule(object):
             out_tan_pos,
             out_pos,
         ]
-        for i, pos in enumerate(cv_positions):
-            cmds.xform(f"{bezier_crv}.cv[{i}]", ws=True, t=pos)
 
-        # Drive the curve live from the local joints. The end anchors and
-        # their single tangent handle follow their matching Tan joint
-        # one-to-one; the Mid anchor and its two (estimated) tangent
-        # handles all follow the Mid joint rigidly, preserving the tuned
-        # offsets computed above.
+        # Creació directa de la corba Bézier
+        bezier_crv = cmds.curve(
+            bezier=True,
+            d=3,
+            p=cv_positions,
+            k=[0, 0, 0, 1, 1, 1, 2, 2, 2],
+            n=f"{self.prefix}_local_BZC"
+        )
+
+        if self.local_grp and cmds.objExists(self.local_grp):
+            cmds.parent(bezier_crv, self.local_grp)
+
         skin_joints = [in_jnt, in_tan_jnt, mid_jnt, out_tan_jnt, out_jnt]
-        skin_cluster = cmds.skinCluster(skin_joints, bezier_crv, tsb=True, n=f"{self.prefix}_local_curve_SKIN")[0]
+        skin_cluster = cmds.skinCluster(
+            skin_joints, 
+            bezier_crv, 
+            tsb=True, 
+            n=f"{self.prefix}_local_curve_SKIN"
+        )[0]
 
         cv_weights = {
             0: in_jnt,
@@ -212,9 +202,7 @@ class EyebrowsModule(object):
     def build(self):
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
-        # ------------------------------------------------------------
-        # 1) JOINTS -- own top level group, fully separate from controls.
-        # ------------------------------------------------------------
+        # 1) JOINTS
         jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP")
         self.joints_grp = jnt_grp
 
@@ -232,7 +220,7 @@ class EyebrowsModule(object):
                 cmds.setAttr(f"{jnt}.rotate", *rot)
                 created_joints.append(jnt)
             else:
-                cmds.warning(f" No s'ha trobat la guia: {guide_name}")
+                cmds.warning(f"No s'ha trobat la guia: {guide_name}")
 
         if created_joints:
             cmds.parent(created_joints[0], jnt_grp)
@@ -242,9 +230,7 @@ class EyebrowsModule(object):
         if not created_joints:
             return
 
-        # ------------------------------------------------------------
-        # 2) MAIN CONTROL -- own top level group.
-        # ------------------------------------------------------------
+        # 2) MAIN CONTROL
         main_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP")
         self.controls_grp = main_ctl_grp
 
@@ -272,31 +258,15 @@ class EyebrowsModule(object):
         self.controls.append(main_ctl)
         self.control_groups.append(main_ctl_gen)
 
-        # ------------------------------------------------------------
-        # 3) LOCAL MIRROR OF THE MAIN CONTROL
-        #    MainLocal_OFF > MainLocal_TRN, matrix driven from main_ctl.
-        #    The same decomposeMatrix also feeds the "Main_REL" group,
-        #    which is what was missing before (item 1 in the request).
-        # ------------------------------------------------------------
+        # 3) LOCAL MAIN GROUP
         main_local_off = cmds.group(em=True, n=f"{self.prefix}MainLocal_OFF")
+        cmds.matchTransform(main_local_off, main_ctl_gen, pos=True, rot=True)
+        
         main_local_trn = cmds.group(em=True, n=f"{self.prefix}MainLocal_TRN", p=main_local_off)
         self.local_grp = main_local_off
         self.local_transforms["Main"] = main_local_trn
 
-        main_decompose = self._build_relative_matrix(
-            driver_ctrl=main_ctl,
-            top_grp=main_ctl_grp,
-            node_base_name=f"{self.rig_name}_eyebrow",
-            node_name_tag="mainLocal"
-        )
-
-        main_rel_grp = cmds.group(em=True, n=f"{self.prefix}Main_REL", p=main_ctl_grp)
-        self._connect_decompose_to_transform(main_decompose, main_rel_grp)
-        self._connect_decompose_to_transform(main_decompose, main_local_trn)
-
-        # ------------------------------------------------------------
-        # 4) IN / MID / OUT CONTROLS + their relative & local setups.
-        # ------------------------------------------------------------
+        # 4) CONTROLS SECUNDARIS
         sub_indices = {
             "In": 1,
             "Mid": mid_idx,
@@ -307,7 +277,7 @@ class EyebrowsModule(object):
         for label, idx in sub_indices.items():
             sub_guide_name = f"{self.side}_{base_prefix}_{idx:02d}"
             if not cmds.objExists(sub_guide_name):
-                cmds.warning(f" No s'ha trobat la guia: {sub_guide_name}")
+                cmds.warning(f"No s'ha trobat la guia: {sub_guide_name}")
                 continue
 
             sub_ctrl_name = f"{self.prefix}_{label}_CTRL"
@@ -319,33 +289,31 @@ class EyebrowsModule(object):
             cmds.parent(sub_ctl_gen, main_ctl)
 
             rel_name = f"{self.side}_eyebrows{label}Main_REL"
-            self._create_relative_group(
+            rel_grp, sub_decompose = self._create_relative_group(
                 driver_ctrl=main_ctl,
                 driven_ctrl=sub_ctrl,
                 parent_grp=sub_ctl_gen,
                 top_grp=main_ctl_grp,
-                rel_name=rel_name
+                rel_name=rel_name,
+                node_tag=f"{label.lower()}Rel"
             )
 
             self.controls.append(sub_ctrl)
             self.control_groups.append(sub_ctl_gen)
 
-            # -- Local setup for this control, nested under MainLocal_TRN --
+            # Local setup per al control secundari
             local_off = cmds.group(em=True, n=f"{self.prefix}{label}Local_OFF", p=main_local_trn)
+            cmds.matchTransform(local_off, sub_ctl_gen, pos=True, rot=True)
+
             local_trn = cmds.group(em=True, n=f"{self.prefix}{label}Local_TRN", p=local_off)
             self.local_transforms[label] = local_trn
 
-            sub_decompose = self._build_relative_matrix(
-                driver_ctrl=sub_ctrl,
-                top_grp=main_ctl_grp,
-                node_base_name=f"{self.rig_name}_eyebrow",
-                node_name_tag=f"{label.lower()}Local"
-            )
             self._connect_decompose_to_transform(sub_decompose, local_trn)
 
             local_jnt = self._create_local_joint(local_trn, f"{self.prefix}{label}Local_JNT")
             self.local_joints[label] = local_jnt
 
+            # Tangents per als controls de cantonada (Calculats matemàticament)
             if label in corner_labels:
                 neighbour_idx = 2 if label == "In" else self.num_joints - 1
                 neighbour_guide = f"{self.side}_{base_prefix}_{neighbour_idx:02d}"
@@ -363,50 +331,41 @@ class EyebrowsModule(object):
                     sub_pos[2] + (nb_pos[2] - sub_pos[2]) * tangent_factor,
                 ]
 
-                tangent_loc = cmds.spaceLocator(n=f"{sub_ctrl_name}_tangent_TEMP")[0]
-                cmds.xform(tangent_loc, ws=True, t=tangent_pos)
-
                 tangent_ctl_name = f"{self.prefix}_{label}Tan_CTRL"
                 tangent_ctl = controlsLibrary.create_control_from_lib(
                     lib_name=self.tangent_control_style,
                     final_name=tangent_ctl_name
                 )
-                tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, tangent_loc)
+
+                # Creació del grup base directament amb les coordenades calculades
+                tangent_ctl_gen = self.group_maker.create_rig_hierarchy(tangent_ctl, sub_guide_name)
+                cmds.xform(tangent_ctl_gen, ws=True, t=tangent_pos)
                 cmds.parent(tangent_ctl_gen, sub_ctrl)
-                cmds.delete(tangent_loc)
 
                 tan_rel_name = f"{self.side}_eyebrows{label}TanMain_REL"
-                self._create_relative_group(
+                tan_rel_grp, tan_decompose = self._create_relative_group(
                     driver_ctrl=sub_ctrl,
                     driven_ctrl=tangent_ctl,
                     parent_grp=tangent_ctl_gen,
                     top_grp=sub_ctl_gen,
-                    rel_name=tan_rel_name
+                    rel_name=tan_rel_name,
+                    node_tag=f"{label.lower()}TanRel"
                 )
 
                 self.controls.append(tangent_ctl)
                 self.control_groups.append(tangent_ctl_gen)
 
-                # -- Local setup for the tangent control, nested under
-                #    this control's own Local_TRN (mirrors driver=sub_ctrl,
-                #    top_grp=sub_ctl_gen like the tangent's REL group does) --
                 tan_label = f"{label}Tan"
                 tan_local_off = cmds.group(em=True, n=f"{self.prefix}{tan_label}Local_OFF", p=local_trn)
+                cmds.matchTransform(tan_local_off, tangent_ctl_gen, pos=True, rot=True)
+
                 tan_local_trn = cmds.group(em=True, n=f"{self.prefix}{tan_label}Local_TRN", p=tan_local_off)
                 self.local_transforms[tan_label] = tan_local_trn
 
-                tan_decompose = self._build_relative_matrix(
-                    driver_ctrl=tangent_ctl,
-                    top_grp=sub_ctl_gen,
-                    node_base_name=f"{self.rig_name}_eyebrow",
-                    node_name_tag=f"{label.lower()}TanLocal"
-                )
                 self._connect_decompose_to_transform(tan_decompose, tan_local_trn)
 
                 tan_local_jnt = self._create_local_joint(tan_local_trn, f"{self.prefix}{tan_label}Local_JNT")
                 self.local_joints[tan_label] = tan_local_jnt
 
-        # ------------------------------------------------------------
-        # 5) BEZIER CURVE riding on top of the local joints.
-        # ------------------------------------------------------------
+        # 5) BEZIER CURVE
         self._create_local_bezier_curve()

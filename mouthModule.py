@@ -6,9 +6,6 @@ from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 import rigRoot_module
 
-#CONECTAR TODA LA JERARQUIA DE GRUPOS DE LOS CONTROLES AL MMX Y SI EL SIDE ES R 
-#PONERLE UNA NUEVA MATRIZ CON SCALE X EN -1
-
 class MouthModule(object):
 
     # Índices fijos de coordinate[] / outputMatrix[] en el uvPin compartido
@@ -16,6 +13,9 @@ class MouthModule(object):
     BLEND01_INDEX = {"L": 3, "R": 5}
     BLEND02_INDEX = {"L": 4, "R": 6}
 
+    # Desplazamiento en Y de las shapes de los controles de labio: los de upper
+    # suben +Y y los de lower bajan -Y. Solo mueve los CV de la curva, ni el
+    # transform ni el pivote. Ponlo a 0 para desactivarlo.
     # Matriz de espejo en X. Se anade como ultima entrada del multMatrix de los
     # controles del lado R para devolver el delta a espacio no espejado, porque
     # su _GRP lleva un scaleX = -1 que la cadena de matrices no recoge (el _GRP
@@ -28,9 +28,6 @@ class MouthModule(object):
                         0.0, 0.0, 1.0, 0.0,
                         0.0, 0.0, 0.0, 1.0]
 
-    # Desplazamiento en Y de las shapes de los controles de labio: los de upper
-    # suben +Y y los de lower bajan -Y. Solo mueve los CV de la curva, ni el
-    # transform ni el pivote. Ponlo a 0 para desactivarlo.
     SHAPE_OFFSET_Y = 1.0
 
     def __init__(self, boca_surface="boca_surface", 
@@ -96,7 +93,33 @@ class MouthModule(object):
             source=True, destination=False
         )
         return bool(conns)
-    
+
+    def _get_ctrl_root_grp(self, ctrl):
+        """
+        Devuelve el _GRP raiz de la jerarquia de un control.
+
+        NO vale con listRelatives(ctrl, parent=True): el padre directo del CTRL
+        es el _ANIM, no el _GRP. Si se coge el ANIM por error, los guardas del
+        tipo "este grupo ya tiene parentConstraint" no ven el constraint que
+        esta en el _GRP y acaban creando otro en mitad de la jerarquia. Antes
+        eso solo movia el control en pantalla, pero ahora que el multMatrix lee
+        ANIM/SDK/OFF/SPC ese movimiento se cuela dentro del sistema local.
+
+        create_rig_hierarchy nombra el grupo raiz como "<ctrl sin _CTRL>_GRP",
+        asi que se reconstruye el nombre y solo se sube a mano si no aparece.
+        """
+        expected = f"{ctrl.replace('_CTRL', '')}_GRP"
+        if cmds.objExists(expected):
+            return expected
+
+        node = ctrl
+        for _ in range(5):   # ANIM > SDK > OFF > SPC > GRP
+            parent = cmds.listRelatives(node, parent=True)
+            if not parent:
+                break
+            node = parent[0]
+        return node
+
     def _get_ctrl_matrix_chain(self, source_ctrl, source_ctrl_grp):
         """
         Devuelve [CTRL, ANIM, SDK, OFF, SPC]: el control y todos los grupos que
@@ -122,7 +145,7 @@ class MouthModule(object):
             node = parent
 
         return chain
-    
+
     def _build_cps_network(self, prefix, cps_name, base_name, source_ctrl, source_ctrl_grp):
         """
         Crea el space-tracking + closestPointOnSurface (CPS) crudo de un control.
@@ -153,7 +176,6 @@ class MouthModule(object):
         matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
         for index, node in enumerate(matrix_chain):
             cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
-
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
         cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
@@ -347,20 +369,6 @@ class MouthModule(object):
             parent_group=None
         )
 
-        # El lado R se saca del prefix y no de self.side porque por aqui tambien
-        # pasan el Upper y el Lower con prefix "C_...", que no se tienen que
-        # espejar. La comisura tampoco entra: esa va por _build_cps_network.
-        is_right = prefix.startswith("R_")
-
-        # scaleX = -1 en el PRIMER grupo de la jerarquia de este control (su
-        # _GRP), no en el grupo comun donde cuelgan todos.
-        #
-        # Va DESPUES de create_space_tracking_hierarchy a proposito: esa funcion
-        # hace un matchTransform con rot=True contra este mismo nodo, y si ya
-        # tuviese la escala negativa la rotacion saldria mal extraida.
-        if is_right:
-            cmds.setAttr(f"{source_ctrl_grp}.scaleX", -1)
-
         mult_node = NodeCreator(
             side=prefix, node_type="multMatrix", base_name=base_name,
             name="Local", tag="CTRL", parent=None, custom_suffix=None
@@ -374,17 +382,24 @@ class MouthModule(object):
             name="Local", tag="CTRL", parent=None, custom_suffix=None
         ).create()
 
-        # Misma cadena que en _build_cps_network: el delta del control tiene que
-        # llevar dentro todos los grupos que tiene por encima hasta el _GRP.
+        # El lado R se saca del prefix y no de self.side porque por aqui tambien
+        # pasan el Upper y el Lower con prefix "C_...", que no se tienen que
+        # espejar. La comisura tampoco entra: esa va por _build_cps_network.
+        is_right = prefix.startswith("R_")
+
+        # scaleX = -1 en el PRIMER grupo de la jerarquia de este control (su
+        # _GRP), no en el grupo comun donde cuelgan todos.
+        if is_right:
+            cmds.setAttr(f"{source_ctrl_grp}.scaleX", -1)
+
         matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
         for index, node in enumerate(matrix_chain):
             cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
 
-        # Y al final de la cadena, el espejo que compensa el scaleX = -1 del _GRP.
+        # Y al final de la cadena, el espejo que compensa el scaleX del _GRP.
         if is_right:
             cmds.setAttr(f"{mult_node}.matrixIn[{len(matrix_chain)}]",
                          self.MIRROR_X_MATRIX, type="matrix")
-
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
         cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
@@ -759,55 +774,6 @@ class MouthModule(object):
             return False
         return True
 
-    # ------------------------------------------------------------------
-    # RAICES COMPARTIDAS DE LA CARA
-    #
-    # Mismo reparto que leg_module y limbs_module: el SISTEMA cuelga del
-    # <rig>_rig_GRP y los CONTROLES del <rig>_local_CTL.
-    #
-    # El <rig>_mirrorBehaviour_GRP no se usa: los faciales van con sistema
-    # local. Lo que ya estuviera dentro se queda dentro, porque _park_node no
-    # mueve nada que ya tenga padre.
-    #
-    # Los dos grupos son compartidos por la boca, el jaw y los ojos. Como
-    # _ensure_group es idempotente, el primer modulo que corra los crea y los
-    # demas se los encuentran hechos.
-    # ------------------------------------------------------------------
-    def _face_systems_root(self):
-        """C_<rig>_face_GRP, bajo el rig_GRP."""
-        rig_grp = f"{self.rig_name}_rig_GRP"
-        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
-            rig_grp = self.root_instance.get_rig_grp()
-
-        parent = rig_grp if cmds.objExists(rig_grp) else None
-        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
-
-    def _face_controls_root(self):
-        """C_<rig>_faceControls_GRP, bajo el local_CTL."""
-        local_ctl = f"{self.rig_name}_local_CTL"
-        if self.root_instance is not None:
-            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
-
-        parent = local_ctl if cmds.objExists(local_ctl) else None
-        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
-
-    def _make_world_driven(self, group_name):
-        """
-        inheritsTransform = 0 en grupos cuyos hijos ya reciben una matriz de
-        MUNDO (offsetParentMatrix del uvPin, motionPath).
-
-        Hace falta desde que esto cuelga del rig_GRP, que esta scaleConstrained
-        al globalCtl: sin esto, al escalar el rig esos nodos se transformarian
-        dos veces.
-        """
-        if group_name and cmds.objExists(group_name):
-            try:
-                if cmds.getAttr(f"{group_name}.inheritsTransform"):
-                    cmds.setAttr(f"{group_name}.inheritsTransform", 0)
-            except Exception:
-                pass
-        return group_name
-
     def _organize_outliner(self, control_groups=None):
         """
         Ordena en el outliner todo lo que este modulo deja suelto en la raiz.
@@ -835,23 +801,16 @@ class MouthModule(object):
         sides = ["L", "R"]
 
         # --- 1. Esqueleto de grupos ---
-        # El sistema va al rig_GRP y los controles al local_CTL, cada rama por
-        # su lado, en vez de todo junto colgando de la raiz de la escena.
-        root_grp = self._ensure_group(f"{center}_mouth_GRP", self._face_systems_root())
+        root_grp = self._ensure_group(f"{center}_mouth_GRP")
         self.mouth_root_grp = root_grp
 
-        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP",
-                                          self._face_controls_root())
+        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP", root_grp)
         center_controls_grp = self._ensure_group(f"{center}_mouthCenterControls_GRP", controls_grp)
         joints_grp = self._ensure_group(f"{center}_mouthJoints_GRP", root_grp)
         curves_grp = self._ensure_group(f"{center}_mouthCurves_GRP", root_grp)
         locators_grp = self._ensure_group(f"{center}_mouthLocators_GRP", root_grp)
-        # Estos dos reciben matriz de mundo (uvPin y motionPath), asi que no
-        # deben heredar la escala del rig_GRP.
-        projected_grp = self._make_world_driven(
-            self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp))
-        trackers_grp = self._make_world_driven(
-            self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp))
+        projected_grp = self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp)
+        trackers_grp = self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp)
         setup_grp = self._ensure_group(f"{center}_mouthSetup_GRP", root_grp)
 
         # El <lado>_mouthControls_GRP ya lo crea build(); aqui solo se recoloca.
@@ -1022,7 +981,7 @@ class MouthModule(object):
             )
         else:
             mid_lip = center_name
-            mid_lip_grp = cmds.listRelatives(mid_lip, parent=True)[0]
+            mid_lip_grp = self._get_ctrl_root_grp(mid_lip)
             
         self.mid_lip_ctrl = mid_lip          
 
@@ -1067,7 +1026,7 @@ class MouthModule(object):
             )
         else:
             mid_lipUpper = upper_lip_name
-            upper_lip_grp = cmds.listRelatives(mid_lipUpper, parent=True)[0]
+            upper_lip_grp = self._get_ctrl_root_grp(mid_lipUpper)
             
         upper_off_name = f"C_{self.rig_name}_UpperLocal_OFF"
         upper_trn_name = f"C_{self.rig_name}_UpperLocal_TRN"
@@ -1093,7 +1052,7 @@ class MouthModule(object):
             cmds.setAttr(f"{lower_lip_grp}.scaleY", -1)
         else:
             mid_lipLower = lower_lip_name
-            lower_lip_grp = cmds.listRelatives(mid_lipLower, parent=True)[0]
+            lower_lip_grp = self._get_ctrl_root_grp(mid_lipLower)
             
         lower_off_name = f"C_{self.rig_name}_LowerLocal_OFF"
         lower_trn_name = f"C_{self.rig_name}_LowerLocal_TRN"
@@ -1214,7 +1173,7 @@ class MouthModule(object):
             )
         else:
             levator_ctrl = levator_name
-            levator_ctrl_grp = cmds.listRelatives(levator_ctrl, parent=True)[0]
+            levator_ctrl_grp = self._get_ctrl_root_grp(levator_ctrl)
 
         depresor_name = f"{self.prefix}_depresor_CTRL"
         if not cmds.objExists(depresor_name):
@@ -1231,7 +1190,7 @@ class MouthModule(object):
             #cmds.parent(depresor_ctrl_grp, depresor_negative)
         else:
             depresor_ctrl = depresor_name
-            depresor_ctrl_grp = cmds.listRelatives(depresor_ctrl, parent=True)[0]
+            depresor_ctrl_grp = self._get_ctrl_root_grp(depresor_ctrl)
 
         # =========================================================
         # 6.5 SETUP DE OFF/TRN + JOINTS PARA LEVATOR Y DEPRESOR (ambos sides)
@@ -1304,7 +1263,7 @@ class MouthModule(object):
             )
         else:
             upperPinch_ctrl = upperPinch_name
-            upperPinch_ctrl_grp = cmds.listRelatives(upperPinch_ctrl, parent=True)[0]
+            upperPinch_ctrl_grp = self._get_ctrl_root_grp(upperPinch_ctrl)
 
         lowerPinch_name = f"{self.prefix}_lowerPinch_CTRL"
         if not cmds.objExists(lowerPinch_name):
@@ -1321,7 +1280,7 @@ class MouthModule(object):
             #cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
         else:
             lowerPinch_ctrl = lowerPinch_name
-            lowerPinch_ctrl_grp = cmds.listRelatives(lowerPinch_ctrl, parent=True)[0]
+            lowerPinch_ctrl_grp = self._get_ctrl_root_grp(lowerPinch_ctrl)
 
         # =========================================================
         # 6.7 SETUP DE OFF/TRN + JOINTS PARA UPPERPINCH Y LOWERPINCH (ambos sides)

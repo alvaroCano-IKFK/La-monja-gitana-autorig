@@ -65,8 +65,7 @@ class EyebrowsModule(object):
     def generate_relative_control_transform(
         self, control_name, top_grp, create_transform=True
     ):
-        """Calcula la matriu relativa d'un control respecte a la seva jerarquia fins a top_grp,
-        neutralitzant l'offset estàtic de la guia perquè el resultat sigui 0 en repòs."""
+
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
 
@@ -236,21 +235,7 @@ class EyebrowsModule(object):
     # Up curve (offsetCurve sobre una versió NURBS reconstruïda)
     # ------------------------------------------------------------------
     def _create_local_up_curve(self, source_curve):
-        """Crea una offsetCurve de la bezier local amb normal (0,-1,0).
 
-        La bezier té nusos repetits a cada junta de segment (multiplicitat 3),
-        cosa que fa que la tangent sigui discontínua en aquells punts. Això
-        trenca el càlcul intern d'offsetCurve i produeix un resultat
-        col·lapsat/degenerat. A més, `rebuildCurve` no accepta corbes bezier
-        directament (cal convertir-les primer). Per tant:
-
-        1) Convertim la bezier a NURBS "normal" amb bezierCurveToNurbs.
-        2) Reconstruïm aquesta NURBS amb nusos uniformes (rebuildCurve).
-        3) Apliquem l'offsetCurve sobre aquesta còpia neta.
-        4) Esborrem les dues còpies temporals.
-
-        La bezier original (amb el seu skinCluster) no es toca en cap moment.
-        """
 
         # 1) Bezier -> NURBS normal (còpia, no toca l'original)
         cmds.select(source_curve, replace=True)

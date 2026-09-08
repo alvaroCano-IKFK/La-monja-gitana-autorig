@@ -239,31 +239,25 @@ class EyebrowsModule(object):
     # Up curve (offsetCurve amb normal fixa, paral·lela al terra)
     # ------------------------------------------------------------------
     def _create_local_up_curve(self, source_curve):
-        """Crea una offsetCurve de la bezier local amb normal (0,-1,0),
-        de manera que quedi paral·lela al terra independentment de la
-        curvatura de la corba original. Elimina l'historial en acabar."""
 
-        offset_result = cmds.offsetCurve(
-            source_curve,
-            ch=True,
-            rn=False,
-            cb=2,
-            cl=True,
-            cr=0,
-            d=self.up_curve_offset,
-            tol=0.01,
-            sd=5,
-            ugn=True,               # useGivenNormal
-            normal=(0, -1, 0),      # normal fixa -> paral·lela al terra
-            name=f"{self.prefix}_local_upCRV",
+        dup_result = cmds.duplicate(
+            source_curve, name=f"{self.prefix}_local_upCRV"
         )
-        up_curve = offset_result[0] if isinstance(offset_result, list) else offset_result
+        up_curve = dup_result[0]
 
-        # Eliminem l'historial (l'offsetCurve queda estàtica)
         cmds.delete(up_curve, ch=True)
 
+        cmds.xform(
+            up_curve,
+            relative=True,
+            worldSpace=True,
+            translation=(0, self.up_curve_offset, 0),
+        )
+
         if self.local_grp and cmds.objExists(self.local_grp):
-            cmds.parent(up_curve, self.local_grp)
+            current_parent = cmds.listRelatives(up_curve, parent=True)
+            if not current_parent or current_parent[0] != self.local_grp:
+                cmds.parent(up_curve, self.local_grp)
 
         self.local_up_curve = up_curve
         return up_curve

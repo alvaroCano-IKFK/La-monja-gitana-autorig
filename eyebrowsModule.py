@@ -41,24 +41,13 @@ class EyebrowsModule(object):
             "tangent_control_style", self.control_style
         )
 
-        # Paràmetres configurables de la bezier / upCurve
+        # Parametros configurables de la bezier / upCurve
         self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
         self.up_curve_offset = kwargs.get("up_curve_offset", 0.5)
 
-        # NORMAL DEL PLA de l'offset, NO la direcció del desplaçament.
-        # La direcció real de l'offset és tangent x normal.
-        #   (0, -1, 0) -> desplaçament horitzontal, paral·lel al terra.
-        #                 És el que descriu la infografia: la upCurve queda
-        #                 davant de la cara i els joints hi aimen.
-        #   (0,  0, 1) -> desplaçament vertical, la upCurve queda per sobre
-        #                 de l'arc de la cella.
-        self.up_curve_normal = kwargs.get("up_curve_normal", (0.0, -1.0, 0.0))
+        self.up_curve_normal = kwargs.get("up_curve_normal", (0.0, 0.0, 1.0))
 
-        # Cap on ha d'apuntar l'offset en world space. Com que la direcció
-        # depèn del sentit In->Out de la corba, sense això la upCurve de L i
-        # la de R acaben a bandes oposades del crani. Amb la cara mirant a
-        # +Z, deixa-ho a (0, 0, 1).
-        self.up_curve_aim = kwargs.get("up_curve_aim", (0.0, 0.0, 1.0))
+        self.up_curve_aim = kwargs.get("up_curve_aim", (0.0, 1.0, 0.0))
 
         self.rig_joints = []
         self.controls = []
@@ -84,7 +73,7 @@ class EyebrowsModule(object):
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
 
-        # Creació del nodo multMatrix
+        # Creacio del nodo multMatrix
         mmtx = cmds.createNode(
             "multMatrix", name=f"{base_name}Local_MTX", ss=True
         )
@@ -109,8 +98,6 @@ class EyebrowsModule(object):
                 f"{elem}.matrix", f"{mmtx}.matrixIn[{i}]", force=True
             )
 
-        # Neutralitzem l'offset estàtic (bind pose) perquè el resultat
-        # sigui 0/identitat en repòs, independentment de la posició de la guia.
         bind_matrix = cmds.getAttr(f"{mmtx}.matrixSum")
         inv_bind_matrix = om2.MMatrix(bind_matrix).inverse()
         bind_index = len(matrix_inputs)
@@ -120,7 +107,6 @@ class EyebrowsModule(object):
             type="matrix",
         )
 
-        # Creació del nodo decomposeMatrix
         dcm = cmds.createNode(
             "decomposeMatrix", name=f"{base_name}Local_DCM", ss=True
         )
@@ -129,7 +115,6 @@ class EyebrowsModule(object):
         if not create_transform:
             return dcm
 
-        # Creació del grup REL (mantenint la posició neutra)
         relative_trn = cmds.createNode(
             "transform", name=f"{base_name}_REL", ss=True
         )
@@ -166,15 +151,26 @@ class EyebrowsModule(object):
     # Curve helpers
     # ------------------------------------------------------------------
     def _cv_count(self, curve):
-        """Nombre real de CVs d'una corba (funciona també per a beziers)."""
+        """Nombre real de CVs (spans + degree no es fiable en beziers)."""
         return len(cmds.ls(f"{curve}.cv[*]", flatten=True))
+
+    def _average_cv_position(self, curve):
+        """Centroide dels CVs en world space."""
+        cvs = cmds.ls(f"{curve}.cv[*]", flatten=True)
+        if not cvs:
+            return om2.MVector(0.0, 0.0, 0.0)
+
+        total = om2.MVector(0.0, 0.0, 0.0)
+        for cv in cvs:
+            total += om2.MVector(*cmds.pointPosition(cv, world=True))
+        return total / float(len(cvs))
 
     def _park_curve_in_local_grp(self, curve):
         """Parenteja una corba al grup local sense heretar transformacions.
 
-        Les dues corbes han de viure al mateix espai. Com que després es
+        Les dues corbes han de viure al mateix espai. Com que despres es
         deformen amb un skinCluster, cal desactivar l'inheritsTransform per
-        evitar la doble transformació del grup local.
+        evitar la doble transformacio del grup local.
         """
         if not (self.local_grp and cmds.objExists(self.local_grp)):
             return
@@ -183,16 +179,16 @@ class EyebrowsModule(object):
         cmds.setAttr(f"{curve}.inheritsTransform", 0)
 
     def _skin_curve_one_to_one(self, curve, cv_weights, skin_name):
-        """Skinneja una corba amb una única influència per CV.
+        """Skinneja una corba amb una unica influencia per CV.
 
         cv_weights: dict {cv_index: joint}
         """
         cv_count = self._cv_count(curve)
         if cv_count != len(cv_weights):
             cmds.warning(
-                f"{curve} té {cv_count} CVs i se n'esperaven "
+                f"{curve} te {cv_count} CVs i se n'esperaven "
                 f"{len(cv_weights)}. No es pot fer el skin 1:1; revisa el "
-                "subdivisionDensity o la distància de l'offsetCurve."
+                "subdivisionDensity o la distancia de l'offsetCurve."
             )
             return None
 
@@ -206,14 +202,6 @@ class EyebrowsModule(object):
                 transformValue=[(jnt, 1.0)],
             )
         return skin_cluster
-
-    def _measure_offset_direction(self, source_curve, offset_curve):
-        """Vector que va del punt mig de la corba font al de l'offset."""
-        src = cmds.pointOnCurve(source_curve, pr=0.5, top=True, p=True)
-        off = cmds.pointOnCurve(offset_curve, pr=0.5, top=True, p=True)
-        return om2.MVector(
-            off[0] - src[0], off[1] - src[1], off[2] - src[2]
-        )
 
     # ------------------------------------------------------------------
     # Bezier curve creation
@@ -238,7 +226,6 @@ class EyebrowsModule(object):
         out_tan_pos = cmds.xform(out_tan_jnt, q=True, ws=True, t=True)
         out_pos = cmds.xform(out_jnt, q=True, ws=True, t=True)
 
-        # Càlcul vectorial de les tangents del Mid (ajustable via mid_tangent_scale)
         tangent_scale = self.mid_tangent_scale
         mid_dir = [out_pos[axis] - in_pos[axis] for axis in range(3)]
         mid_in_tan_pos = [
@@ -248,8 +235,6 @@ class EyebrowsModule(object):
             mid_pos[axis] + mid_dir[axis] * tangent_scale for axis in range(3)
         ]
 
-        # 3 àncores (In, Mid, Out). In i Out són "corner" per definició
-        # (un sol handle a cada extrem); Mid té tangents suaus i col·lineals.
         cv_positions = [
             in_pos,
             in_tan_pos,
@@ -278,7 +263,6 @@ class EyebrowsModule(object):
             6: out_jnt,
         }
 
-        # La upCurve es genera ABANS d'skinnejar, a partir de la forma neta.
         up_curve = self._create_local_up_curve(bezier_crv)
 
         # Les dues corbes al mateix espai
@@ -310,42 +294,58 @@ class EyebrowsModule(object):
         )[0]
         cmds.delete(tmp_crv, ch=True)
 
+        src_center = self._average_cv_position(tmp_crv)
+
         def _build_offset(distance, node_name):
             result = cmds.offsetCurve(
                 tmp_crv,
-                ch=False,          # sense history: la volem estàtica
+                ch=False,         
                 rn=False,
-                cb=2,              # Connect Breaks: Linear
-                cl=True,           # Cut Loop
-                cr=0.0,            # Cut Radius 0
+                cb=2,             
+                cl=True,          
+                cr=0.0,           
                 d=distance,
                 tol=0.01,
-                sd=0,              # CLAU: conserva el nombre de CVs
-                ugn=True,          # useGivenNormal
+                sd=0,             
+                ugn=True,          
                 normal=self.up_curve_normal,
                 name=node_name,
             )
             return result[0] if isinstance(result, list) else result
 
-        # 2) Primer intent amb distància positiva
+        # 2) Primer intent amb distancia positiva
         up_curve = _build_offset(
-            self.up_curve_offset, f"{self.prefix}_local_upCRV"
+            self.up_curve_offset, f"{self.prefix}_localUp_BZC"
         )
 
-        # 3) Comprovació del signe. La direcció de l'offset és tangent x normal,
+        # 3) Comprovacio del signe. La direccio de l'offset es tangent x normal,
         #    i com que la corba va In->Out, a L i a R surt invertida. Si apunta
         #    al contrari de up_curve_aim, la refem negada.
-        delta = self._measure_offset_direction(tmp_crv, up_curve)
+        delta = self._average_cv_position(up_curve) - src_center
         aim = om2.MVector(*self.up_curve_aim)
 
         if delta.length() > 1e-6 and aim.length() > 1e-6:
             if (delta.normal() * aim.normal()) < 0.0:
                 cmds.delete(up_curve)
                 up_curve = _build_offset(
-                    -self.up_curve_offset, f"{self.prefix}_local_upCRV"
+                    -self.up_curve_offset, f"{self.prefix}_localUp_BZC"
+                )
+                delta = self._average_cv_position(up_curve) - src_center
+
+        # 4) Avis si l'offset no ha anat majoritariament cap a l'eix esperat.
+        #    Normalment vol dir que up_curve_normal no es perpendicular a la
+        #    direccio desitjada.
+        if delta.length() > 1e-6 and aim.length() > 1e-6:
+            alignment = delta.normal() * aim.normal()
+            if alignment < 0.5:
+                cmds.warning(
+                    f"{up_curve}: l'offset nomes esta alineat un "
+                    f"{alignment:.2f} amb up_curve_aim {self.up_curve_aim}. "
+                    f"Revisa up_curve_normal (ara {self.up_curve_normal}): ha "
+                    "de ser perpendicular a la direccio que vols."
                 )
 
-        # 4) Neteja del duplicat temporal
+        # 5) Neteja del duplicat temporal
         if cmds.objExists(tmp_crv):
             cmds.delete(tmp_crv)
 
@@ -443,7 +443,7 @@ class EyebrowsModule(object):
             )
             cmds.parent(sub_ctl_gen, main_ctl)
 
-            # Generació del grup REL i la xarxa de matrius
+            # Generacio del grup REL i la xarxa de matrius
             rel_grp, _ = self.generate_relative_control_transform(
                 control_name=sub_ctrl,
                 top_grp=main_ctl_grp,
@@ -464,7 +464,7 @@ class EyebrowsModule(object):
             )
             self.local_transforms[label] = local_trn
 
-            # Connexió des del REL cap al TRN (Mantenint TRN a 0, 0, 0)
+            # Connexio des del REL cap al TRN (Mantenint TRN a 0, 0, 0)
             self._connect_transform_channels(rel_grp, local_trn)
 
             local_jnt = self._create_local_joint(
@@ -531,7 +531,7 @@ class EyebrowsModule(object):
                 )
                 self.local_transforms[tan_label] = tan_local_trn
 
-                # Connexió del REL de la tangent al seu respectiu TRN
+                # Connexio del REL de la tangent al seu respectiu TRN
                 self._connect_transform_channels(tan_rel_grp, tan_local_trn)
 
                 tan_local_jnt = self._create_local_joint(

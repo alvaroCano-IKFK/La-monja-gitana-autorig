@@ -57,7 +57,7 @@ class SoftIkModule(object):
         Sin esto, al reconstruir Maya autorenombra ('..._TRN1') y acabas con dos
         redes vivas peleandose por el mismo ikHandle.
         """
-        for suffix in ("softGoal_TRN", "softOffset_TRN", "softTransform_TRN"):
+        for suffix in ("softGoal_TRN", "softRoot_TRN", "softOffset_TRN", "softTransform_TRN"):
             node = f"{self.prefix}_{suffix}"
             if cmds.objExists(node):
                 cmds.delete(node)
@@ -115,7 +115,7 @@ class SoftIkModule(object):
     # ------------------------------------------------------------------
 
     def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt,
-                      goal_ctrl=None):
+                      goal_ctrl=None, soft_max_distance_override=None):
         """
         Crea las conexiones de nodos para el Soft IK.
 
@@ -126,6 +126,8 @@ class SoftIkModule(object):
             root_jnt (str): El joint IK inicial de la cadena (Thigh o Shoulder).
             mid_jnt (str): El joint IK intermedio (Knee o Elbow).
             low_jnt (str): El joint IK final de la cadena (Ankle o Wrist).
+            root_ctrl (str): El control que mueve la raiz de la cadena. NO se
+                usa para medir: solo para arrastrar el softRoot_TRN.
             goal_ctrl (str): Quien mandaba sobre el ik handle ANTES de meter
                 el soft. En un brazo es el propio ik_ctrl, y por eso es el
                 valor por defecto. En una pierna NO lo es: ahi el handle iba
@@ -133,6 +135,10 @@ class SoftIkModule(object):
                 pivotes del pie (ik_ctrl > heel > bankIn > bankOut > tip >
                 ball). Si el soft apunta al ik_ctrl se salta esos pivotes y
                 el foot roll deja de mover el tobillo.
+            soft_max_distance_override (float): Solo para casos raros. Si se
+                pasa un valor mayor que (fullLength - initialDistance) el soft
+                empezara a actuar YA en pose de reposo, asi que se recorta y
+                se avisa.
         """
         # Por defecto el objetivo es el propio control IK (caso brazo).
         goal_ctrl = goal_ctrl or ik_ctrl
@@ -159,6 +165,28 @@ class SoftIkModule(object):
         cmds.matchTransform(soft_goal_node, ik_hdl, pos=True, rot=True)
         self._parent_into_rig(soft_goal_node, soft_parent)
         cmds.parentConstraint(goal_ctrl, soft_goal_node, mo=True)
+
+        # ----------------------------------------------------------------
+        # RAIZ DEL SOFT
+        # ----------------------------------------------------------------
+
+        # Este transform es el equivalente al "group the start joint of the IK
+        # chain" de la infografia, y es CRITICO que exista.
+        #
+        # No se puede medir desde root_jnt.worldMatrix porque el joint recibe
+        # su rotacion del ikHandle y se cierra un ciclo de evaluacion. Pero
+        # tampoco se puede medir desde root_ctrl: si el control no esta
+        # exactamente encima del joint raiz, la distancia medida sale inflada
+        # respecto al fullLength (que sale de los translateX de los joints), el
+        # umbral del soft se dispara antes de tiempo y el codo se va hacia el
+        # pole vector con el brazo quieto.
+        #
+        # La solucion es un transform en la posicion EXACTA del joint raiz,
+        # arrastrado por el control con mo=True. Ni cicla ni miente.
+        soft_root_node = cmds.group(empty=True, name=f"{self.prefix}_softRoot_TRN")
+        cmds.matchTransform(soft_root_node, root_jnt, pos=True, rot=True)
+        self._parent_into_rig(soft_root_node, soft_parent)
+        cmds.parentConstraint(root_ctrl, soft_root_node, mo=True)
 
         # ----------------------------------------------------------------
         # ATRIBUTOS DEL CONTROL IK
@@ -212,12 +240,13 @@ class SoftIkModule(object):
         # distancia tiene que ser la misma que luego recorre el aim, o el soft
         # empieza a actuar a una longitud que no corresponde.
         #
-        # El origen es root_ctrl y NO root_jnt a proposito: el root_jnt recibe
-        # su rotacion del propio ikHandle, asi que meter su worldMatrix aqui
-        # cerraria un ciclo de evaluacion.
+        # Y se mide DESDE soft_root_node, que esta sobre el joint raiz, para
+        # que esta distancia y el fullLength (sacado de los translateX de los
+        # joints) compartan origen. Si aqui entra root_ctrl y el control no
+        # coincide con el joint, la comparacion del condition esta sesgada.
         distance_node = self._create_node("distanceBetween", "rootToIk", "DIST")
 
-        cmds.connectAttr(f"{root_ctrl}.worldMatrix[0]", f"{distance_node}.inMatrix1", force=True)
+        cmds.connectAttr(f"{soft_root_node}.worldMatrix[0]", f"{distance_node}.inMatrix1", force=True)
         cmds.connectAttr(f"{soft_goal_node}.worldMatrix[0]", f"{distance_node}.inMatrix2", force=True)
 
         # 5. Float math que divida la distancia total entre el global scale
@@ -241,19 +270,40 @@ class SoftIkModule(object):
         # el margen que le queda a la extremidad desde su pose de reposo hasta
         # quedar completamente estirada. Si se conectase vivo se recalcularia
         # cada vez que mueves el control y el soft nunca llegaria a dispararse.
+        #
+        # ESTE VALOR NO SE PUEDE INFLAR. Con softMaxDistance exacto se cumple
+        # que softDistance = fullLength - softValue >= initialDistance para
+        # cualquier Soft de 0 a 1, con igualdad justo en Soft = 1. Y en ese
+        # limite la exponencial devuelve softConstant = softDistance =
+        # distanceToControl. Traducido: en pose de reposo el brazo NO se mueve
+        # con ningun valor de Soft.
+        #
+        # Si se le mete un margen mayor del real (por ejemplo forzando un 5%
+        # "para que el soft tenga recorrido"), softDistance cae por debajo de
+        # la distancia de reposo, el condition se pone en True con el brazo
+        # quieto, el handle se retrae y el codo se va hacia el pole vector.
+        # Ese es el pop.
         full_length_value = cmds.getAttr(f"{fullLenght_node}.outFloat")
         initial_distance_value = cmds.getAttr(f"{distanceToControlNormalized_node}.outFloat")
-        soft_max_distance = full_length_value - initial_distance_value
+        safe_max_distance = max(0.0, full_length_value - initial_distance_value)
 
-        # Si la extremidad se ha construido practicamente recta el margen es
-        # cero y el soft no tendria recorrido. Damos un 5% de la longitud total
-        # como minimo y avisamos, que suele significar guias mal flexionadas.
-        min_margin = full_length_value * 0.05
-        if soft_max_distance < min_margin:
-            cmds.warning(f"[{self.prefix}] softMaxDistance calculado = {soft_max_distance:.4f}. "
-                         f"La extremidad esta casi recta en pose de reposo; se usa "
-                         f"{min_margin:.4f} (5% de la longitud). Revisa la flexion de las guias.")
-            soft_max_distance = min_margin
+        soft_max_distance = safe_max_distance
+        if soft_max_distance_override is not None:
+            soft_max_distance = float(soft_max_distance_override)
+            if soft_max_distance > safe_max_distance:
+                cmds.warning(f"[{self.prefix}] El override {soft_max_distance:.4f} supera el "
+                             f"maximo seguro {safe_max_distance:.4f}: el soft actuaria en pose "
+                             "de reposo. Se recorta.")
+                soft_max_distance = safe_max_distance
+
+        # Si la extremidad se ha construido practicamente recta, el margen es
+        # cero y el soft no tiene recorrido. Eso es CORRECTO: la solucion esta
+        # en flexionar mas las guias, no en inventarse margen aqui.
+        if soft_max_distance < full_length_value * 0.01:
+            cmds.warning(f"[{self.prefix}] softMaxDistance = {soft_max_distance:.4f} sobre una "
+                         f"longitud de {full_length_value:.4f}. La extremidad esta casi recta en "
+                         "pose de reposo, asi que el soft tendra recorrido nulo o casi nulo. "
+                         "Revisa la flexion de las guias (codo / rodilla).")
 
         softMaxDistance_node = self._create_node("floatConstant", "softMaxDistance", "FLC")
         cmds.setAttr(f"{softMaxDistance_node}.inFloat", soft_max_distance)
@@ -352,12 +402,14 @@ class SoftIkModule(object):
         # 11. CONECTAR EL SOFT AL HANDLE
         # ----------------------------------------------------------------
 
-        # Crear TRNS y posicionarlos en la raiz de la cadena IK, para que el
-        # softTransform viaje sobre la recta root -> destino real del handle.
+        # El softOffset nace y vive sobre el soft_root_node: el mismo punto
+        # desde el que se mide la distancia. Asi el softTransform recorre
+        # exactamente la recta rootJoint -> destino real del handle, y en el
+        # cruce del condition las dos ramas valen lo mismo (sin salto).
         softOffset_node = cmds.group(empty=True, name=f"{self.prefix}_softOffset_TRN")
         softTransform_node = cmds.group(empty=True, name=f"{self.prefix}_softTransform_TRN")
         cmds.parent(softTransform_node, softOffset_node)
-        cmds.matchTransform(softOffset_node, root_jnt, pos=True, rot=True)
+        cmds.matchTransform(softOffset_node, soft_root_node, pos=True, rot=True)
         self._parent_into_rig(softOffset_node, soft_parent)
 
         # El TRN hijo tiene que arrancar en cero: su translateX es la salida
@@ -367,12 +419,12 @@ class SoftIkModule(object):
             cmds.setAttr(f"{softTransform_node}.rotate{axis}", 0)
             cmds.setAttr(f"{softTransform_node}.scale{axis}", 1)
 
-        cmds.pointConstraint(root_ctrl, softOffset_node, mo=False)
+        cmds.pointConstraint(soft_root_node, softOffset_node, mo=False)
 
         # El aim va al soft_goal_node: asi el softTransform viaja sobre la
         # recta root -> destino real del handle, y todo lo que haga el foot
         # roll sigue llegando al tobillo.
-        up_vector = self._pick_up_vector(root_ctrl, soft_goal_node)
+        up_vector = self._pick_up_vector(soft_root_node, soft_goal_node)
         cmds.aimConstraint(soft_goal_node, softOffset_node, mo=False,
                            aimVector=(1, 0, 0), upVector=up_vector,
                            worldUpType="vector", worldUpVector=up_vector)
@@ -382,6 +434,12 @@ class SoftIkModule(object):
 
         # Se elimina el constraint que hubiera entre el ik hdl y su control
         # para sustituirlo por este. El poleVectorConstraint NO se toca.
+        #
+        # NOTA: es un pointConstraint, no un parentConstraint. El handle deja
+        # de heredar la rotacion del control, asi que la orientacion de la
+        # muñeca/tobillo tiene que venir de su propio orientConstraint desde el
+        # ik_ctrl (lo monta el limbs_module). Si no, el joint final se queda
+        # con la orientacion congelada del momento del build.
         self._clear_handle_position_constraints(ik_hdl)
         cmds.pointConstraint(softTransform_node, ik_hdl, mo=False)
 
@@ -396,9 +454,51 @@ class SoftIkModule(object):
         return {
             "softTransform_node": softTransform_node,
             "softGoal_node": soft_goal_node,
+            "softRoot_node": soft_root_node,
             "softOffset_node": softOffset_node,
             "condition_node": condition_node,
             "fullLength_node": fullLenght_node,
             "softMaxDistance_node": softMaxDistance_node,
             "distanceToControl_node": distanceToControlNormalized_node
         }
+
+    # ------------------------------------------------------------------
+    # Debug
+    # ------------------------------------------------------------------
+
+    def audit_soft(self, ik_ctrl):
+        """
+        Barre el atributo Soft de 0 a 1 y reporta la salida del condition.
+
+        Con la red bien montada y la extremidad en pose de reposo, la salida
+        tiene que ser IDENTICA para los cinco valores e igual a la
+        distanceToControl. En cuanto empiece a bajar, el soft esta actuando en
+        reposo y ahi tienes el pop.
+        """
+        cond = f"{self.prefix}_softCondition_COND"
+        dist = f"{self.prefix}_distanceToControlNormalized_FLM"
+        soft_dist = f"{self.prefix}_softDistance_FLM"
+        full = f"{self.prefix}_FullLength_FLM"
+
+        for node in (cond, dist, soft_dist, full):
+            if not cmds.objExists(node):
+                cmds.warning(f"[{self.prefix}] No encuentro {node}. "
+                             "Revisa los nombres que genera tu NodeCreator.")
+                return
+
+        original = cmds.getAttr(f"{ik_ctrl}.Soft")
+        distance = cmds.getAttr(f"{dist}.outFloat")
+
+        print(f"[{self.prefix}] fullLength={cmds.getAttr(f'{full}.outFloat'):.4f} | "
+              f"distanceToControl={distance:.4f}")
+
+        try:
+            for value in (0.0, 0.25, 0.5, 0.75, 1.0):
+                cmds.setAttr(f"{ik_ctrl}.Soft", value)
+                out = cmds.getAttr(f"{cond}.outColorR")
+                delta = out - distance
+                flag = "" if abs(delta) < 1e-4 else "  <-- el soft actua en reposo"
+                print(f"  Soft={value:.2f}  softDistance={cmds.getAttr(f'{soft_dist}.outFloat'):8.4f}"
+                      f"  out={out:8.4f}  delta={delta:+.4f}{flag}")
+        finally:
+            cmds.setAttr(f"{ik_ctrl}.Soft", original)

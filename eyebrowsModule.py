@@ -1,13 +1,13 @@
 import math
 import maya.cmds as cmds
 import maya.api.OpenMaya as om2
+
 import controlsLibrary
 import groups_module
 import guides_module
 import rigRoot_module
 from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
-
 
 
 class EyebrowsModule(object):
@@ -41,6 +41,10 @@ class EyebrowsModule(object):
             "tangent_control_style", self.control_style
         )
 
+        # Paràmetres configurables de la bezier / upCurve
+        self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
+        self.up_curve_offset = kwargs.get("up_curve_offset", 1.0)
+
         self.rig_joints = []
         self.controls = []
         self.control_groups = []
@@ -53,12 +57,11 @@ class EyebrowsModule(object):
         self.local_joints = {}
         self.local_transforms = {}
         self.local_curve = None
+        self.local_up_curve = None
 
     # ------------------------------------------------------------------
     # Connectors i creadors de transformacions relatives / locals
     # ------------------------------------------------------------------
-
-
     def generate_relative_control_transform(
         self, control_name, top_grp, create_transform=True
     ):
@@ -92,7 +95,8 @@ class EyebrowsModule(object):
                 f"{elem}.matrix", f"{mmtx}.matrixIn[{i}]", force=True
             )
 
-        # --- NOU: neutralitzem l'offset estàtic (bind pose) ---
+        # Neutralitzem l'offset estàtic (bind pose) perquè el resultat
+        # sigui 0/identitat en repòs, independentment de la posició de la guia.
         bind_matrix = cmds.getAttr(f"{mmtx}.matrixSum")
         inv_bind_matrix = om2.MMatrix(bind_matrix).inverse()
         bind_index = len(matrix_inputs)
@@ -101,7 +105,6 @@ class EyebrowsModule(object):
             list(inv_bind_matrix),
             type="matrix",
         )
-        # --------------------------------------------------------
 
         # Creació del nodo decomposeMatrix
         dcm = cmds.createNode(
@@ -128,7 +131,6 @@ class EyebrowsModule(object):
             )
 
         return relative_trn, dcm
-    
 
     def _connect_transform_channels(self, driver_node, driven_node):
         """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""
@@ -169,8 +171,8 @@ class EyebrowsModule(object):
         out_tan_pos = cmds.xform(out_tan_jnt, q=True, ws=True, t=True)
         out_pos = cmds.xform(out_jnt, q=True, ws=True, t=True)
 
-        # Càlcul vectorial de les tangents del Mid
-        tangent_scale = 0.15
+        # Càlcul vectorial de les tangents del Mid (ajustable via mid_tangent_scale)
+        tangent_scale = self.mid_tangent_scale
         mid_dir = [out_pos[axis] - in_pos[axis] for axis in range(3)]
         mid_in_tan_pos = [
             mid_pos[axis] - mid_dir[axis] * tangent_scale for axis in range(3)
@@ -179,6 +181,8 @@ class EyebrowsModule(object):
             mid_pos[axis] + mid_dir[axis] * tangent_scale for axis in range(3)
         ]
 
+        # 3 àncores (In, Mid, Out). In i Out són "corner" per definició
+        # (un sol handle a cada extrem); Mid té tangents suaus i col·lineals.
         cv_positions = [
             in_pos,
             in_tan_pos,
@@ -194,8 +198,11 @@ class EyebrowsModule(object):
             d=3,
             p=cv_positions,
             k=[0, 0, 0, 1, 1, 1, 2, 2, 2],
-            n=f"{self.prefix}_local_BZC", 
+            n=f"{self.prefix}_local_BZC",
         )
+
+        if self.local_grp and cmds.objExists(self.local_grp):
+            cmds.parent(bezier_crv, self.local_grp)
 
         skin_joints = [in_jnt, in_tan_jnt, mid_jnt, out_tan_jnt, out_jnt]
         skin_cluster = cmds.skinCluster(
@@ -222,7 +229,44 @@ class EyebrowsModule(object):
             )
 
         self.local_curve = bezier_crv
+
+        # Creem la upCurve a partir d'aquesta bezier
+        self._create_local_up_curve(bezier_crv)
+
         return bezier_crv
+
+    # ------------------------------------------------------------------
+    # Up curve (offsetCurve amb normal fixa, paral·lela al terra)
+    # ------------------------------------------------------------------
+    def _create_local_up_curve(self, source_curve):
+        """Crea una offsetCurve de la bezier local amb normal (0,-1,0),
+        de manera que quedi paral·lela al terra independentment de la
+        curvatura de la corba original. Elimina l'historial en acabar."""
+
+        offset_result = cmds.offsetCurve(
+            source_curve,
+            ch=True,
+            rn=False,
+            cb=2,
+            cl=True,
+            cr=0,
+            d=self.up_curve_offset,
+            tol=0.01,
+            sd=5,
+            ugn=True,               # useGivenNormal
+            normal=(0, -1, 0),      # normal fixa -> paral·lela al terra
+            name=f"{self.prefix}_local_upCRV",
+        )
+        up_curve = offset_result[0] if isinstance(offset_result, list) else offset_result
+
+        # Eliminem l'historial (l'offsetCurve queda estàtica)
+        cmds.delete(up_curve, ch=True)
+
+        if self.local_grp and cmds.objExists(self.local_grp):
+            cmds.parent(up_curve, self.local_grp)
+
+        self.local_up_curve = up_curve
+        return up_curve
 
     # ------------------------------------------------------------------
     # Build
@@ -231,7 +275,8 @@ class EyebrowsModule(object):
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
         # 1) JOINTS
-
+        jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP")
+        self.joints_grp = jnt_grp
 
         created_joints = []
         for i in range(1, self.num_joints + 1):
@@ -248,6 +293,9 @@ class EyebrowsModule(object):
                 created_joints.append(jnt)
             else:
                 cmds.warning(f"No s'ha trobat la guia: {guide_name}")
+
+        if created_joints:
+            cmds.parent(created_joints[0], jnt_grp)
 
         self.rig_joints = created_joints
 
@@ -413,5 +461,5 @@ class EyebrowsModule(object):
                 )
                 self.local_joints[tan_label] = tan_local_jnt
 
-        # 5) BEZIER CURVE
+        # 5) BEZIER CURVE + UP CURVE
         self._create_local_bezier_curve()

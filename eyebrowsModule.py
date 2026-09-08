@@ -1,6 +1,6 @@
 import math
-import maya.cmds as cmds
 import maya.api.OpenMaya as om2
+import maya.cmds as cmds
 
 import controlsLibrary
 import groups_module
@@ -166,12 +166,6 @@ class EyebrowsModule(object):
         return total / float(len(cvs))
 
     def _park_curve_in_local_grp(self, curve):
-        """Parenteja una corba al grup local sense heretar transformacions.
-
-        Les dues corbes han de viure al mateix espai. Com que despres es
-        deformen amb un skinCluster, cal desactivar l'inheritsTransform per
-        evitar la doble transformacio del grup local.
-        """
         if not (self.local_grp and cmds.objExists(self.local_grp)):
             return
 
@@ -179,10 +173,6 @@ class EyebrowsModule(object):
         cmds.setAttr(f"{curve}.inheritsTransform", 0)
 
     def _skin_curve_one_to_one(self, curve, cv_weights, skin_name):
-        """Skinneja una corba amb una unica influencia per CV.
-
-        cv_weights: dict {cv_index: joint}
-        """
         cv_count = self._cv_count(curve)
         if cv_count != len(cv_weights):
             cmds.warning(
@@ -299,15 +289,15 @@ class EyebrowsModule(object):
         def _build_offset(distance, node_name):
             result = cmds.offsetCurve(
                 tmp_crv,
-                ch=False,         
+                ch=False,
                 rn=False,
-                cb=2,             
-                cl=True,          
-                cr=0.0,           
+                cb=2,
+                cl=True,
+                cr=0.0,
                 d=distance,
                 tol=0.01,
-                sd=0,             
-                ugn=True,          
+                sd=0,
+                ugn=True,
                 normal=self.up_curve_normal,
                 name=node_name,
             )
@@ -318,9 +308,6 @@ class EyebrowsModule(object):
             self.up_curve_offset, f"{self.prefix}_localUp_BZC"
         )
 
-        # 3) Comprovacio del signe. La direccio de l'offset es tangent x normal,
-        #    i com que la corba va In->Out, a L i a R surt invertida. Si apunta
-        #    al contrari de up_curve_aim, la refem negada.
         delta = self._average_cv_position(up_curve) - src_center
         aim = om2.MVector(*self.up_curve_aim)
 
@@ -351,6 +338,63 @@ class EyebrowsModule(object):
 
         self.local_up_curve = up_curve
         return up_curve
+
+    # ------------------------------------------------------------------
+    # Motion paths i configuració d'aim
+    # ------------------------------------------------------------------
+    def _setup_motion_paths_and_aims(self):
+        if not (self.local_curve and self.local_up_curve and self.rig_joints):
+            return
+
+        curve_shape = cmds.listRelatives(self.local_curve, shapes=True)[0]
+        up_curve_shape = cmds.listRelatives(self.local_up_curve, shapes=True)[0]
+
+        num_jnts = len(self.rig_joints)
+
+        for i, jnt in enumerate(self.rig_joints):
+            idx_str = f"{i + 1:02d}"
+
+            u_val = float(i) / float(num_jnts - 1) if num_jnts > 1 else 0.0
+
+            mp_node = cmds.createNode(
+                "motionPath", name=f"{self.prefix}_{idx_str}_MPA", ss=True
+            )
+            cmds.connectAttr(
+                f"{curve_shape}.worldSpace[0]", f"{mp_node}.geometryPath", f=True
+            )
+            cmds.setAttr(f"{mp_node}.fractionMode", True)
+            cmds.setAttr(f"{mp_node}.uValue", u_val)
+            cmds.connectAttr(
+                f"{mp_node}.allCoordinates", f"{jnt}.translate", f=True
+            )
+
+            up_mp_node = cmds.createNode(
+                "motionPath", name=f"{self.prefix}_{idx_str}_up_MPA", ss=True
+            )
+            cmds.connectAttr(
+                f"{up_curve_shape}.worldSpace[0]", f"{up_mp_node}.geometryPath", f=True
+            )
+            cmds.setAttr(f"{up_mp_node}.fractionMode", True)
+            cmds.setAttr(f"{up_mp_node}.uValue", u_val)
+
+            up_trn = cmds.createNode(
+                "transform", name=f"{self.prefix}_{idx_str}_up_TRN", ss=True
+            )
+            if self.local_grp and cmds.objExists(self.local_grp):
+                cmds.parent(up_trn, self.local_grp)
+
+            cmds.connectAttr(
+                f"{up_mp_node}.allCoordinates", f"{up_trn}.translate", f=True
+            )
+
+            cmds.aimConstraint(
+                up_trn,
+                jnt,
+                aimVector=(0, 1, 0),
+                upVector=(1, 0, 0),
+                worldUpType="none",
+                mo=False,
+            )
 
     # ------------------------------------------------------------------
     # Build
@@ -507,9 +551,10 @@ class EyebrowsModule(object):
                 cmds.parent(tangent_ctl_gen, sub_ctrl)
 
                 # Creador de matriu i grup REL per a la tangent
+                # CORRECCIÓ: Aplanem la jerarquia mirant a main_ctl_grp per evitar doble transformació
                 tan_rel_grp, _ = self.generate_relative_control_transform(
                     control_name=tangent_ctl,
-                    top_grp=sub_ctl_gen,
+                    top_grp=main_ctl_grp,
                     create_transform=True,
                 )
 
@@ -517,10 +562,12 @@ class EyebrowsModule(object):
                 self.control_groups.append(tangent_ctl_gen)
 
                 tan_label = f"{label}Tan"
+                
+                # CORRECCIÓ: Emparentem l'OFF de la tangent directament a main_local_trn
                 tan_local_off = cmds.group(
                     em=True,
                     n=f"{self.prefix}{tan_label}Local_OFF",
-                    p=local_trn,
+                    p=main_local_trn, 
                 )
                 cmds.matchTransform(
                     tan_local_off, tangent_ctl_gen, pos=True, rot=True
@@ -541,3 +588,6 @@ class EyebrowsModule(object):
 
         # 5) BEZIER CURVE + UP CURVE
         self._create_local_bezier_curve()
+
+        # 6) MOTION PATHS + AIM CONSTRAINTS
+        self._setup_motion_paths_and_aims()

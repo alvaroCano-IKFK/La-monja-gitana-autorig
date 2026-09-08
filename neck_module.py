@@ -13,6 +13,7 @@ class NeckModule(object):
         self.num_joints = num_joints
 
         self.joints = []
+        self.head_joint = None
         self.curve = None
         self.styles = {"mainIk": "squareControl",
                        "mainFk": "circleControl"}
@@ -49,7 +50,7 @@ class NeckModule(object):
         last = self.joints[-1]
         for attr in ["jointOrientX","jointOrientY","jointOrientZ","rotateX","rotateY","rotateZ"]:
             cmds.setAttr(f"{last}.{attr}", 0)
-            
+
         # 2. CURVA Y CLUSTERS
         # IMPORTANTE: la curva se queda en world space hasta el final.
         # Emparentarla antes de terminar con los clusters rompe los handles.
@@ -82,6 +83,24 @@ class NeckModule(object):
         cmds.setAttr(f"{ik_h}.dWorldUpVectorY", 0)
         cmds.setAttr(f"{ik_h}.dWorldUpVectorEndY", 0)
 
+        # =================================================================
+        # 4.5 JOINT DE LA CABEZA (fuera del spline IK)
+        # =================================================================
+        # Se crea DESPUÉS del ikHandle para que no forme parte de la cadena
+        # que resuelve el spline. Cuelga del último joint del cuello pero
+        # queda alineado al mundo: el jointOrient compensa la orientación
+        # heredada del padre.
+        cmds.select(clear=True)
+        self.head_joint = cmds.joint(p=pos_head, n=f"{self.rig_name}_head_JNT")
+        cmds.parent(self.head_joint, self.joints[-1])
+
+        cmds.setAttr(f"{self.head_joint}.jointOrient", 0, 0, 0)
+        cmds.setAttr(f"{self.head_joint}.rotate", 0, 0, 0)
+        cmds.xform(self.head_joint, ws=True, ro=(0, 0, 0))
+        rot = cmds.getAttr(f"{self.head_joint}.rotate")[0]
+        cmds.setAttr(f"{self.head_joint}.jointOrient", *rot)
+        cmds.setAttr(f"{self.head_joint}.rotate", 0, 0, 0)
+
         # 5. CONTROLADORES
 
         # --- Control Base (Cuello) ---
@@ -105,14 +124,14 @@ class NeckModule(object):
             lib_name=self.styles["mainIk"],
             final_name=name02
         )
-        head_gen = self.group_maker.create_rig_hierarchy(head_ctl, self.joints[-1],match_rotation=False)
+        head_gen = self.group_maker.create_rig_hierarchy(head_ctl, self.head_joint, match_rotation=False)
 
         # =================================================================
         # 6. ORGANIZACIÓN EN EL OUTLINER (¡VA PRIMERO!)
         # =================================================================
         # Primero estructuramos limpiamente todas las piezas del Rig en sus grupos
         cmds.parent(neck_gen, head_gen, self.ctrl_grp)
-        
+
         cmds.parent(cls_base, self.neck_grp)
         cmds.parent(cls_head, self.neck_grp)
         cmds.parent(self.curve, self.neck_grp)
@@ -125,10 +144,14 @@ class NeckModule(object):
         # Ya que todo está en su grupo final en el Outliner, hacemos los constraints seguros
         cmds.parentConstraint(neck_ctl, cls_base, mo=True)
         cmds.parentConstraint(head_ctl, cls_head, mo=True)
-        
+
         # El control del cuello maneja al joint raíz del cuello
         cmds.parentConstraint(neck_ctl, self.joints[0],  mo=True)
-        
+
+        # El control de la cabeza gestiona el joint de la cabeza.
+        # No genera ciclo: head_JNT es una hoja y no realimenta la curva.
+        cmds.parentConstraint(head_ctl, self.head_joint, mo=True)
+
         # El cuello lidera jerárquicamente al grupo de la cabeza
         cmds.parentConstraint(neck_ctl, head_gen, mo=True,sr = ["x","y","z"])
 

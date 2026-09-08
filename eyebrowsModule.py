@@ -58,74 +58,76 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     import maya.api.OpenMaya as om2
 
-def generate_relative_control_transform (self, control_name, top_grp, create_transform=True):
-    """Calcula la matriu relativa d'un control respecte a la seva jerarquia fins a top_grp,
-    neutralitzant l'offset estàtic de la guia perquè el resultat sigui 0 en repòs."""
-   
-    base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
-    grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
-
-    # Creació del nodo multMatrix
-    mmtx = cmds.createNode(
-        "multMatrix", name=f"{base_name}Local_MTX", ss=True
-    )
-
-    # Cerca de la jerarquia fins a top_grp
-    hierarchy_transforms = []
-    current_node = [control_name]
-
-    while current_node:
-        node_name = current_node[0]
-        hierarchy_transforms.append(node_name)
-        if node_name == top_grp:
-            break
-        current_node = cmds.listRelatives(
-            node_name, parent=True, type="transform"
-        )
-
-    matrix_inputs = list(reversed(hierarchy_transforms))
-
-    for i, elem in enumerate(matrix_inputs):
-        cmds.connectAttr(
-            f"{elem}.matrix", f"{mmtx}.matrixIn[{i}]", force=True
-        )
-
-    # --- NOU: neutralitzem l'offset estàtic (bind pose) ---
-    bind_matrix = cmds.getAttr(f"{mmtx}.matrixSum")
-    inv_bind_matrix = om2.MMatrix(bind_matrix).inverse()
-    bind_index = len(matrix_inputs)
-    cmds.setAttr(
-        f"{mmtx}.matrixIn[{bind_index}]",
-        list(inv_bind_matrix),
-        type="matrix",
-    )
-    # --------------------------------------------------------
-
-    # Creació del nodo decomposeMatrix
-    dcm = cmds.createNode(
-        "decomposeMatrix", name=f"{base_name}Local_DCM", ss=True
-    )
-    cmds.connectAttr(f"{mmtx}.matrixSum", f"{dcm}.inputMatrix", force=True)
-
-    if not create_transform:
-        return dcm
-
-    # Creació del grup REL (mantenint la posició neutra)
-    relative_trn = cmds.createNode(
-        "transform", name=f"{base_name}_REL", ss=True
-    )
-    cmds.parent(relative_trn, grp, relative=True)
-
-    for out_attr, in_attr in (
-        ("outputTranslate", "translate"),
-        ("outputRotate", "rotate"),
-        ("outputScale", "scale"),
+    def generate_relative_control_transform(
+        self, control_name, top_grp, create_transform=True
     ):
-        cmds.connectAttr(
-            f"{dcm}.{out_attr}", f"{relative_trn}.{in_attr}", force=True
+        """Calcula la matriu relativa d'un control respecte a la seva jerarquia fins a top_grp,
+        neutralitzant l'offset estàtic de la guia perquè el resultat sigui 0 en repòs."""
+        base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
+        grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
+
+        # Creació del nodo multMatrix
+        mmtx = cmds.createNode(
+            "multMatrix", name=f"{base_name}Local_MTX", ss=True
         )
 
-    return relative_trn, dcm
+        # Cerca de la jerarquia fins a top_grp
+        hierarchy_transforms = []
+        current_node = [control_name]
+
+        while current_node:
+            node_name = current_node[0]
+            hierarchy_transforms.append(node_name)
+            if node_name == top_grp:
+                break
+            current_node = cmds.listRelatives(
+                node_name, parent=True, type="transform"
+            )
+
+        matrix_inputs = list(reversed(hierarchy_transforms))
+
+        for i, elem in enumerate(matrix_inputs):
+            cmds.connectAttr(
+                f"{elem}.matrix", f"{mmtx}.matrixIn[{i}]", force=True
+            )
+
+        # --- NOU: neutralitzem l'offset estàtic (bind pose) ---
+        bind_matrix = cmds.getAttr(f"{mmtx}.matrixSum")
+        inv_bind_matrix = om2.MMatrix(bind_matrix).inverse()
+        bind_index = len(matrix_inputs)
+        cmds.setAttr(
+            f"{mmtx}.matrixIn[{bind_index}]",
+            list(inv_bind_matrix),
+            type="matrix",
+        )
+        # --------------------------------------------------------
+
+        # Creació del nodo decomposeMatrix
+        dcm = cmds.createNode(
+            "decomposeMatrix", name=f"{base_name}Local_DCM", ss=True
+        )
+        cmds.connectAttr(f"{mmtx}.matrixSum", f"{dcm}.inputMatrix", force=True)
+
+        if not create_transform:
+            return dcm
+
+        # Creació del grup REL (mantenint la posició neutra)
+        relative_trn = cmds.createNode(
+            "transform", name=f"{base_name}_REL", ss=True
+        )
+        cmds.parent(relative_trn, grp, relative=True)
+
+        for out_attr, in_attr in (
+            ("outputTranslate", "translate"),
+            ("outputRotate", "rotate"),
+            ("outputScale", "scale"),
+        ):
+            cmds.connectAttr(
+                f"{dcm}.{out_attr}", f"{relative_trn}.{in_attr}", force=True
+            )
+
+        return relative_trn, dcm
+    
 
     def _connect_transform_channels(self, driver_node, driven_node):
         """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""

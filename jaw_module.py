@@ -771,6 +771,38 @@ class JawModule(object):
     # _ensure_group es idempotente, el primer modulo que corra los crea y los
     # demas se los encuentran hechos.
     # ------------------------------------------------------------------
+    def _attach_face_controls_to_head(self, controls_root):
+        """
+        Cuelga TODOS los controles de la cara del control de la cabeza.
+
+        Un unico parentConstraint en la raiz compartida
+        (C_<rig>_faceControls_GRP) en vez de uno por modulo: la boca, el jaw y
+        los ojos pasan los tres por _face_controls_root(), asi que con esto los
+        tres siguen a la cabeza. El primero que corra lo crea y los demas se lo
+        encuentran hecho.
+
+        Los SISTEMAS no se tocan a proposito. Viven bajo C_<rig>_face_GRP y ya
+        siguen a la cabeza de forma indirecta, porque leen las worldMatrix de
+        estos controles. Si ademas se constriñesen, se transformarian dos veces.
+
+        mo = True es obligatorio: este grupo esta en identidad en el origen y la
+        cabeza esta arriba del todo, asi que sin offset toda la cara saldria
+        disparada al construir.
+        """
+        head_ctrl = f"{self.rig_name}_head_CTRL"
+        if not cmds.objExists(head_ctrl):
+            cmds.warning(f"[Face] No existe '{head_ctrl}'. Construye el "
+                         "NeckModule antes que los faciales si quieres que los "
+                         "controles de la cara sigan a la cabeza.")
+            return None
+
+        existing = cmds.listRelatives(controls_root, children=True,
+                                      type="parentConstraint") or []
+        if existing:
+            return existing[0]
+
+        return cmds.parentConstraint(head_ctrl, controls_root, mo=True)[0]
+
     def _face_systems_root(self):
         """C_<rig>_face_GRP, bajo el rig_GRP."""
         rig_grp = f"{self.rig_name}_rig_GRP"
@@ -787,7 +819,9 @@ class JawModule(object):
             local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
 
         parent = local_ctl if cmds.objExists(local_ctl) else None
-        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+        controls_root = self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+        self._attach_face_controls_to_head(controls_root)
+        return controls_root
 
     def _make_world_driven(self, group_name):
         """

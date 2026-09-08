@@ -774,6 +774,84 @@ class MouthModule(object):
             return False
         return True
 
+    def _attach_mouth_to_head(self, controls_grp, trackers_grp, projected_grp):
+        """
+        Engancha la boca al joint de la cabeza con DOS parentConstraint.
+
+        - controls_grp (C_<rig>_mouthControls_GRP): lleva dentro el _GRP del mid
+          y los de ambos lados. El mid lo necesita porque su grupo esta libre.
+          A los de los lados no les cambia nada: esos ya tienen su propio
+          constraint desde su *_trackerGlobal_LOC, que ahora se movera solo.
+
+        - trackers_grp (C_<rig>_mouthTrackers_GRP): NO se constriñe, solo se le
+          arregla el inheritsTransform de sus locators global. Los *_tracker_LOC
+          leen un motionPath sobre las curvas de la boca, y esas curvas ya traen
+          la cabeza dentro: sus joints siguen a los *Local_OFF, que estan
+          constreñidos al lipProjected_LOC, que se mueve por projected_grp. Si
+          ademas se constriñese este grupo, los controles de los lados
+          (levator, depresor, pinches) recibirian el movimiento dos veces.
+
+        - projected_grp (C_<rig>_mouthProjected_GRP): mismo caso, y es el que
+          mueve al upper y al lower. Esos dos no siguen a controls_grp: su _GRP
+          tiene constraint propio desde su lipProjectedGlobal_LOC, que esta
+          aqui dentro. Los lipProjected_LOC reciben el outputMatrix del uvPin,
+          que es estatico porque la superficie no se mueve, asi que heredar la
+          transformacion de este grupo es lo que los lleva a la cabeza.
+
+        Aparte va la comisura del lado R. Su _GRP cuelga del mirrorBehaviour_GRP
+        (build(), donde se le mete el scaleX = -1 del espejo), asi que _park_node
+        no lo mete en controls_grp y se quedaria sin seguir a la cabeza. Se le
+        pone constraint propio.
+
+        Idempotente: se llama en los dos builds (L y R) y solo crea lo que falte.
+        """
+        head_joint = f"{self.rig_name}_head_JNT"
+        if not cmds.objExists(head_joint):
+            cmds.warning(f"[Mouth] No existe '{head_joint}'. Construye el "
+                         "NeckModule antes que la boca si quieres que siga a "
+                         "la cabeza.")
+            return
+
+        # Las versiones "Global" (trackerGlobal_LOC y lipProjectedGlobal_LOC)
+        # reciben en su offsetParentMatrix el worldMatrix de su locator local,
+        # o sea que esa matriz YA trae el movimiento de la cabeza en cuanto se
+        # constriñe el grupo. Si ademas lo heredasen se lo comerian dos veces.
+        # Por eso el local hereda y el global no.
+        for group_name in (trackers_grp, projected_grp):
+            if not group_name or not cmds.objExists(group_name):
+                continue
+            for locator in cmds.listRelatives(group_name, children=True,
+                                              type="transform") or []:
+                if not locator.endswith("Global_LOC"):
+                    continue
+                if cmds.getAttr(f"{locator}.inheritsTransform"):
+                    cmds.setAttr(f"{locator}.inheritsTransform", 0)
+
+        targets = [controls_grp, projected_grp]
+
+        # Comisuras: solo las que se hayan quedado fuera de controls_grp, que en
+        # la practica es la del lado R por el mirrorBehaviour_GRP. Si el _GRP ya
+        # cuelga de controls_grp no se toca, porque ya sigue a la cabeza por ahi
+        # y un segundo constraint solo seria ruido en el outliner.
+        for side_code in ("L", "R"):
+            corner_grp = f"{side_code}_{self.rig_name}_end_LIP_GRP"
+            if not cmds.objExists(corner_grp):
+                continue
+            ancestors = cmds.listRelatives(corner_grp, allParents=True,
+                                           fullPath=True) or []
+            already_inside = any(controls_grp in path.split("|")
+                                 for path in ancestors)
+            if not already_inside:
+                targets.append(corner_grp)
+
+        for group_name in targets:
+            if not group_name or not cmds.objExists(group_name):
+                continue
+            if cmds.listRelatives(group_name, children=True,
+                                  type="parentConstraint"):
+                continue
+            cmds.parentConstraint(head_joint, group_name, mo=True)
+
     def _organize_outliner(self, control_groups=None):
         """
         Ordena en el outliner todo lo que este modulo deja suelto en la raiz.
@@ -897,6 +975,11 @@ class MouthModule(object):
                 setup_names.append(f"{side_prefix}_{base_name}Local_OFF")
         for setup_node in setup_names:
             self._park_node(setup_node, setup_grp)
+
+        # --- 8. La boca sigue a la cabeza ---
+        # Al final a proposito: los trackers tienen que estar ya dentro de
+        # trackers_grp para poder quitarles el inheritsTransform a los global.
+        self._attach_mouth_to_head(controls_grp, trackers_grp, projected_grp)
 
         return root_grp
 

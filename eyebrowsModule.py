@@ -43,7 +43,22 @@ class EyebrowsModule(object):
 
         # Paràmetres configurables de la bezier / upCurve
         self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
-        self.up_curve_offset = kwargs.get("up_curve_offset", 1.0)
+        self.up_curve_offset = kwargs.get("up_curve_offset", 0.5)
+
+        # NORMAL DEL PLA de l'offset, NO la direcció del desplaçament.
+        # La direcció real de l'offset és tangent x normal.
+        #   (0, -1, 0) -> desplaçament horitzontal, paral·lel al terra.
+        #                 És el que descriu la infografia: la upCurve queda
+        #                 davant de la cara i els joints hi aimen.
+        #   (0,  0, 1) -> desplaçament vertical, la upCurve queda per sobre
+        #                 de l'arc de la cella.
+        self.up_curve_normal = kwargs.get("up_curve_normal", (0.0, -1.0, 0.0))
+
+        # Cap on ha d'apuntar l'offset en world space. Com que la direcció
+        # depèn del sentit In->Out de la corba, sense això la upCurve de L i
+        # la de R acaben a bandes oposades del crani. Amb la cara mirant a
+        # +Z, deixa-ho a (0, 0, 1).
+        self.up_curve_aim = kwargs.get("up_curve_aim", (0.0, 0.0, 1.0))
 
         self.rig_joints = []
         self.controls = []
@@ -148,6 +163,59 @@ class EyebrowsModule(object):
         return jnt
 
     # ------------------------------------------------------------------
+    # Curve helpers
+    # ------------------------------------------------------------------
+    def _cv_count(self, curve):
+        """Nombre real de CVs d'una corba (funciona també per a beziers)."""
+        return len(cmds.ls(f"{curve}.cv[*]", flatten=True))
+
+    def _park_curve_in_local_grp(self, curve):
+        """Parenteja una corba al grup local sense heretar transformacions.
+
+        Les dues corbes han de viure al mateix espai. Com que després es
+        deformen amb un skinCluster, cal desactivar l'inheritsTransform per
+        evitar la doble transformació del grup local.
+        """
+        if not (self.local_grp and cmds.objExists(self.local_grp)):
+            return
+
+        cmds.parent(curve, self.local_grp, relative=True)
+        cmds.setAttr(f"{curve}.inheritsTransform", 0)
+
+    def _skin_curve_one_to_one(self, curve, cv_weights, skin_name):
+        """Skinneja una corba amb una única influència per CV.
+
+        cv_weights: dict {cv_index: joint}
+        """
+        cv_count = self._cv_count(curve)
+        if cv_count != len(cv_weights):
+            cmds.warning(
+                f"{curve} té {cv_count} CVs i se n'esperaven "
+                f"{len(cv_weights)}. No es pot fer el skin 1:1; revisa el "
+                "subdivisionDensity o la distància de l'offsetCurve."
+            )
+            return None
+
+        joints = list(dict.fromkeys(cv_weights.values()))
+        skin_cluster = cmds.skinCluster(joints, curve, tsb=True, n=skin_name)[0]
+
+        for cv_index, jnt in cv_weights.items():
+            cmds.skinPercent(
+                skin_cluster,
+                f"{curve}.cv[{cv_index}]",
+                transformValue=[(jnt, 1.0)],
+            )
+        return skin_cluster
+
+    def _measure_offset_direction(self, source_curve, offset_curve):
+        """Vector que va del punt mig de la corba font al de l'offset."""
+        src = cmds.pointOnCurve(source_curve, pr=0.5, top=True, p=True)
+        off = cmds.pointOnCurve(offset_curve, pr=0.5, top=True, p=True)
+        return om2.MVector(
+            off[0] - src[0], off[1] - src[1], off[2] - src[2]
+        )
+
+    # ------------------------------------------------------------------
     # Bezier curve creation
     # ------------------------------------------------------------------
     def _create_local_bezier_curve(self):
@@ -200,14 +268,6 @@ class EyebrowsModule(object):
             n=f"{self.prefix}_local_BZC",
         )
 
-        skin_joints = [in_jnt, in_tan_jnt, mid_jnt, out_tan_jnt, out_jnt]
-        skin_cluster = cmds.skinCluster(
-            skin_joints,
-            bezier_crv,
-            tsb=True,
-            n=f"{self.prefix}_local_curve_SKIN",
-        )[0]
-
         cv_weights = {
             0: in_jnt,
             1: in_tan_jnt,
@@ -217,76 +277,77 @@ class EyebrowsModule(object):
             5: out_tan_jnt,
             6: out_jnt,
         }
-        for cv_index, jnt in cv_weights.items():
-            cmds.skinPercent(
-                skin_cluster,
-                f"{bezier_crv}.cv[{cv_index}]",
-                transformValue=[(jnt, 1.0)],
+
+        # La upCurve es genera ABANS d'skinnejar, a partir de la forma neta.
+        up_curve = self._create_local_up_curve(bezier_crv)
+
+        # Les dues corbes al mateix espai
+        self._park_curve_in_local_grp(bezier_crv)
+        if up_curve:
+            self._park_curve_in_local_grp(up_curve)
+
+        # Skin 1:1 de totes dues (pas 8 de la infografia)
+        self._skin_curve_one_to_one(
+            bezier_crv, cv_weights, f"{self.prefix}_local_curve_SKIN"
+        )
+        if up_curve:
+            self._skin_curve_one_to_one(
+                up_curve, cv_weights, f"{self.prefix}_local_upCurve_SKIN"
             )
 
         self.local_curve = bezier_crv
-
-        # Creem la upCurve a partir d'aquesta bezier
-        self._create_local_up_curve(bezier_crv)
-
         return bezier_crv
 
     # ------------------------------------------------------------------
-    # Up curve (offsetCurve sobre una versió NURBS reconstruïda)
+    # Up curve (offsetCurve directe sobre un duplicat net de la bezier)
     # ------------------------------------------------------------------
     def _create_local_up_curve(self, source_curve):
 
-
-        # 1) Bezier -> NURBS normal (còpia, no toca l'original)
-        cmds.select(source_curve, replace=True)
-        nurbs_result = cmds.bezierCurveToNurbs()
-        nurbs_crv = nurbs_result[0] if isinstance(nurbs_result, list) else nurbs_result
-        cmds.select(clear=True)
-
-        # 2) Reconstrucció amb nusos uniformes
-        rebuilt_crv = cmds.rebuildCurve(
-            nurbs_crv,
-            ch=False,
-            rpo=False,                       # no sobreescriu, crea còpia nova
-            rt=0,                            # rebuild type: uniforme
-            end=1,
-            kr=0,                            # keep range 0-1
-            kcp=False,
-            kep=True,
-            kt=False,
-            s=max(8, self.num_joints * 2),   # spans suficients per no perdre forma
-            d=3,
-            tol=0.01,
-            name=f"{self.prefix}_local_BZC_rebuilt_TMP",
+        # 1) Duplicat net. Conservem la forma bezier (mateixos CVs i mateixos
+        #    anchor presets) i eliminem qualsevol historial heretat.
+        tmp_crv = cmds.duplicate(
+            source_curve, name=f"{self.prefix}_upCRV_src_TMP"
         )[0]
+        cmds.delete(tmp_crv, ch=True)
 
-        # 3) Offset sobre la còpia neta
-        offset_result = cmds.offsetCurve(
-            rebuilt_crv,
-            ch=True,
-            rn=False,
-            cb=1,                      # Connect Breaks: Circular
-            cl=True,                   # Cut Loop
-            cr=0.05,                   # petit marge per evitar trimming agressiu
-            d=self.up_curve_offset,
-            tol=0.01,
-            sd=5,                      # Subdivision Density
-            ugn=True,                  # useGivenNormal
-            normal=(0, -1, 0),
-            name=f"{self.prefix}_local_upCRV",
+        def _build_offset(distance, node_name):
+            result = cmds.offsetCurve(
+                tmp_crv,
+                ch=False,          # sense history: la volem estàtica
+                rn=False,
+                cb=2,              # Connect Breaks: Linear
+                cl=True,           # Cut Loop
+                cr=0.0,            # Cut Radius 0
+                d=distance,
+                tol=0.01,
+                sd=0,              # CLAU: conserva el nombre de CVs
+                ugn=True,          # useGivenNormal
+                normal=self.up_curve_normal,
+                name=node_name,
+            )
+            return result[0] if isinstance(result, list) else result
+
+        # 2) Primer intent amb distància positiva
+        up_curve = _build_offset(
+            self.up_curve_offset, f"{self.prefix}_local_upCRV"
         )
-        up_curve = offset_result[0] if isinstance(offset_result, list) else offset_result
 
-        # Eliminem l'historial (l'offsetCurve queda estàtica)
-        cmds.delete(up_curve, ch=True)
+        # 3) Comprovació del signe. La direcció de l'offset és tangent x normal,
+        #    i com que la corba va In->Out, a L i a R surt invertida. Si apunta
+        #    al contrari de up_curve_aim, la refem negada.
+        delta = self._measure_offset_direction(tmp_crv, up_curve)
+        aim = om2.MVector(*self.up_curve_aim)
 
-        # 4) Netegem les còpies temporals, ja no les necessitem
-        for tmp_node in (rebuilt_crv, nurbs_crv):
-            if tmp_node and cmds.objExists(tmp_node):
-                cmds.delete(tmp_node)
+        if delta.length() > 1e-6 and aim.length() > 1e-6:
+            if (delta.normal() * aim.normal()) < 0.0:
+                cmds.delete(up_curve)
+                up_curve = _build_offset(
+                    -self.up_curve_offset, f"{self.prefix}_local_upCRV"
+                )
 
-        if self.local_grp and cmds.objExists(self.local_grp):
-            cmds.parent(up_curve, self.local_grp)
+        # 4) Neteja del duplicat temporal
+        if cmds.objExists(tmp_crv):
+            cmds.delete(tmp_crv)
 
         self.local_up_curve = up_curve
         return up_curve

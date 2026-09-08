@@ -241,15 +241,28 @@ class EyebrowsModule(object):
         La bezier té nusos repetits a cada junta de segment (multiplicitat 3),
         cosa que fa que la tangent sigui discontínua en aquells punts. Això
         trenca el càlcul intern d'offsetCurve i produeix un resultat
-        col·lapsat/degenerat. Per evitar-ho, primer reconstruïm la corba com
-        a NURBS uniforme (rebuildCurve) i apliquem l'offset sobre aquesta
-        còpia neta; la bezier original (amb el seu skinCluster) no es toca.
+        col·lapsat/degenerat. A més, `rebuildCurve` no accepta corbes bezier
+        directament (cal convertir-les primer). Per tant:
+
+        1) Convertim la bezier a NURBS "normal" amb bezierCurveToNurbs.
+        2) Reconstruïm aquesta NURBS amb nusos uniformes (rebuildCurve).
+        3) Apliquem l'offsetCurve sobre aquesta còpia neta.
+        4) Esborrem les dues còpies temporals.
+
+        La bezier original (amb el seu skinCluster) no es toca en cap moment.
         """
 
+        # 1) Bezier -> NURBS normal (còpia, no toca l'original)
+        cmds.select(source_curve, replace=True)
+        nurbs_result = cmds.bezierCurveToNurbs()
+        nurbs_crv = nurbs_result[0] if isinstance(nurbs_result, list) else nurbs_result
+        cmds.select(clear=True)
+
+        # 2) Reconstrucció amb nusos uniformes
         rebuilt_crv = cmds.rebuildCurve(
-            source_curve,
+            nurbs_crv,
             ch=False,
-            rpo=False,                       # no sobreescriu l'original, crea còpia
+            rpo=False,                       # no sobreescriu, crea còpia nova
             rt=0,                            # rebuild type: uniforme
             end=1,
             kr=0,                            # keep range 0-1
@@ -262,6 +275,7 @@ class EyebrowsModule(object):
             name=f"{self.prefix}_local_BZC_rebuilt_TMP",
         )[0]
 
+        # 3) Offset sobre la còpia neta
         offset_result = cmds.offsetCurve(
             rebuilt_crv,
             ch=True,
@@ -281,9 +295,10 @@ class EyebrowsModule(object):
         # Eliminem l'historial (l'offsetCurve queda estàtica)
         cmds.delete(up_curve, ch=True)
 
-        # Netegem la còpia temporal reconstruïda, ja no la necessitem
-        if cmds.objExists(rebuilt_crv):
-            cmds.delete(rebuilt_crv)
+        # 4) Netegem les còpies temporals, ja no les necessitem
+        for tmp_node in (rebuilt_crv, nurbs_crv):
+            if tmp_node and cmds.objExists(tmp_node):
+                cmds.delete(tmp_node)
 
         if self.local_grp and cmds.objExists(self.local_grp):
             cmds.parent(up_curve, self.local_grp)

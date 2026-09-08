@@ -1,12 +1,13 @@
 import math
 import maya.cmds as cmds
-
+import maya.api.OpenMaya as om2
 import controlsLibrary
 import groups_module
 import guides_module
 import rigRoot_module
 from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
+
 
 
 class EyebrowsModule(object):
@@ -56,7 +57,7 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     # Connectors i creadors de transformacions relatives / locals
     # ------------------------------------------------------------------
-    import maya.api.OpenMaya as om2
+
 
     def generate_relative_control_transform(
         self, control_name, top_grp, create_transform=True
@@ -193,11 +194,8 @@ class EyebrowsModule(object):
             d=3,
             p=cv_positions,
             k=[0, 0, 0, 1, 1, 1, 2, 2, 2],
-            n=f"{self.prefix}_local_BZC",
+            n=f"{self.prefix}_local_BZC", 
         )
-
-        if self.local_grp and cmds.objExists(self.local_grp):
-            cmds.parent(bezier_crv, self.local_grp)
 
         skin_joints = [in_jnt, in_tan_jnt, mid_jnt, out_tan_jnt, out_jnt]
         skin_cluster = cmds.skinCluster(
@@ -233,8 +231,7 @@ class EyebrowsModule(object):
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
         # 1) JOINTS
-        jnt_grp = cmds.group(em=True, n=f"{self.prefix}_jnt_GRP")
-        self.joints_grp = jnt_grp
+
 
         created_joints = []
         for i in range(1, self.num_joints + 1):
@@ -251,9 +248,6 @@ class EyebrowsModule(object):
                 created_joints.append(jnt)
             else:
                 cmds.warning(f"No s'ha trobat la guia: {guide_name}")
-
-        if created_joints:
-            cmds.parent(created_joints[0], jnt_grp)
 
         self.rig_joints = created_joints
 

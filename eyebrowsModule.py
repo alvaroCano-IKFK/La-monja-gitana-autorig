@@ -233,21 +233,46 @@ class EyebrowsModule(object):
         return bezier_crv
 
     # ------------------------------------------------------------------
-    # Up curve (duplicat + desplaçament vertical, sempre paral·lel al terra)
+    # Up curve (offsetCurve sobre una versió NURBS reconstruïda)
     # ------------------------------------------------------------------
     def _create_local_up_curve(self, source_curve):
+        """Crea una offsetCurve de la bezier local amb normal (0,-1,0).
+
+        La bezier té nusos repetits a cada junta de segment (multiplicitat 3),
+        cosa que fa que la tangent sigui discontínua en aquells punts. Això
+        trenca el càlcul intern d'offsetCurve i produeix un resultat
+        col·lapsat/degenerat. Per evitar-ho, primer reconstruïm la corba com
+        a NURBS uniforme (rebuildCurve) i apliquem l'offset sobre aquesta
+        còpia neta; la bezier original (amb el seu skinCluster) no es toca.
+        """
+
+        rebuilt_crv = cmds.rebuildCurve(
+            source_curve,
+            ch=False,
+            rpo=False,                       # no sobreescriu l'original, crea còpia
+            rt=0,                            # rebuild type: uniforme
+            end=1,
+            kr=0,                            # keep range 0-1
+            kcp=False,
+            kep=True,
+            kt=False,
+            s=max(8, self.num_joints * 2),   # spans suficients per no perdre forma
+            d=3,
+            tol=0.01,
+            name=f"{self.prefix}_local_BZC_rebuilt_TMP",
+        )[0]
 
         offset_result = cmds.offsetCurve(
-            source_curve,
+            rebuilt_crv,
             ch=True,
             rn=False,
-            cb=1,                    
-            cl=True,                  
-            cr=0.05,                  
+            cb=1,                      # Connect Breaks: Circular
+            cl=True,                   # Cut Loop
+            cr=0.05,                   # petit marge per evitar trimming agressiu
             d=self.up_curve_offset,
             tol=0.01,
-            sd=5,                    
-            ugn=True,                 
+            sd=5,                      # Subdivision Density
+            ugn=True,                  # useGivenNormal
             normal=(0, -1, 0),
             name=f"{self.prefix}_local_upCRV",
         )
@@ -255,6 +280,10 @@ class EyebrowsModule(object):
 
         # Eliminem l'historial (l'offsetCurve queda estàtica)
         cmds.delete(up_curve, ch=True)
+
+        # Netegem la còpia temporal reconstruïda, ja no la necessitem
+        if cmds.objExists(rebuilt_crv):
+            cmds.delete(rebuilt_crv)
 
         if self.local_grp and cmds.objExists(self.local_grp):
             cmds.parent(up_curve, self.local_grp)

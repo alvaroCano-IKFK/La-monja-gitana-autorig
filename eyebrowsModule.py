@@ -551,7 +551,7 @@ class EyebrowsModule(object):
                 cmds.parent(tangent_ctl_gen, sub_ctrl)
 
                 # Creador de matriu i grup REL per a la tangent
-                # CORRECCIÓ: Aplanem la jerarquia mirant a main_ctl_grp per evitar doble transformació
+                # Aplanem la jerarquia mirant a main_ctl_grp per evitar doble transformació
                 tan_rel_grp, _ = self.generate_relative_control_transform(
                     control_name=tangent_ctl,
                     top_grp=main_ctl_grp,
@@ -563,7 +563,7 @@ class EyebrowsModule(object):
 
                 tan_label = f"{label}Tan"
                 
-                # CORRECCIÓ: Emparentem l'OFF de la tangent directament a main_local_trn
+                # Emparentem l'OFF de la tangent directament a main_local_trn
                 tan_local_off = cmds.group(
                     em=True,
                     n=f"{self.prefix}{tan_label}Local_OFF",

@@ -2247,8 +2247,8 @@ class EyesModule(object):
         puede bajar LOOP_RADIUS_FOLLOW para que siga solo una parte, o editar la
         rampa del nodo a mano si hace falta una respuesta no lineal.
         """
-        mid_joint = self.eye_joints.get(self.eye_mid)
-        if not mid_joint or not cmds.objExists(mid_joint):
+        aim_center = self._get_aim_center()
+        if not aim_center:
             return None
 
         axis = self.LOOP_AIM_AXIS
@@ -2257,7 +2257,7 @@ class EyesModule(object):
         distance = cmds.createNode("distanceBetween", n=f"{base_name}_DST")
         # point1 se queda en el origen: con inMatrix1 puesta, el punto medido es
         # el propio pivote de eye_mid.
-        cmds.connectAttr(f"{mid_joint}.worldMatrix[0]", f"{distance}.inMatrix1")
+        cmds.connectAttr(f"{aim_center}.worldMatrix[0]", f"{distance}.inMatrix1")
         cmds.connectAttr(f"{point_info}.position", f"{distance}.point2")
 
         # Valores en reposo, leidos de la escena ya montada
@@ -2316,9 +2316,9 @@ class EyesModule(object):
         """
         curve = self.upper_blinked_curve if upper else self.lower_blinked_curve
         curve_shape = self._get_deformed_shape(curve)
-        mid_joint = self.eye_joints.get(self.eye_mid)
+        aim_center = self._get_aim_center()
 
-        if not curve_shape or not mid_joint or not cmds.objExists(mid_joint):
+        if not curve_shape or not aim_center:
             return None
 
         base_name = f"{joint.rsplit('_JNT', 1)[0]}Aim"
@@ -2339,7 +2339,7 @@ class EyesModule(object):
 
         # 4. aimMatrix desde el centro del ojo hacia el punto
         aim_matrix = cmds.createNode("aimMatrix", n=f"{base_name}_AMX")
-        cmds.connectAttr(f"{mid_joint}.worldMatrix[0]", f"{aim_matrix}.inputMatrix")
+        cmds.connectAttr(f"{aim_center}.worldMatrix[0]", f"{aim_matrix}.inputMatrix")
         cmds.connectAttr(f"{point_info}.position", f"{aim_matrix}.primaryTargetVector")
         cmds.connectAttr(f"{point_info}.normalizedTangent",
                          f"{aim_matrix}.secondaryTargetVector")
@@ -2482,6 +2482,85 @@ class EyesModule(object):
             return False
         return True
 
+    def _get_aim_center(self):
+        """
+        Transform estatico en el centro del ojo, del que cuelgan el aimMatrix y
+        el distanceBetween de todos los loops.
+
+        No sirve eye_mid_JNT para esto. Ese joint va con parentConstraint contra
+        su control, o sea que sigue a la cabeza, mientras que las curvas Blinked
+        viven en el espacio local estatico y no se mueven. Con la cabeza quieta
+        da igual, pero en cuanto se separa:
+
+          - el aimMatrix compara dos espacios y la direccion se va,
+          - y sobre todo, el distanceBetween mide una distancia que crece sin
+            freno y el remapValue la mete en el translate del AimEnd. El joint
+            se estira igual que una IK con stretch y revienta la geometria.
+
+        Este transform se coloca una vez en el centro del ojo y se queda ahi, en
+        el mismo espacio que las curvas, asi que toda la red de aim es coherente
+        y estatica. La cabeza entra despues y por fuera, en el grupo de salida
+        (_attach_eyes_to_head), que es como funciona el modulo de la boca.
+
+        eye_mid_JNT no se toca: sigue conduciendo el globo ocular y el fleshy.
+        """
+        center_name = f"{self.prefix}_eyeAimCenter_TRN"
+        if cmds.objExists(center_name):
+            return center_name
+
+        mid_joint = self.eye_joints.get(self.eye_mid)
+        if not mid_joint or not cmds.objExists(mid_joint):
+            return None
+
+        center = cmds.group(em=True, n=center_name)
+        cmds.matchTransform(center, mid_joint, position=True, rotation=True)
+
+        # Al grupo de marcadores, que es estatico. NO al de aim, que es el que
+        # se constriñe a la cabeza.
+        marker_group = f"{self.prefix}_eyelidLoopJoints_GRP"
+        if cmds.objExists(marker_group):
+            cmds.parent(center, marker_group)
+
+        return center
+
+    def _attach_eyes_to_head(self):
+        """
+        Mete el movimiento de cabeza SOLO en el grupo de salida del aim.
+
+        Los *Aim_JNT reciben la matriz del aimMatrix en su offsetParentMatrix, y
+        esa matriz esta calculada en el espacio estatico. Heredar la
+        transformacion de este grupo es lo que la lleva al espacio de la cabeza,
+        una sola vez. Los *AimEnd_JNT, que son los que skinean, cuelgan de ellos.
+
+        Lo que NO se constriñe, a proposito:
+          - eyeJoints_GRP: eye_mid_JNT ya sigue a la cabeza por su constraint
+            contra el control.
+          - eyelidLoopJoints_GRP y el modulo local: tienen que quedarse quietos
+            para que eyeAimCenter_TRN siga siendo estatico.
+
+        Borra y rehace en vez de saltarse el paso si ya hay constraint. Los
+        modulos no limpian lo que crean, y despues de varias reconstrucciones
+        sobre la misma escena acabas probando codigo nuevo con constraints
+        viejos colgando.
+        """
+        head_joint = f"{self.rig_name}_head_JNT"
+        if not cmds.objExists(head_joint):
+            cmds.warning(f"[EyesModule] No existe '{head_joint}'. Construye el "
+                         "NeckModule antes que los faciales si quieres que los "
+                         "parpados sigan a la cabeza.")
+            return
+
+        aim_group = f"{self.prefix}_eyelidLoopAim_GRP"
+        if not cmds.objExists(aim_group):
+            return
+
+        old = cmds.listRelatives(aim_group, children=True,
+                                 type="parentConstraint") or []
+        if old:
+            cmds.delete(old)
+
+        cmds.parentConstraint(head_joint, aim_group, mo=True)
+
     def _face_systems_root(self):
         """C_<rig>_face_GRP, bajo el rig_GRP. Compartido con boca y jaw."""
         rig_grp = f"{self.rig_name}_rig_GRP"
@@ -2549,6 +2628,11 @@ class EyesModule(object):
         for pattern in (f"{self.prefix}_*_GRP", f"{self.prefix}_*_CRV"):
             for node in cmds.ls(pattern, type="transform") or []:
                 self._park_node(node, side_systems_grp)
+
+        # --- 4. La salida del aim sigue a la cabeza ---
+        # Al final a proposito: el grupo tiene que estar ya colocado para que el
+        # maintain offset del constraint salga limpio.
+        self._attach_eyes_to_head()
 
         return side_systems_grp
 

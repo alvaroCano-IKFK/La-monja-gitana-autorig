@@ -49,6 +49,15 @@ class EyebrowsModule(object):
 
         self.up_curve_aim = kwargs.get("up_curve_aim", (0.0, 1.0, 0.0))
 
+        # Convenció d'eixos per a l'aimConstraint de la cadena de joints.
+        # aim_vector: eix que ha d'apuntar cap al SEGÜENT joint de la cadena
+        # (la direcció "al llarg" de la corba). up_vector: eix que s'alinea
+        # amb el worldUpObject (la upCurve). Per defecte assumim la
+        # convenció estàndard de Maya (X al llarg de la cadena, Y com a up);
+        # canvia-ho si la teva orientació de guies és diferent.
+        self.chain_aim_vector = kwargs.get("chain_aim_vector", (1.0, 0.0, 0.0))
+        self.chain_up_vector = kwargs.get("chain_up_vector", (0.0, 1.0, 0.0))
+
         self.rig_joints = []
         self.controls = []
         self.control_groups = []
@@ -62,6 +71,7 @@ class EyebrowsModule(object):
         self.local_transforms = {}
         self.local_curve = None
         self.local_up_curve = None
+        self.up_transforms = []
 
     # ------------------------------------------------------------------
     # Connectors i creadors de transformacions relatives / locals
@@ -343,6 +353,17 @@ class EyebrowsModule(object):
     # Motion paths i configuració d'aim
     # ------------------------------------------------------------------
     def _setup_motion_paths_and_aims(self):
+        """Pas 9: crea els joints "driven" a la bezierCurve i els up
+        transforms a la upCurve amb motionPath, i orienta els joints amb
+        aimConstraint.
+
+        IMPORTANT: cada joint ha d'APUNTAR cap al següent joint de la
+        cadena (la direcció al llarg de la corba), NO cap al seu up
+        transform. El up transform (posicionat sobre la upCurve) només
+        serveix com a worldUpObject per estabilitzar el roll — és a dir,
+        la referència que li diu a l'aimConstraint "cap on és amunt" en
+        cada punt, no un objectiu d'apuntament.
+        """
         if not (self.local_curve and self.local_up_curve and self.rig_joints):
             return
 
@@ -350,10 +371,12 @@ class EyebrowsModule(object):
         up_curve_shape = cmds.listRelatives(self.local_up_curve, shapes=True)[0]
 
         num_jnts = len(self.rig_joints)
+        up_transforms = []
 
+        # 1) MotionPaths: posicionem els joints (bezierCurve) i els
+        #    up transforms (upCurve) al mateix valor u.
         for i, jnt in enumerate(self.rig_joints):
             idx_str = f"{i + 1:02d}"
-
             u_val = float(i) / float(num_jnts - 1) if num_jnts > 1 else 0.0
 
             mp_node = cmds.createNode(
@@ -387,12 +410,33 @@ class EyebrowsModule(object):
                 f"{up_mp_node}.allCoordinates", f"{up_trn}.translate", f=True
             )
 
+            up_transforms.append(up_trn)
+
+        self.up_transforms = up_transforms
+
+        # 2) AimConstraints: cada joint apunta cap al SEGÜENT joint de la
+        #    cadena (o cap enrere si és l'últim), fent servir el seu up
+        #    transform corresponent com a worldUpObject.
+        for i, jnt in enumerate(self.rig_joints):
+            up_trn = up_transforms[i]
+
+            if i < num_jnts - 1:
+                aim_target = self.rig_joints[i + 1]
+                aim_vector = self.chain_aim_vector
+            else:
+                # L'últim joint no té "següent": manté la direcció de la
+                # cadena apuntant cap enrere (invertint l'aimVector) perquè
+                # segueixi la mateixa tangent que el penúltim.
+                aim_target = self.rig_joints[i - 1]
+                aim_vector = tuple(-v for v in self.chain_aim_vector)
+
             cmds.aimConstraint(
-                up_trn,
+                aim_target,
                 jnt,
-                aimVector=(0, 1, 0),
-                upVector=(1, 0, 0),
-                worldUpType="none",
+                aimVector=aim_vector,
+                upVector=self.chain_up_vector,
+                worldUpType="object",
+                worldUpObject=up_trn,
                 mo=False,
             )
 
@@ -562,12 +606,12 @@ class EyebrowsModule(object):
                 self.control_groups.append(tangent_ctl_gen)
 
                 tan_label = f"{label}Tan"
-                
+
                 # Emparentem l'OFF de la tangent directament a main_local_trn
                 tan_local_off = cmds.group(
                     em=True,
                     n=f"{self.prefix}{tan_label}Local_OFF",
-                    p=main_local_trn, 
+                    p=main_local_trn,
                 )
                 cmds.matchTransform(
                     tan_local_off, tangent_ctl_gen, pos=True, rot=True

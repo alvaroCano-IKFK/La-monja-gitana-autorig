@@ -35,7 +35,8 @@ class EyebrowsModule(object):
     # La M desaparece. Por eso hay que corregir el signo DESPUES del
     # decomposeMatrix, que es lo que hace el modulo de los ojos.
     MIRROR_R_TRANSLATION = True
-    MIRROR_R_TRANSLATION_SIGN = (-1.0, -1.0, -1.0)
+    # CORRECCIÓ: Només invertim l'eix X. Deixem Y i Z en positiu perquè pugi/baixi correctament.
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, 1.0)
 
     # Las TANGENTES necesitan el signo contrario, y no es un capricho.
     #
@@ -67,7 +68,8 @@ class EyebrowsModule(object):
     # del grupo, asi que el control no se mueve de sitio, solo cambian las
     # direcciones de sus canales.
     MIRROR_R_CONTROL_AXES = True
-    MIRROR_R_CONTROL_SCALE = (-1.0, -1.0, -1.0)
+    # CORRECCIÓ: Orientem només l'escala X perquè els gizmos Y i Z coincideixin amb el moviment real.
+    MIRROR_R_CONTROL_SCALE = (-1.0, 1.0, 1.0)
 
     def __init__(
         self,

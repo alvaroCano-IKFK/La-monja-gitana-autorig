@@ -450,31 +450,40 @@ class EyebrowsModule(object):
             f"{amt}.outputMatrix", f"{first_jnt}.offsetParentMatrix", force=True
         )
 
-        # 3) Resta de joints: motionPath directe (translate) + aimConstraint
-        #    cap al seu up_trn, amb el SEGÜENT joint com a worldUpObject
-        #    (l'anterior pel darrer, que no en té de següent).
-        for i in range(1, num_jnts):
-            jnt = self.rig_joints[i]
-            mp_node = curve_mp_nodes[i]
-            up_trn = up_transforms[i]
+        # 3) Segon joint (índex 1): l'ÚNIC que fa servir aimConstraint,
+        #    cap al seu up_trn, amb el joint SEGÜENT (índex 2) com a
+        #    worldUpObject.
+        if num_jnts > 1:
+            second_jnt = self.rig_joints[1]
+            second_mp_node = curve_mp_nodes[1]
+            second_up_trn = up_transforms[1]
 
             cmds.connectAttr(
-                f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
+                f"{second_mp_node}.allCoordinates",
+                f"{second_jnt}.translate",
+                force=True,
             )
 
-            if i < num_jnts - 1:
-                up_object = self.rig_joints[i + 1]
-            else:
-                up_object = self.rig_joints[i - 1]
+            up_object = self.rig_joints[2] if num_jnts > 2 else self.rig_joints[0]
 
             cmds.aimConstraint(
-                up_trn,
-                jnt,
+                second_up_trn,
+                second_jnt,
                 aimVector=self.chain_aim_vector,
                 upVector=self.chain_up_vector,
                 worldUpType="object",
                 worldUpObject=up_object,
                 mo=False,
+            )
+
+        # 4) Resta de joints (índex 2 en endavant): NOMÉS motionPath
+        #    (translate). Cap orientació, cap node addicional.
+        for i in range(2, num_jnts):
+            jnt = self.rig_joints[i]
+            mp_node = curve_mp_nodes[i]
+
+            cmds.connectAttr(
+                f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
             )
 
     # ------------------------------------------------------------------

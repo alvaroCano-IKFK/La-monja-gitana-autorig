@@ -265,11 +265,6 @@ class EyebrowsModule(object):
 
         up_curve = self._create_local_up_curve(bezier_crv)
 
-        # Les dues corbes al mateix espai
-        self._park_curve_in_local_grp(bezier_crv)
-        if up_curve:
-            self._park_curve_in_local_grp(up_curve)
-
         # Skin 1:1 de totes dues (pas 8 de la infografia)
         self._skin_curve_one_to_one(
             bezier_crv, cv_weights, f"{self.prefix}_local_curve_SKIN"
@@ -350,83 +345,24 @@ class EyebrowsModule(object):
         return up_curve
 
     # ------------------------------------------------------------------
-    # Matrix helpers per a l'orientació (aimMatrix)
-    # ------------------------------------------------------------------
-    def _build_position_matrix(self, source_node, name):
-        """Crea un composeMatrix que conté NOMÉS la posició world-space de
-        source_node (rotació identitat), independent de qualsevol rotació
-        heretada del local_grp. Es fa servir com a target matrix "neta" per
-        als nodes aimMatrix, perquè el càlcul d'apuntament no es vegi
-        distorsionat si el local_grp està rotat."""
-        cmm = cmds.createNode("composeMatrix", name=name, ss=True)
-        cmds.connectAttr(
-            f"{source_node}.translate", f"{cmm}.inputTranslate", force=True
-        )
-        return f"{cmm}.outputMatrix"
-
-    def _orient_with_aim_matrix(
-        self,
-        node,
-        aim_target_matrix_plug,
-        up_target_matrix_plug,
-        aim_vector,
-        up_vector,
-        name,
-    ):
-        """Crea un node aimMatrix (AMT) que orienta 'node' cap a
-        aim_target_matrix_plug (eix primari) fent servir up_target_matrix_plug
-        com a referència secundària, i connecta només la rotació resultant
-        al node (la translate la seguim controlant amb el motionPath).
-
-        NOTA: els índexs de primaryMode/secondaryMode (0=None, 1=Align) són
-        els habituals del node aimMatrix de Maya; si en algun cas no
-        s'orienta com toca, revisa'ls al Attribute Editor del node AMT
-        creat, poden variar lleugerament segons la versió de Maya.
-        """
-        amt = cmds.createNode("aimMatrix", name=name, ss=True)
-
-        input_matrix_plug = self._build_position_matrix(node, f"{name}Aim_CMM")
-        cmds.connectAttr(input_matrix_plug, f"{amt}.inputMatrix", force=True)
-
-        cmds.connectAttr(
-            aim_target_matrix_plug, f"{amt}.primaryTargetMatrix", force=True
-        )
-        cmds.setAttr(f"{amt}.primaryInputAxis", *aim_vector, type="double3")
-        cmds.setAttr(f"{amt}.primaryMode", 1)  # 1 = Align
-
-        if up_target_matrix_plug:
-            cmds.connectAttr(
-                up_target_matrix_plug, f"{amt}.secondaryTargetMatrix", force=True
-            )
-            cmds.setAttr(f"{amt}.secondaryInputAxis", *up_vector, type="double3")
-            cmds.setAttr(f"{amt}.secondaryMode", 1)  # 1 = Align
-        else:
-            cmds.setAttr(f"{amt}.secondaryMode", 0)  # 0 = None
-
-        dcm = cmds.createNode("decomposeMatrix", name=f"{name}_DCM", ss=True)
-        cmds.connectAttr(f"{amt}.outputMatrix", f"{dcm}.inputMatrix", force=True)
-        cmds.connectAttr(f"{dcm}.outputRotate", f"{node}.rotate", force=True)
-
-        return amt
-
-    # ------------------------------------------------------------------
     # Motion paths i configuració d'aim
     # ------------------------------------------------------------------
     def _setup_motion_paths_and_aims(self):
         """Pas 9: crea els joints "driven" a la bezierCurve i els up
-        transforms a la upCurve amb motionPath, i orienta els joints amb
-        aimConstraint.
+        transforms a la upCurve amb motionPath, i orienta els joints.
 
-        Estructura en dues fases:
-        1) Cada up_trn (posicionat sobre la upCurve) s'orienta primer amb
-           un node aimMatrix (AMT), apuntant cap al següent up_trn de la
-           upCurve. Així el propi up_trn té una rotació coherent i no
-           només una posició.
-        2) Cada joint apunta (aimConstraint) cap al SEGÜENT joint de la
-           bezierCurve, fent servir el seu up_trn ja orientat com a
-           worldUpObject en mode "objectrotation" (més robust que "object"
-           perquè aprofita la rotació real del up_trn, no només la seva
-           posició).
+        - TOTS els up_trn només tenen un motionPath (translate). Res més.
+        - El PRIMER joint (índex 0) no té "joint anterior" per fer servir
+          com a worldUpObject d'un aimConstraint, així que es resol amb
+          matrius: es compon la seva pròpia posició (composeMatrix des
+          del seu propi motionPath) i s'orienta cap al seu up_trn amb un
+          aimMatrix; el resultat es connecta directament a
+          offsetParentMatrix (el joint no fa servir translate/rotate).
+        - La RESTA de joints reben la posició directament del seu
+          motionPath (translate) i s'orienten amb un aimConstraint clàssic
+          cap al seu up_trn, fent servir el SEGÜENT joint de la cadena com
+          a worldUpObject (l'anterior pel darrer, que no en té de
+          següent).
         """
         if not (self.local_curve and self.local_up_curve and self.rig_joints):
             return
@@ -436,10 +372,13 @@ class EyebrowsModule(object):
 
         num_jnts = len(self.rig_joints)
         up_transforms = []
+        curve_mp_nodes = []
 
-        # 1) MotionPaths: posicionem els joints (bezierCurve) i els
-        #    up transforms (upCurve) al mateix valor u.
-        for i, jnt in enumerate(self.rig_joints):
+        # 1) MotionPaths: creem els de la bezierCurve (els guardem sense
+        #    connectar encara, els necessitem crus pel cas especial del
+        #    primer joint) i els de la upCurve, que SEMPRE alimenten
+        #    únicament el translate del seu up_trn.
+        for i in range(num_jnts):
             idx_str = f"{i + 1:02d}"
             u_val = float(i) / float(num_jnts - 1) if num_jnts > 1 else 0.0
 
@@ -451,9 +390,7 @@ class EyebrowsModule(object):
             )
             cmds.setAttr(f"{mp_node}.fractionMode", True)
             cmds.setAttr(f"{mp_node}.uValue", u_val)
-            cmds.connectAttr(
-                f"{mp_node}.allCoordinates", f"{jnt}.translate", f=True
-            )
+            curve_mp_nodes.append(mp_node)
 
             up_mp_node = cmds.createNode(
                 "motionPath", name=f"{self.prefix}_{idx_str}_up_MPA", ss=True
@@ -467,68 +404,76 @@ class EyebrowsModule(object):
             up_trn = cmds.createNode(
                 "transform", name=f"{self.prefix}_{idx_str}_up_TRN", ss=True
             )
-            if self.local_grp and cmds.objExists(self.local_grp):
-                cmds.parent(up_trn, self.local_grp)
-
             cmds.connectAttr(
                 f"{up_mp_node}.allCoordinates", f"{up_trn}.translate", f=True
             )
-
             up_transforms.append(up_trn)
 
         self.up_transforms = up_transforms
 
-        # 2) Orientem cada up_trn amb un aimMatrix (AMT), apuntant cap al
-        #    següent up_trn de la upCurve (o cap enrere si és l'últim).
-        #    Això li dona una rotació coherent al llarg de la corba, en
-        #    comptes de només una posició.
-        for i, up_trn in enumerate(up_transforms):
-            if i < num_jnts - 1:
-                up_aim_target = up_transforms[i + 1]
-                up_aim_vector = self.chain_aim_vector
-            else:
-                up_aim_target = up_transforms[i - 1]
-                up_aim_vector = tuple(-v for v in self.chain_aim_vector)
+        # 2) Primer joint (índex 0): composeMatrix (posició pròpia) +
+        #    aimMatrix (orientat cap al seu up_trn) -> offsetParentMatrix.
+        first_jnt = self.rig_joints[0]
+        idx0_str = "01"
 
-            idx_str = f"{i + 1:02d}"
-            up_target_matrix_plug = self._build_position_matrix(
-                up_aim_target, f"{self.prefix}_{idx_str}_upAimTarget_CMM"
-            )
+        pos_cmm = cmds.createNode(
+            "composeMatrix", name=f"{self.prefix}_{idx0_str}Pos_CMM", ss=True
+        )
+        cmds.connectAttr(
+            f"{curve_mp_nodes[0]}.allCoordinates",
+            f"{pos_cmm}.inputTranslate",
+            force=True,
+        )
 
-            self._orient_with_aim_matrix(
-                node=up_trn,
-                aim_target_matrix_plug=up_target_matrix_plug,
-                up_target_matrix_plug=None,
-                aim_vector=up_aim_vector,
-                up_vector=self.chain_up_vector,
-                name=f"{self.prefix}_{idx_str}_up_AMT",
-            )
+        aim_cmm = cmds.createNode(
+            "composeMatrix", name=f"{self.prefix}_{idx0_str}Aim_CMM", ss=True
+        )
+        cmds.connectAttr(
+            f"{up_transforms[0]}.translate", f"{aim_cmm}.inputTranslate", force=True
+        )
 
-        # 3) AimConstraints: cada joint apunta cap al SEGÜENT joint de la
-        #    cadena (o cap enrere si és l'últim), fent servir el seu up
-        #    transform (ja orientat amb l'AMT) com a worldUpObject en mode
-        #    "objectrotation".
-        for i, jnt in enumerate(self.rig_joints):
+        amt = cmds.createNode(
+            "aimMatrix", name=f"{self.prefix}_{idx0_str}_AMT", ss=True
+        )
+        cmds.connectAttr(
+            f"{pos_cmm}.outputMatrix", f"{amt}.inputMatrix", force=True
+        )
+        cmds.connectAttr(
+            f"{aim_cmm}.outputMatrix", f"{amt}.primaryTargetMatrix", force=True
+        )
+        cmds.setAttr(
+            f"{amt}.primaryInputAxis", *self.chain_aim_vector, type="double3"
+        )
+        cmds.setAttr(f"{amt}.primaryMode", 1)  # 1 = Align
+
+        cmds.connectAttr(
+            f"{amt}.outputMatrix", f"{first_jnt}.offsetParentMatrix", force=True
+        )
+
+        # 3) Resta de joints: motionPath directe (translate) + aimConstraint
+        #    cap al seu up_trn, amb el SEGÜENT joint com a worldUpObject
+        #    (l'anterior pel darrer, que no en té de següent).
+        for i in range(1, num_jnts):
+            jnt = self.rig_joints[i]
+            mp_node = curve_mp_nodes[i]
             up_trn = up_transforms[i]
 
+            cmds.connectAttr(
+                f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
+            )
+
             if i < num_jnts - 1:
-                aim_target = self.rig_joints[i + 1]
-                aim_vector = self.chain_aim_vector
+                up_object = self.rig_joints[i + 1]
             else:
-                # L'últim joint no té "següent": manté la direcció de la
-                # cadena apuntant cap enrere (invertint l'aimVector) perquè
-                # segueixi la mateixa tangent que el penúltim.
-                aim_target = self.rig_joints[i - 1]
-                aim_vector = tuple(-v for v in self.chain_aim_vector)
+                up_object = self.rig_joints[i - 1]
 
             cmds.aimConstraint(
-                aim_target,
+                up_trn,
                 jnt,
-                aimVector=aim_vector,
+                aimVector=self.chain_aim_vector,
                 upVector=self.chain_up_vector,
-                worldUpType="objectrotation",
-                worldUpObject=up_trn,
-                worldUpVector=self.chain_up_vector,
+                worldUpType="object",
+                worldUpObject=up_object,
                 mo=False,
             )
 

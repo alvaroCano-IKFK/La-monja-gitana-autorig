@@ -22,21 +22,45 @@ class EyesModule(object):
         6: [0.0, 0.0, 0.0, 0.0, 1.0],
     }
 
-    # Atributos de follow del grupo de settings: (nombre_largo, nombre_visible)
+    # Atributos de follow del grupo de settings:
+    # (nombre_largo, nombre_visible, valor_por_defecto).
+    #
+    # El defecto es 0.7 y no 0.5 siguiendo el diagrama del documento, que marca
+    # (0.3 / 0.7) en los intermedios. El atributo va al peso del driver A (el
+    # parpado) y su reverse al del driver B (la esquina), asi que 0.7 = el
+    # intermedio sigue mayormente al centro del parpado. Si en tu cara queda
+    # mejor al reves, es cambiar este numero por 0.3.
     SETTINGS_ATTRIBUTES = [
-        ("Up01FollowUp", "Up 01 Follow Up"),
-        ("Up03FollowUp", "Up 03 Follow Up"),
-        ("Low01FollowLow", "Low 01 Follow Low"),
-        ("Low03FollowLow", "Low 03 Follow Low"),
+        ("Up01FollowUp", "Up 01 Follow Up", 0.7),
+        ("Up03FollowUp", "Up 03 Follow Up", 0.7),
+        ("Low01FollowLow", "Low 01 Follow Low", 0.7),
+        ("Low03FollowLow", "Low 03 Follow Low", 0.7),
     ]
 
-    # Atributos extra de los controles centrales de los parpados:
-    # (nombre_largo, nombre_visible, valor_por_defecto). Todos van de -1 a 1.
+    # Atributos extra del control del ojo:
+    # (nombre_largo, nombre_visible, defecto, minimo, maximo).
+    #
+    # blinkHeight lleva su propio rango 0..1: es una altura de cierre y no tiene
+    # lado negativo, a diferencia de los dos blink, que van de -1 (abrir) a 1
+    # (cerrar). Antes los tres compartian min -1 y el blinkHeight se podia
+    # meter en negativo.
     BLINK_ATTRIBUTES = [
-        ("upperBlink", "Upper Blink", 0.0),
-        ("lowerBlink", "Lower Blink", 0.0),
-        ("blinkHeight", "Blink Height", 0.2),
+        ("upperBlink", "Upper Blink", 0.0, -1.0, 1.0),
+        ("lowerBlink", "Lower Blink", 0.0, -1.0, 1.0),
+        ("blinkHeight", "Blink Height", 0.2, 0.0, 1.0),
     ]
+
+    # Defecto del atributo de fleshy, segun el documento.
+    FLESHY_DEFAULT = 0.1
+
+    # Eje de rotacion del fleshy que NO se conecta. El documento pide que solo
+    # se conecten DOS de los tres, dejando fuera el twist del ojo.
+    #
+    # Aqui el que se deja fuera es la Z: el parpado sigue la mirada girando en
+    # X (arriba / abajo) y en Y (izquierda / derecha), que es el comportamiento
+    # que se quiere. Ponlo a "X" o a "Y" si en otra cara el eje del twist cae
+    # en otro sitio.
+    FLESHY_SKIP_AXIS = "Z"
 
     # Cuanto se separan las curvas NegateBlink de su original, como fraccion del
     # radio del parpado. Es la pose de apertura de partida: 0.0 las deja como
@@ -904,12 +928,18 @@ class EyesModule(object):
         eyelid_up / eyelid_low, donde se creaban en builds anteriores.
         Solo borra los atributos de BLINK_ATTRIBUTES y el separador: nada mas.
         """
+        host = self._get_attribute_host()
+
         old_controls = [
             self.eye_controls.get(self.eyelid_up),
             self.eye_controls.get(self.eyelid_low),
+            self.eye_controls.get(self.eye_mid),   # vivian aqui hasta ahora
         ]
+        old_controls = [c for c in old_controls if c and c != host]
 
-        attr_names = ["extraAttrSep"] + [name for name, _, _ in self.BLINK_ATTRIBUTES]
+        attr_names = (["extraAttrSep"]
+                      + [entry[0] for entry in self.BLINK_ATTRIBUTES]
+                      + [setup["attribute"] for setup in self.fleshy_setups])
 
         for old_ctrl in old_controls:
             if not old_ctrl or not cmds.objExists(old_ctrl):
@@ -964,6 +994,19 @@ class EyesModule(object):
 
         return ctrl
 
+    def _get_attribute_host(self):
+        """
+        Control donde viven los atributos de blink y de fleshy: el de eye_mid.
+
+        El documento los pone en el eyeDirect y se llego a hacer asi, pero en
+        esta cara el eye_mid es el control que se usa para el parpadeo, asi que
+        se quedan aqui. Si algun dia se quiere seguir el documento al pie de la
+        letra, es cambiar este metodo por self.eye_direct_control y mover la
+        llamada a _add_blink_attributes despues de _build_eye_direct_control en
+        el build.
+        """
+        return self.eye_controls.get(self.eye_mid)
+
     def _add_blink_attributes(self):
         """
         Anade al control de eye_mid el separador de atributos extra y los tres
@@ -972,10 +1015,10 @@ class EyesModule(object):
         Idempotente: si el atributo ya existe en el control no se vuelve a crear,
         asi que se puede relanzar la build sin que reviente.
         """
-        ctrl = self.eye_controls.get(self.eye_mid)
+        ctrl = self._get_attribute_host()
         if not ctrl or not cmds.objExists(ctrl):
-            cmds.warning(f"[EyesModule] No existe el control de {self.eye_mid}, "
-                         "no se anaden los atributos de blink.")
+            cmds.warning("[EyesModule] No hay control donde poner los atributos "
+                         "de blink.")
             return None
 
         # Los atributos vivian en los parpados: se limpian de ahi antes de nada.
@@ -989,13 +1032,14 @@ class EyesModule(object):
         # Channel Box y bloquearlo para que se pinte como separador.
         cmds.setAttr(f"{ctrl}.extraAttrSep", channelBox=True, lock=True)
 
-        for long_name, nice_name, default_value in self.BLINK_ATTRIBUTES:
+        for long_name, nice_name, default_value, min_value, max_value in self.BLINK_ATTRIBUTES:
             if cmds.attributeQuery(long_name, node=ctrl, exists=True):
                 continue
 
             cmds.addAttr(
                 ctrl, ln=long_name, nn=nice_name,
-                at="float", min=-1, max=1, dv=default_value, k=True
+                at="float", min=min_value, max=max_value,
+                dv=default_value, k=True
             )
 
         return ctrl
@@ -1008,17 +1052,18 @@ class EyesModule(object):
         todo lo que permita su multiplicador. El defecto es 0, asi que montar el
         sistema no cambia nada hasta que alguien lo sube a mano.
         """
-        ctrl = self.eye_controls.get(self.eye_mid)
+        ctrl = self._get_attribute_host()
         if not ctrl or not cmds.objExists(ctrl):
-            cmds.warning(f"[EyesModule] No existe el control de {self.eye_mid}, "
-                         "no se anaden los atributos de fleshy.")
+            cmds.warning("[EyesModule] No hay control donde poner los atributos "
+                         "de fleshy.")
             return None
 
         long_name = setup["attribute"]
 
         if not cmds.attributeQuery(long_name, node=ctrl, exists=True):
             cmds.addAttr(ctrl, ln=long_name, nn=setup["nice_name"],
-                         at="float", min=0, max=1, dv=0.0, k=True)
+                         at="float", min=0, max=1,
+                         dv=self.FLESHY_DEFAULT, k=True)
 
         return f"{ctrl}.{long_name}"
 
@@ -1162,6 +1207,11 @@ class EyesModule(object):
         sorpresas con la conversion del compuesto entero.
         """
         for channel, axis in (("R", "X"), ("G", "Y"), ("B", "Z")):
+            if axis == self.FLESHY_SKIP_AXIS:
+                # El twist del ojo se queda fuera a proposito, ver
+                # FLESHY_SKIP_AXIS. Solo se conectan DOS ejes.
+                continue
+
             cmds.connectAttr(f"{blend}.output{channel}",
                              f"{trn_group}.rotate{axis}", force=True)
 
@@ -1272,10 +1322,10 @@ class EyesModule(object):
 
         settings_group = cmds.group(em=True, n=settings_name)
 
-        for long_name, nice_name in self.SETTINGS_ATTRIBUTES:
+        for long_name, nice_name, default_value in self.SETTINGS_ATTRIBUTES:
             cmds.addAttr(
                 settings_group, ln=long_name, nn=nice_name,
-                at="float", min=0, max=1, dv=0.5, k=True
+                at="float", min=0, max=1, dv=default_value, k=True
             )
 
         # Bloquea y oculta translate / rotate / scale y la visibilidad
@@ -1598,9 +1648,10 @@ class EyesModule(object):
         y lowerBlink pasan por su clamp para repartirse entre el target de
         cierre (BlinkHeight) y el de apertura (NegateBlink).
         """
-        ctrl = self.eye_controls.get(self.eye_mid)
+        ctrl = self._get_attribute_host()
         if not ctrl or not cmds.objExists(ctrl):
-            cmds.warning("[EyesModule] No existe el control de eye_mid, el blink queda sin conectar.")
+            cmds.warning("[EyesModule] No hay control con los atributos, el "
+                         "blink queda sin conectar.")
             return None
 
         blend_shapes = self.blink_blend_shapes or {}
@@ -2525,41 +2576,26 @@ class EyesModule(object):
 
     def _attach_eyes_to_head(self):
         """
-        Mete el movimiento de cabeza SOLO en el grupo de salida del aim.
+        NO constriñe nada. Se conserva como sitio documentado del porque.
 
-        Los *Aim_JNT reciben la matriz del aimMatrix en su offsetParentMatrix, y
-        esa matriz esta calculada en el espacio estatico. Heredar la
-        transformacion de este grupo es lo que la lleva al espacio de la cabeza,
-        una sola vez. Los *AimEnd_JNT, que son los que skinean, cuelgan de ellos.
+        Antes ponia un parentConstraint del head_JNT en eyelidLoopAim_GRP, y eso
+        hacia que los *AimEnd_JNT (los que skinean) siguiesen a la cabeza. Con el
+        montaje de dos mallas eso es justo lo que no puede pasar: la malla facial
+        tiene que quedarse clavada en bind para que la blendShape solo le pase a
+        la malla de body mechanics el delta de expresion. Si los joints de skin
+        se mueven con la cabeza, ese movimiento entra por la blendShape y se suma
+        al que la otra malla ya tiene por su propio skinCluster.
 
-        Lo que NO se constriñe, a proposito:
-          - eyeJoints_GRP: eye_mid_JNT ya sigue a la cabeza por su constraint
-            contra el control.
-          - eyelidLoopJoints_GRP y el modulo local: tienen que quedarse quietos
-            para que eyeAimCenter_TRN siga siendo estatico.
+        Los CONTROLES si siguen a la cabeza, pero por otra via: _organize_outliner
+        los cuelga de C_<rig>_faceControls_GRP, que es el grupo compartido que el
+        modulo de jaw constriñe en _attach_face_controls_to_head. Esa es
+        exactamente la reparticion que hace que el jaw funcione: controles arriba
+        con la cabeza, joints de skin quietos abajo.
 
-        Borra y rehace en vez de saltarse el paso si ya hay constraint. Los
-        modulos no limpian lo que crean, y despues de varias reconstrucciones
-        sobre la misma escena acabas probando codigo nuevo con constraints
-        viejos colgando.
+        Si algun dia se quita el montaje de dos mallas, aqui es donde volveria el
+        constraint del grupo de aim.
         """
-        head_joint = f"{self.rig_name}_head_JNT"
-        if not cmds.objExists(head_joint):
-            cmds.warning(f"[EyesModule] No existe '{head_joint}'. Construye el "
-                         "NeckModule antes que los faciales si quieres que los "
-                         "parpados sigan a la cabeza.")
-            return
-
-        aim_group = f"{self.prefix}_eyelidLoopAim_GRP"
-        if not cmds.objExists(aim_group):
-            return
-
-        old = cmds.listRelatives(aim_group, children=True,
-                                 type="parentConstraint") or []
-        if old:
-            cmds.delete(old)
-
-        cmds.parentConstraint(head_joint, aim_group, mo=True)
+        return None
 
     def _face_systems_root(self):
         """C_<rig>_face_GRP, bajo el rig_GRP. Compartido con boca y jaw."""
@@ -2799,12 +2835,6 @@ class EyesModule(object):
             self.eye_sub_local_trns[guide] = sub_local_trn
 
         # =========================================================
-        # ATRIBUTOS EXTRA DE BLINK EN EL CONTROL DEL OJO
-        # Separador + upperBlink / lowerBlink / blinkHeight en el control de eye_mid.
-        # =========================================================
-        self._add_blink_attributes()
-
-        # =========================================================
         # CONTROL DE EYE_DIRECT + AIM DEL OJO
         # El _GRP del control de eye_mid apunta al control de eye_direct, y el
         # joint de eye_mid sigue a su control: mover el direct rota el ojo.
@@ -2812,6 +2842,16 @@ class EyesModule(object):
         self._build_eye_direct_control()
         self._aim_eye_mid_to_direct()
         self._constrain_eye_mid_joint()
+
+        # =========================================================
+        # ATRIBUTOS EXTRA DE BLINK EN EL CONTROL DEL OJO
+        # Separador + upperBlink / lowerBlink / blinkHeight.
+        #
+        # Va DESPUES del eyeDirect a proposito: el documento pide que estos
+        # atributos vivan en ese control, asi que tiene que existir ya cuando
+        # _get_attribute_host lo busca.
+        # =========================================================
+        self._add_blink_attributes()
 
         # La shape del control de eye_mid se dibuja sobre el joint de
         # eye_mid_end; el transform y el pivote no se mueven.

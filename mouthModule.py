@@ -774,83 +774,165 @@ class MouthModule(object):
             return False
         return True
 
-    def _attach_mouth_to_head(self, controls_grp, trackers_grp, projected_grp):
+    def _face_controls_root(self):
         """
-        Engancha la boca al joint de la cabeza con DOS parentConstraint.
+        C_<rig>_faceControls_GRP: la raiz de controles compartida por boca, jaw
+        y ojos, colgada del local_CTL y constreñida al control de la cabeza.
 
-        - controls_grp (C_<rig>_mouthControls_GRP): lleva dentro el _GRP del mid
-          y los de ambos lados. El mid lo necesita porque su grupo esta libre.
-          A los de los lados no les cambia nada: esos ya tienen su propio
-          constraint desde su *_trackerGlobal_LOC, que ahora se movera solo.
+        La crea el primer modulo que corra. La boca la necesita porque suele
+        construirse ANTES que el jaw, asi que no puede darla por existente.
 
-        - trackers_grp (C_<rig>_mouthTrackers_GRP): NO se constriñe, solo se le
-          arregla el inheritsTransform de sus locators global. Los *_tracker_LOC
-          leen un motionPath sobre las curvas de la boca, y esas curvas ya traen
-          la cabeza dentro: sus joints siguen a los *Local_OFF, que estan
-          constreñidos al lipProjected_LOC, que se mueve por projected_grp. Si
-          ademas se constriñese este grupo, los controles de los lados
-          (levator, depresor, pinches) recibirian el movimiento dos veces.
-
-        - projected_grp (C_<rig>_mouthProjected_GRP): mismo caso, y es el que
-          mueve al upper y al lower. Esos dos no siguen a controls_grp: su _GRP
-          tiene constraint propio desde su lipProjectedGlobal_LOC, que esta
-          aqui dentro. Los lipProjected_LOC reciben el outputMatrix del uvPin,
-          que es estatico porque la superficie no se mueve, asi que heredar la
-          transformacion de este grupo es lo que los lleva a la cabeza.
-
-        Aparte va la comisura del lado R. Su _GRP cuelga del mirrorBehaviour_GRP
-        (build(), donde se le mete el scaleX = -1 del espejo), asi que _park_node
-        no lo mete en controls_grp y se quedaria sin seguir a la cabeza. Se le
-        pone constraint propio.
-
-        Idempotente: se llama en los dos builds (L y R) y solo crea lo que falte.
+        Mismo grupo y mismo driver (head_CTRL) que el _face_controls_root del
+        jaw, para que haya un unico parentConstraint y no dos peleandose.
         """
-        head_joint = f"{self.rig_name}_head_JNT"
-        if not cmds.objExists(head_joint):
-            cmds.warning(f"[Mouth] No existe '{head_joint}'. Construye el "
-                         "NeckModule antes que la boca si quieres que siga a "
-                         "la cabeza.")
-            return
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
 
-        # Las versiones "Global" (trackerGlobal_LOC y lipProjectedGlobal_LOC)
-        # reciben en su offsetParentMatrix el worldMatrix de su locator local,
-        # o sea que esa matriz YA trae el movimiento de la cabeza en cuanto se
-        # constriñe el grupo. Si ademas lo heredasen se lo comerian dos veces.
-        # Por eso el local hereda y el global no.
-        for group_name in (trackers_grp, projected_grp):
-            if not group_name or not cmds.objExists(group_name):
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+        controls_root = self._ensure_group(f"C_{self.rig_name}_faceControls_GRP",
+                                           parent)
+
+        head_ctrl = f"{self.rig_name}_head_CTRL"
+        if not cmds.objExists(head_ctrl):
+            cmds.warning(f"[Mouth] No existe '{head_ctrl}'. Construye el "
+                         "NeckModule antes que los faciales si quieres que los "
+                         "controles de la cara sigan a la cabeza.")
+            return controls_root
+
+        if not cmds.listRelatives(controls_root, children=True,
+                                  type="parentConstraint"):
+            cmds.parentConstraint(head_ctrl, controls_root, mo=True)
+
+        return controls_root
+
+    def _attach_control_drivers_to_head(self, trackers_grp, projected_grp):
+        """
+        Separa los locators por FUNCION y lleva a la cabeza solo los que
+        conducen controles.
+
+        Hace falta porque los _GRP del levator, depresor y pinches van con
+        parentConstraint desde su *_trackerGlobal_LOC, y los del upper y lower
+        desde lipProjectedGlobal_LOC. Un constraint gana sobre el padre, asi que
+        meter mouthControls_GRP dentro del grupo de la cara no les sirve: siguen
+        clavados donde diga su locator. Por eso solo se movia el mid, que es el
+        unico con el _GRP libre.
+
+        La separacion:
+
+          - LOCALES (lipProjected_LOC, lipProjected01/02_LOC, *_tracker_LOC):
+            conducen el SISTEMA, o sea los *Local_OFF, los joints PreBind y las
+            curvas, y de ahi salen los lipBind##_JNT que skinean. Se quedan
+            quietos, o volveriamos a meter la cabeza en la malla facial y la
+            blendShape la aplicaria dos veces.
+
+          - GLOBALES (lipProjectedGlobal_LOC, *_trackerGlobal_LOC): su unico
+            consumidor son los _GRP de los controles. Pueden seguir a la cabeza
+            sin tocar un solo joint.
+
+        Los globales reciben en su offsetParentMatrix el worldMatrix de su
+        compañero local, que es estatico, asi que aqui SI tienen que heredar la
+        transformacion del grupo: es de donde sacan el movimiento de cabeza. Es
+        lo contrario de lo que hacia falta cuando se constreñia el grupo entero.
+
+        El lipProjectedGlobalJaw*_LOC del jaw no hay que moverlo: lee el
+        worldMatrix del lipProjectedGlobal_LOC, asi que le sigue solo.
+        """
+        drivers_grp = self._ensure_group(f"C_{self.rig_name}_faceControlDrivers_GRP")
+
+        head_ctrl = f"{self.rig_name}_head_CTRL"
+        if cmds.objExists(head_ctrl):
+            if not cmds.listRelatives(drivers_grp, children=True,
+                                      type="parentConstraint"):
+                cmds.parentConstraint(head_ctrl, drivers_grp, mo=True)
+        else:
+            cmds.warning(f"[Mouth] No existe '{head_ctrl}': los controles de la "
+                         "boca no seguiran a la cabeza.")
+
+        for source_grp in (trackers_grp, projected_grp):
+            if not source_grp or not cmds.objExists(source_grp):
                 continue
-            for locator in cmds.listRelatives(group_name, children=True,
+
+            for locator in cmds.listRelatives(source_grp, children=True,
                                               type="transform") or []:
                 if not locator.endswith("Global_LOC"):
                     continue
-                if cmds.getAttr(f"{locator}.inheritsTransform"):
-                    cmds.setAttr(f"{locator}.inheritsTransform", 0)
 
-        targets = [controls_grp, projected_grp]
+                if not cmds.getAttr(f"{locator}.inheritsTransform"):
+                    cmds.setAttr(f"{locator}.inheritsTransform", 1)
 
-        # Comisuras: solo las que se hayan quedado fuera de controls_grp, que en
-        # la practica es la del lado R por el mirrorBehaviour_GRP. Si el _GRP ya
-        # cuelga de controls_grp no se toca, porque ya sigue a la cabeza por ahi
-        # y un segundo constraint solo seria ruido en el outliner.
-        for side_code in ("L", "R"):
-            corner_grp = f"{side_code}_{self.rig_name}_end_LIP_GRP"
-            if not cmds.objExists(corner_grp):
-                continue
-            ancestors = cmds.listRelatives(corner_grp, allParents=True,
-                                           fullPath=True) or []
-            already_inside = any(controls_grp in path.split("|")
-                                 for path in ancestors)
-            if not already_inside:
-                targets.append(corner_grp)
+                # cmds.parent y NO _park_node: el helper se salta cualquier nodo
+                # que ya tenga padre, y para cuando llegamos aqui el organizador
+                # ya los ha metido en trackers_grp / projected_grp. Justo lo que
+                # hay que hacer es sacarlos de ahi.
+                #
+                # relative = True: los dos grupos estan en identidad al
+                # construir, asi que conservar los valores locales conserva la
+                # matriz mundial, y ademas evita que Maya intente escribir en el
+                # translate de un locator que va conectado a un motionPath.
+                cmds.parent(locator, drivers_grp, relative=True)
 
-        for group_name in targets:
-            if not group_name or not cmds.objExists(group_name):
-                continue
-            if cmds.listRelatives(group_name, children=True,
-                                  type="parentConstraint"):
-                continue
-            cmds.parentConstraint(head_joint, group_name, mo=True)
+        return drivers_grp
+
+    def _attach_mouth_to_head(self, controls_grp, trackers_grp, projected_grp):
+        """
+        Cuelga SOLO los controles de la cabeza. El sistema se queda quieto.
+
+        Antes esto ponia tres parentConstraint del head_JNT: en controls_grp, en
+        projected_grp y en la comisura del lado R. El de projected_grp era el
+        veneno: mueve el lipProjected_LOC, que conduce los *Local_OFF y los
+        joints PreBind, que deforman las curvas, que conducen los lipBind##_JNT.
+        O sea que la cabeza llegaba a los joints que skinean.
+
+        Con el montaje de dos mallas eso no puede pasar: la malla facial tiene
+        que quedarse clavada en bind para que la blendShape solo le pase a la
+        malla de body mechanics el delta de expresion. Si un joint de skin sigue
+        a la cabeza, ese movimiento entra por la blendShape y se suma al que la
+        otra malla ya tiene por su skinCluster. El modulo de jaw es el unico que
+        funcionaba precisamente porque sus joints se quedan quietos.
+
+        Los controles si siguen a la cabeza, por dos vias segun como esten
+        conducidos: los que tienen el _GRP libre (mid y comisuras) por herencia,
+        colgando de la raiz compartida; los que tienen constraint propio, porque
+        se mueve su locator driver.
+        """
+        if not controls_grp or not cmds.objExists(controls_grp):
+            return
+
+        face_controls = self._face_controls_root()
+
+        if face_controls and cmds.objExists(face_controls):
+            # Un constraint viejo de una build anterior seguiria moviendo esto.
+            old = cmds.listRelatives(controls_grp, children=True,
+                                     type="parentConstraint") or []
+            if old:
+                cmds.delete(old)
+
+            current_parent = cmds.listRelatives(controls_grp, parent=True)
+            if not (current_parent and current_parent[0] == face_controls):
+                cmds.parent(controls_grp, face_controls)
+
+            # La comisura del lado R cuelga del mirrorBehaviour_GRP, asi que
+            # _park_node no la metio en controls_grp y se quedaria fuera.
+            for side_code in ("L", "R"):
+                corner_grp = f"{side_code}_{self.rig_name}_end_LIP_GRP"
+                if not cmds.objExists(corner_grp):
+                    continue
+
+                ancestors = cmds.listRelatives(corner_grp, allParents=True,
+                                               fullPath=True) or []
+                if any(controls_grp in path.split("|") for path in ancestors):
+                    continue
+
+                old = cmds.listRelatives(corner_grp, children=True,
+                                         type="parentConstraint") or []
+                if old:
+                    cmds.delete(old)
+                cmds.parent(corner_grp, face_controls)
+
+        # Y los locators que conducen los _GRP con constraint propio, que no se
+        # enteran de quien sea su padre.
+        self._attach_control_drivers_to_head(trackers_grp, projected_grp)
 
     def _organize_outliner(self, control_groups=None):
         """

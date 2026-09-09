@@ -12,6 +12,63 @@ from nodeCreator_module import NodeCreator
 
 class EyebrowsModule(object):
 
+    # ------------------------------------------------------------------
+    # ESPEJO DEL LADO R
+    # ------------------------------------------------------------------
+    # Las guias del lado derecho estan en mirror BEHAVIOUR respecto al
+    # izquierdo: sus ejes son los del espejo de L pero negados, o sea que la
+    # ceja derecha esta girada 180 grados, no reflejada. Esa convencion es la
+    # correcta para ROTACIONES (los mismos valores de rotate dan movimientos
+    # simetricos) pero es la contraria para TRASLACIONES, y este sistema mueve
+    # todo por traslacion: el _REL alimenta el translate del _Local_TRN.
+    #
+    # OJO, no sirve el truco del modulo de la boca (scaleX = -1 en el _GRP mas
+    # una matriz de espejo al final del multMatrix). Alli la cadena sube hasta
+    # el _GRP SIN incluirlo, asi que la escala negativa se queda fuera. Aqui
+    # generate_relative_control_transform sube hasta top_grp INCLUYENDOLO y
+    # ademas hornea la inversa del bind, asi que el espejo se cancela solo:
+    #
+    #     cadena  = A x M
+    #     invBind = (A0 x M)^-1 = M^-1 x A0^-1
+    #     delta   = A x M x M^-1 x A0^-1 = A x A0^-1
+    #
+    # La M desaparece. Por eso hay que corregir el signo DESPUES del
+    # decomposeMatrix, que es lo que hace el modulo de los ojos.
+    MIRROR_R_TRANSLATION = True
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, -1.0, -1.0)
+
+    # Las TANGENTES necesitan el signo contrario, y no es un capricho.
+    #
+    # Los _GRP de los sub acaban con rotate Z = 180 y scale Z = -1, que no los
+    # pone este modulo: los escribe Maya al hacer cmds.parent(sub_ctl_gen,
+    # main_ctl) de forma absoluta dentro de un padre con escala negativa. Para
+    # conservar la posicion de mundo compensa con un giro de 180 mas una escala
+    # negada. Los _GRP de las tangentes no necesitaron esa compensacion y se
+    # quedaron limpios (rotate 0, scale 1).
+    #
+    # Y eso importa porque cada _Local_OFF se matchea con rot=True contra su
+    # _GRP, asi que los dos sistemas viven en marcos girados 180 grados el uno
+    # respecto del otro. El mismo signo que corrige uno estropea el otro.
+    #
+    # La solucion limpia seria que ningun _GRP intermedio acabase con esas
+    # compensaciones, y entonces bastaria un unico signo para todo el modulo.
+    # Mientras tanto, esto.
+    MIRROR_R_TANGENT_SIGN = (1.0, 1.0, 1.0)
+
+    # La otra mitad del problema, esta vez del lado del animador.
+    #
+    # Con lo de arriba el sistema ya se mueve en espejo, pero el gizmo del
+    # control sigue en orientacion de behaviour, asi que el control tira hacia
+    # un lado y la ceja hacia el otro. Se le voltean los ejes al grupo del
+    # control principal, y los sub y las tangentes lo heredan porque cuelgan
+    # de el.
+    #
+    # scale y no rotate a proposito: la shape se dibuja alrededor del origen
+    # del grupo, asi que el control no se mueve de sitio, solo cambian las
+    # direcciones de sus canales.
+    MIRROR_R_CONTROL_AXES = True
+    MIRROR_R_CONTROL_SCALE = (-1.0, -1.0, -1.0)
+
     def __init__(
         self,
         guide_prefix="L_eyebrow_root",
@@ -77,8 +134,13 @@ class EyebrowsModule(object):
     # Connectors i creadors de transformacions relatives / locals
     # ------------------------------------------------------------------
     def generate_relative_control_transform(
-        self, control_name, top_grp, create_transform=True
+        self, control_name, top_grp, create_transform=True, mirror_sign=None
     ):
+        """
+        mirror_sign: signo del espejo de traslacion para este control en el lado
+        R. Si es None se usa MIRROR_R_TRANSLATION_SIGN. Las tangentes pasan
+        MIRROR_R_TANGENT_SIGN, ver el comentario de esa constante.
+        """
 
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
@@ -130,8 +192,15 @@ class EyebrowsModule(object):
         )
         cmds.parent(relative_trn, grp, relative=True)
 
+        translate_source = f"{dcm}.outputTranslate"
+        if self.side == "R" and self.MIRROR_R_TRANSLATION:
+            translate_source = self._build_translation_mirror(
+                base_name, dcm, mirror_sign)
+
+        cmds.connectAttr(
+            translate_source, f"{relative_trn}.translate", force=True
+        )
         for out_attr, in_attr in (
-            ("outputTranslate", "translate"),
             ("outputRotate", "rotate"),
             ("outputScale", "scale"),
         ):
@@ -140,6 +209,65 @@ class EyebrowsModule(object):
             )
 
         return relative_trn, dcm
+
+    def _build_translation_mirror(self, base_name, dcm, mirror_sign=None):
+        """
+        Mete un multiplyDivide entre el decomposeMatrix y el _REL para invertir
+        el signo de la traslacion en el lado R.
+
+        Solo toca translate: con orientaciones en mirror behaviour las
+        rotaciones ya salen simetricas y negarlas las romperia. Ver el
+        comentario de MIRROR_R_TRANSLATION arriba de la clase.
+
+        Devuelve el plug que hay que conectar al translate del _REL.
+        """
+        if mirror_sign is None:
+            mirror_sign = self.MIRROR_R_TRANSLATION_SIGN
+
+        node_name = f"{base_name}LocalMirror_MDV"
+
+        if not cmds.objExists(node_name):
+            node_name = cmds.createNode("multiplyDivide", name=node_name, ss=True)
+
+        cmds.setAttr(f"{node_name}.operation", 1)  # 1 = multiplicar
+        for index, axis in enumerate("XYZ"):
+            cmds.setAttr(f"{node_name}.input2{axis}", mirror_sign[index])
+
+        cmds.connectAttr(f"{dcm}.outputTranslate", f"{node_name}.input1",
+                         force=True)
+
+        return f"{node_name}.output"
+
+    def _mirror_control_axes(self, main_ctl_gen):
+        """
+        Voltea los ejes del grupo del control principal en el lado R.
+
+        Solo el principal: los sub cuelgan de main_ctl y las tangentes de su
+        sub, asi que heredan el volteo. Si se les pusiera tambien, se
+        cancelaria.
+
+        MUY IMPORTANTE el momento en que se llama: tiene que ser ANTES de
+        generar las redes de matrices de los sub. generate_relative_control_
+        transform hornea la inversa del bind leyendo el matrixSum en ese
+        instante, asi que si el volteo llega despues, el bind se calculo sin la
+        escala y la cadena viva si la lleva. El delta saldria descuadrado.
+        """
+        if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
+            return None
+
+        if not main_ctl_gen or not cmds.objExists(main_ctl_gen):
+            return None
+
+        for index, axis in enumerate("XYZ"):
+            plug = f"{main_ctl_gen}.scale{axis}"
+            if cmds.getAttr(plug, lock=True) or cmds.listConnections(
+                    plug, source=True, destination=False):
+                cmds.warning(f"[EyebrowsModule] '{plug}' esta bloqueado o "
+                             "conectado, no se voltea.")
+                continue
+            cmds.setAttr(plug, self.MIRROR_R_CONTROL_SCALE[index])
+
+        return main_ctl_gen
 
     def _connect_transform_channels(self, driver_node, driven_node):
         """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""
@@ -530,6 +658,10 @@ class EyebrowsModule(object):
         )
         cmds.parent(main_ctl_gen, main_ctl_grp)
 
+        # Volteo de ejes del lado R. Va aqui, antes de que se genere ninguna
+        # red de matrices, porque esas redes hornean la inversa del bind.
+        self._mirror_control_axes(main_ctl_gen)
+
         if not cmds.attributeQuery("slide", node=main_ctl, exists=True):
             cmds.addAttr(
                 main_ctl,
@@ -646,6 +778,7 @@ class EyebrowsModule(object):
                     control_name=tangent_ctl,
                     top_grp=main_ctl_grp,
                     create_transform=True,
+                    mirror_sign=self.MIRROR_R_TANGENT_SIGN,
                 )
 
                 self.controls.append(tangent_ctl)

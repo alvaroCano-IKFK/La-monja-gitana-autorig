@@ -15,61 +15,21 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     # ESPEJO DEL LADO R
     # ------------------------------------------------------------------
-    # Las guias del lado derecho estan en mirror BEHAVIOUR respecto al
-    # izquierdo: sus ejes son los del espejo de L pero negados, o sea que la
-    # ceja derecha esta girada 180 grados, no reflejada. Esa convencion es la
-    # correcta para ROTACIONES (los mismos valores de rotate dan movimientos
-    # simetricos) pero es la contraria para TRASLACIONES, y este sistema mueve
-    # todo por traslacion: el _REL alimenta el translate del _Local_TRN.
-    #
-    # OJO, no sirve el truco del modulo de la boca (scaleX = -1 en el _GRP mas
-    # una matriz de espejo al final del multMatrix). Alli la cadena sube hasta
-    # el _GRP SIN incluirlo, asi que la escala negativa se queda fuera. Aqui
-    # generate_relative_control_transform sube hasta top_grp INCLUYENDOLO y
-    # ademas hornea la inversa del bind, asi que el espejo se cancela solo:
-    #
-    #     cadena  = A x M
-    #     invBind = (A0 x M)^-1 = M^-1 x A0^-1
-    #     delta   = A x M x M^-1 x A0^-1 = A x A0^-1
-    #
-    # La M desaparece. Por eso hay que corregir el signo DESPUES del
-    # decomposeMatrix, que es lo que hace el modulo de los ojos.
+    # Les guies del costat dret estan en mirror BEHAVIOUR: això significa
+    # que estan girades 180 graus. Perquè la traslació correspongui a un mirall
+    # real basat en aquesta orientació, cal invertir els eixos afectats
+    # per la rotació de matrius (X i Z), mantenint Y per a l'alçada.
     MIRROR_R_TRANSLATION = True
-    # CORRECCIÓ: Només invertim l'eix X. Deixem Y i Z en positiu perquè pugi/baixi correctament.
-    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, 1.0)
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, -1.0)
 
-    # Las TANGENTES necesitan el signo contrario, y no es un capricho.
-    #
-    # Los _GRP de los sub acaban con rotate Z = 180 y scale Z = -1, que no los
-    # pone este modulo: los escribe Maya al hacer cmds.parent(sub_ctl_gen,
-    # main_ctl) de forma absoluta dentro de un padre con escala negativa. Para
-    # conservar la posicion de mundo compensa con un giro de 180 mas una escala
-    # negada. Los _GRP de las tangentes no necesitaron esa compensacion y se
-    # quedaron limpios (rotate 0, scale 1).
-    #
-    # Y eso importa porque cada _Local_OFF se matchea con rot=True contra su
-    # _GRP, asi que los dos sistemas viven en marcos girados 180 grados el uno
-    # respecto del otro. El mismo signo que corrige uno estropea el otro.
-    #
-    # La solucion limpia seria que ningun _GRP intermedio acabase con esas
-    # compensaciones, y entonces bastaria un unico signo para todo el modulo.
-    # Mientras tanto, esto.
-    MIRROR_R_TANGENT_SIGN = (1.0, 1.0, 1.0)
+    # Les tangents necessiten el signe oposat per compensar el desajust
+    # dels marcs locals _GRP respecte al control principal.
+    MIRROR_R_TANGENT_SIGN = (1.0, -1.0, 1.0)
 
-    # La otra mitad del problema, esta vez del lado del animador.
-    #
-    # Con lo de arriba el sistema ya se mueve en espejo, pero el gizmo del
-    # control sigue en orientacion de behaviour, asi que el control tira hacia
-    # un lado y la ceja hacia el otro. Se le voltean los ejes al grupo del
-    # control principal, y los sub y las tangentes lo heredan porque cuelgan
-    # de el.
-    #
-    # scale y no rotate a proposito: la shape se dibuja alrededor del origen
-    # del grupo, asi que el control no se mueve de sitio, solo cambian las
-    # direcciones de sus canales.
+    # Invertim els eixos del gizmo del control principal per al costat R
+    # perquè coincideixin perfectament amb la direcció del mirall.
     MIRROR_R_CONTROL_AXES = True
-    # CORRECCIÓ: Orientem només l'escala X perquè els gizmos Y i Z coincideixin amb el moviment real.
-    MIRROR_R_CONTROL_SCALE = (-1.0, 1.0, 1.0)
+    MIRROR_R_CONTROL_SCALE = (-1.0, 1.0, -1.0)
 
     def __init__(
         self,
@@ -108,12 +68,6 @@ class EyebrowsModule(object):
 
         self.up_curve_aim = kwargs.get("up_curve_aim", (0.0, 1.0, 0.0))
 
-        # Convenció d'eixos per a l'aimConstraint de la cadena de joints.
-        # aim_vector: eix que ha d'apuntar cap al SEGÜENT joint de la cadena
-        # (la direcció "al llarg" de la corba). up_vector: eix que s'alinea
-        # amb el worldUpObject (la upCurve). Per defecte assumim la
-        # convenció estàndard de Maya (X al llarg de la cadena, Y com a up);
-        # canvia-ho si la teva orientació de guies és diferent.
         self.chain_aim_vector = kwargs.get("chain_aim_vector", (1.0, 0.0, 0.0))
         self.chain_up_vector = kwargs.get("chain_up_vector", (0.0, 1.0, 0.0))
 
@@ -138,21 +92,13 @@ class EyebrowsModule(object):
     def generate_relative_control_transform(
         self, control_name, top_grp, create_transform=True, mirror_sign=None
     ):
-        """
-        mirror_sign: signo del espejo de traslacion para este control en el lado
-        R. Si es None se usa MIRROR_R_TRANSLATION_SIGN. Las tangentes pasan
-        MIRROR_R_TANGENT_SIGN, ver el comentario de esa constante.
-        """
-
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
 
-        # Creacio del nodo multMatrix
         mmtx = cmds.createNode(
             "multMatrix", name=f"{base_name}Local_MTX", ss=True
         )
 
-        # Cerca de la jerarquia fins a top_grp
         hierarchy_transforms = []
         current_node = [control_name]
 
@@ -213,16 +159,6 @@ class EyebrowsModule(object):
         return relative_trn, dcm
 
     def _build_translation_mirror(self, base_name, dcm, mirror_sign=None):
-        """
-        Mete un multiplyDivide entre el decomposeMatrix y el _REL para invertir
-        el signo de la traslacion en el lado R.
-
-        Solo toca translate: con orientaciones en mirror behaviour las
-        rotaciones ya salen simetricas y negarlas las romperia. Ver el
-        comentario de MIRROR_R_TRANSLATION arriba de la clase.
-
-        Devuelve el plug que hay que conectar al translate del _REL.
-        """
         if mirror_sign is None:
             mirror_sign = self.MIRROR_R_TRANSLATION_SIGN
 
@@ -231,7 +167,7 @@ class EyebrowsModule(object):
         if not cmds.objExists(node_name):
             node_name = cmds.createNode("multiplyDivide", name=node_name, ss=True)
 
-        cmds.setAttr(f"{node_name}.operation", 1)  # 1 = multiplicar
+        cmds.setAttr(f"{node_name}.operation", 1)
         for index, axis in enumerate("XYZ"):
             cmds.setAttr(f"{node_name}.input2{axis}", mirror_sign[index])
 
@@ -241,19 +177,6 @@ class EyebrowsModule(object):
         return f"{node_name}.output"
 
     def _mirror_control_axes(self, main_ctl_gen):
-        """
-        Voltea los ejes del grupo del control principal en el lado R.
-
-        Solo el principal: los sub cuelgan de main_ctl y las tangentes de su
-        sub, asi que heredan el volteo. Si se les pusiera tambien, se
-        cancelaria.
-
-        MUY IMPORTANTE el momento en que se llama: tiene que ser ANTES de
-        generar las redes de matrices de los sub. generate_relative_control_
-        transform hornea la inversa del bind leyendo el matrixSum en ese
-        instante, asi que si el volteo llega despues, el bind se calculo sin la
-        escala y la cadena viva si la lleva. El delta saldria descuadrado.
-        """
         if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
             return None
 
@@ -272,30 +195,21 @@ class EyebrowsModule(object):
         return main_ctl_gen
 
     def _connect_transform_channels(self, driver_node, driven_node):
-        """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""
         for attr in ("translate", "rotate", "scale"):
             cmds.connectAttr(
                 f"{driver_node}.{attr}", f"{driven_node}.{attr}", force=True
             )
 
-    # ------------------------------------------------------------------
-    # Local joint helper
-    # ------------------------------------------------------------------
     def _create_local_joint(self, parent_trn, name):
         cmds.select(clear=True)
         jnt = cmds.joint(name=name)
         cmds.parent(jnt, parent_trn, relative=True)
         return jnt
 
-    # ------------------------------------------------------------------
-    # Curve helpers
-    # ------------------------------------------------------------------
     def _cv_count(self, curve):
-        """Nombre real de CVs (spans + degree no es fiable en beziers)."""
         return len(cmds.ls(f"{curve}.cv[*]", flatten=True))
 
     def _average_cv_position(self, curve):
-        """Centroide dels CVs en world space."""
         cvs = cmds.ls(f"{curve}.cv[*]", flatten=True)
         if not cvs:
             return om2.MVector(0.0, 0.0, 0.0)
@@ -317,8 +231,7 @@ class EyebrowsModule(object):
         if cv_count != len(cv_weights):
             cmds.warning(
                 f"{curve} te {cv_count} CVs i se n'esperaven "
-                f"{len(cv_weights)}. No es pot fer el skin 1:1; revisa el "
-                "subdivisionDensity o la distancia de l'offsetCurve."
+                f"{len(cv_weights)}. No es pot fer el skin 1:1."
             )
             return None
 
@@ -333,9 +246,6 @@ class EyebrowsModule(object):
             )
         return skin_cluster
 
-    # ------------------------------------------------------------------
-    # Bezier curve creation
-    # ------------------------------------------------------------------
     def _create_local_bezier_curve(self):
         required_labels = ("In", "InTan", "Mid", "OutTan", "Out")
         if not all(label in self.local_joints for label in required_labels):
@@ -395,7 +305,6 @@ class EyebrowsModule(object):
 
         up_curve = self._create_local_up_curve(bezier_crv)
 
-        # Skin 1:1 de totes dues (pas 8 de la infografia)
         self._skin_curve_one_to_one(
             bezier_crv, cv_weights, f"{self.prefix}_local_curve_SKIN"
         )
@@ -407,13 +316,7 @@ class EyebrowsModule(object):
         self.local_curve = bezier_crv
         return bezier_crv
 
-    # ------------------------------------------------------------------
-    # Up curve (offsetCurve directe sobre un duplicat net de la bezier)
-    # ------------------------------------------------------------------
     def _create_local_up_curve(self, source_curve):
-
-        # 1) Duplicat net. Conservem la forma bezier (mateixos CVs i mateixos
-        #    anchor presets) i eliminem qualsevol historial heretat.
         tmp_crv = cmds.duplicate(
             source_curve, name=f"{self.prefix}_upCRV_src_TMP"
         )[0]
@@ -438,7 +341,6 @@ class EyebrowsModule(object):
             )
             return result[0] if isinstance(result, list) else result
 
-        # 2) Primer intent amb distancia positiva
         up_curve = _build_offset(
             self.up_curve_offset, f"{self.prefix}_localUp_BZC"
         )
@@ -452,48 +354,14 @@ class EyebrowsModule(object):
                 up_curve = _build_offset(
                     -self.up_curve_offset, f"{self.prefix}_localUp_BZC"
                 )
-                delta = self._average_cv_position(up_curve) - src_center
 
-        # 4) Avis si l'offset no ha anat majoritariament cap a l'eix esperat.
-        #    Normalment vol dir que up_curve_normal no es perpendicular a la
-        #    direccio desitjada.
-        if delta.length() > 1e-6 and aim.length() > 1e-6:
-            alignment = delta.normal() * aim.normal()
-            if alignment < 0.5:
-                cmds.warning(
-                    f"{up_curve}: l'offset nomes esta alineat un "
-                    f"{alignment:.2f} amb up_curve_aim {self.up_curve_aim}. "
-                    f"Revisa up_curve_normal (ara {self.up_curve_normal}): ha "
-                    "de ser perpendicular a la direccio que vols."
-                )
-
-        # 5) Neteja del duplicat temporal
         if cmds.objExists(tmp_crv):
             cmds.delete(tmp_crv)
 
         self.local_up_curve = up_curve
         return up_curve
 
-    # ------------------------------------------------------------------
-    # Motion paths i configuració d'aim
-    # ------------------------------------------------------------------
     def _setup_motion_paths_and_aims(self):
-        """Pas 9: crea els joints "driven" a la bezierCurve i els up
-        transforms a la upCurve amb motionPath, i orienta els joints.
-
-        - TOTS els up_trn només tenen un motionPath (translate). Res més.
-        - El PRIMER joint (índex 0) no té "joint anterior" per fer servir
-          com a worldUpObject d'un aimConstraint, així que es resol amb
-          matrius: es compon la seva pròpia posició (composeMatrix des
-          del seu propi motionPath) i s'orienta cap al seu up_trn amb un
-          aimMatrix; el resultat es connecta directament a
-          offsetParentMatrix (el joint no fa servir translate/rotate).
-        - La RESTA de joints reben la posició directament del seu
-          motionPath (translate) i s'orienten amb un aimConstraint clàssic
-          cap al seu up_trn, fent servir el SEGÜENT joint de la cadena com
-          a worldUpObject (l'anterior pel darrer, que no en té de
-          següent).
-        """
         if not (self.local_curve and self.local_up_curve and self.rig_joints):
             return
 
@@ -504,10 +372,6 @@ class EyebrowsModule(object):
         up_transforms = []
         curve_mp_nodes = []
 
-        # 1) MotionPaths: creem els de la bezierCurve (els guardem sense
-        #    connectar encara, els necessitem crus pel cas especial del
-        #    primer joint) i els de la upCurve, que SEMPRE alimenten
-        #    únicament el translate del seu up_trn.
         for i in range(num_jnts):
             idx_str = f"{i + 1:02d}"
             u_val = float(i) / float(num_jnts - 1) if num_jnts > 1 else 0.0
@@ -541,8 +405,6 @@ class EyebrowsModule(object):
 
         self.up_transforms = up_transforms
 
-        # 2) Primer joint (índex 0): composeMatrix (posició pròpia) +
-        #    aimMatrix (orientat cap al seu up_trn) -> offsetParentMatrix.
         first_jnt = self.rig_joints[0]
         idx0_str = "01"
 
@@ -574,15 +436,12 @@ class EyebrowsModule(object):
         cmds.setAttr(
             f"{amt}.primaryInputAxis", *self.chain_aim_vector, type="double3"
         )
-        cmds.setAttr(f"{amt}.primaryMode", 1)  # 1 = Align
+        cmds.setAttr(f"{amt}.primaryMode", 1)
 
         cmds.connectAttr(
             f"{amt}.outputMatrix", f"{first_jnt}.offsetParentMatrix", force=True
         )
 
-        # 3) Segon joint (índex 1): l'ÚNIC que fa servir aimConstraint,
-        #    cap al seu up_trn, amb el joint SEGÜENT (índex 2) com a
-        #    worldUpObject.
         if num_jnts > 1:
             second_jnt = self.rig_joints[1]
             second_mp_node = curve_mp_nodes[1]
@@ -606,8 +465,6 @@ class EyebrowsModule(object):
                 mo=False,
             )
 
-        # 4) Resta de joints (índex 2 en endavant): NOMÉS motionPath
-        #    (translate). Cap orientació, cap node addicional.
         for i in range(2, num_jnts):
             jnt = self.rig_joints[i]
             mp_node = curve_mp_nodes[i]
@@ -616,13 +473,9 @@ class EyebrowsModule(object):
                 f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
             )
 
-    # ------------------------------------------------------------------
-    # Build
-    # ------------------------------------------------------------------
     def build(self):
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
-        # 1) JOINTS
         created_joints = []
         for i in range(1, self.num_joints + 1):
             guide_name = f"{self.side}_{base_prefix}_{i:02d}"
@@ -644,7 +497,6 @@ class EyebrowsModule(object):
         if not created_joints:
             return
 
-        # 2) MAIN CONTROL
         main_ctl_grp = cmds.group(em=True, n=f"{self.prefix}_main_ctrl_GRP")
         self.controls_grp = main_ctl_grp
 
@@ -660,8 +512,6 @@ class EyebrowsModule(object):
         )
         cmds.parent(main_ctl_gen, main_ctl_grp)
 
-        # Volteo de ejes del lado R. Va aqui, antes de que se genere ninguna
-        # red de matrices, porque esas redes hornean la inversa del bind.
         self._mirror_control_axes(main_ctl_gen)
 
         if not cmds.attributeQuery("slide", node=main_ctl, exists=True):
@@ -678,7 +528,6 @@ class EyebrowsModule(object):
         self.controls.append(main_ctl)
         self.control_groups.append(main_ctl_gen)
 
-        # 3) LOCAL MAIN GROUP
         main_local_off = cmds.group(em=True, n=f"{self.prefix}MainLocal_OFF")
         cmds.matchTransform(main_local_off, main_ctl_gen, pos=True, rot=True)
 
@@ -688,7 +537,6 @@ class EyebrowsModule(object):
         self.local_grp = main_local_off
         self.local_transforms["Main"] = main_local_trn
 
-        # 4) CONTROLS SECUNDARIS
         sub_indices = {
             "In": 1,
             "Mid": mid_idx,
@@ -711,7 +559,6 @@ class EyebrowsModule(object):
             )
             cmds.parent(sub_ctl_gen, main_ctl)
 
-            # Generacio del grup REL i la xarxa de matrius
             rel_grp, _ = self.generate_relative_control_transform(
                 control_name=sub_ctrl,
                 top_grp=main_ctl_grp,
@@ -721,7 +568,6 @@ class EyebrowsModule(object):
             self.controls.append(sub_ctrl)
             self.control_groups.append(sub_ctl_gen)
 
-            # Estructura de grups Locals (OFF + TRN)
             local_off = cmds.group(
                 em=True, n=f"{self.prefix}{label}Local_OFF", p=main_local_trn
             )
@@ -732,7 +578,6 @@ class EyebrowsModule(object):
             )
             self.local_transforms[label] = local_trn
 
-            # Connexio des del REL cap al TRN (Mantenint TRN a 0, 0, 0)
             self._connect_transform_channels(rel_grp, local_trn)
 
             local_jnt = self._create_local_joint(
@@ -740,7 +585,6 @@ class EyebrowsModule(object):
             )
             self.local_joints[label] = local_jnt
 
-            # Controls de tangent per a les cantonades
             if label in corner_labels:
                 neighbour_idx = 2 if label == "In" else self.num_joints - 1
                 neighbour_guide = (
@@ -774,8 +618,6 @@ class EyebrowsModule(object):
                 cmds.xform(tangent_ctl_gen, ws=True, t=tangent_pos)
                 cmds.parent(tangent_ctl_gen, sub_ctrl)
 
-                # Creador de matriu i grup REL per a la tangent
-                # Aplanem la jerarquia mirant a main_ctl_grp per evitar doble transformació
                 tan_rel_grp, _ = self.generate_relative_control_transform(
                     control_name=tangent_ctl,
                     top_grp=main_ctl_grp,
@@ -788,7 +630,6 @@ class EyebrowsModule(object):
 
                 tan_label = f"{label}Tan"
 
-                # Emparentem l'OFF de la tangent directament a main_local_trn
                 tan_local_off = cmds.group(
                     em=True,
                     n=f"{self.prefix}{tan_label}Local_OFF",
@@ -803,7 +644,6 @@ class EyebrowsModule(object):
                 )
                 self.local_transforms[tan_label] = tan_local_trn
 
-                # Connexio del REL de la tangent al seu respectiu TRN
                 self._connect_transform_channels(tan_rel_grp, tan_local_trn)
 
                 tan_local_jnt = self._create_local_joint(
@@ -811,8 +651,5 @@ class EyebrowsModule(object):
                 )
                 self.local_joints[tan_label] = tan_local_jnt
 
-        # 5) BEZIER CURVE + UP CURVE
         self._create_local_bezier_curve()
-
-        # 6) MOTION PATHS + AIM CONSTRAINTS
         self._setup_motion_paths_and_aims()

@@ -350,6 +350,66 @@ class EyebrowsModule(object):
         return up_curve
 
     # ------------------------------------------------------------------
+    # Matrix helpers per a l'orientació (aimMatrix)
+    # ------------------------------------------------------------------
+    def _build_position_matrix(self, source_node, name):
+        """Crea un composeMatrix que conté NOMÉS la posició world-space de
+        source_node (rotació identitat), independent de qualsevol rotació
+        heretada del local_grp. Es fa servir com a target matrix "neta" per
+        als nodes aimMatrix, perquè el càlcul d'apuntament no es vegi
+        distorsionat si el local_grp està rotat."""
+        cmm = cmds.createNode("composeMatrix", name=name, ss=True)
+        cmds.connectAttr(
+            f"{source_node}.translate", f"{cmm}.inputTranslate", force=True
+        )
+        return f"{cmm}.outputMatrix"
+
+    def _orient_with_aim_matrix(
+        self,
+        node,
+        aim_target_matrix_plug,
+        up_target_matrix_plug,
+        aim_vector,
+        up_vector,
+        name,
+    ):
+        """Crea un node aimMatrix (AMT) que orienta 'node' cap a
+        aim_target_matrix_plug (eix primari) fent servir up_target_matrix_plug
+        com a referència secundària, i connecta només la rotació resultant
+        al node (la translate la seguim controlant amb el motionPath).
+
+        NOTA: els índexs de primaryMode/secondaryMode (0=None, 1=Align) són
+        els habituals del node aimMatrix de Maya; si en algun cas no
+        s'orienta com toca, revisa'ls al Attribute Editor del node AMT
+        creat, poden variar lleugerament segons la versió de Maya.
+        """
+        amt = cmds.createNode("aimMatrix", name=name, ss=True)
+
+        input_matrix_plug = self._build_position_matrix(node, f"{name}Aim_CMM")
+        cmds.connectAttr(input_matrix_plug, f"{amt}.inputMatrix", force=True)
+
+        cmds.connectAttr(
+            aim_target_matrix_plug, f"{amt}.primaryTargetMatrix", force=True
+        )
+        cmds.setAttr(f"{amt}.primaryInputAxis", *aim_vector, type="double3")
+        cmds.setAttr(f"{amt}.primaryMode", 1)  # 1 = Align
+
+        if up_target_matrix_plug:
+            cmds.connectAttr(
+                up_target_matrix_plug, f"{amt}.secondaryTargetMatrix", force=True
+            )
+            cmds.setAttr(f"{amt}.secondaryInputAxis", *up_vector, type="double3")
+            cmds.setAttr(f"{amt}.secondaryMode", 1)  # 1 = Align
+        else:
+            cmds.setAttr(f"{amt}.secondaryMode", 0)  # 0 = None
+
+        dcm = cmds.createNode("decomposeMatrix", name=f"{name}_DCM", ss=True)
+        cmds.connectAttr(f"{amt}.outputMatrix", f"{dcm}.inputMatrix", force=True)
+        cmds.connectAttr(f"{dcm}.outputRotate", f"{node}.rotate", force=True)
+
+        return amt
+
+    # ------------------------------------------------------------------
     # Motion paths i configuració d'aim
     # ------------------------------------------------------------------
     def _setup_motion_paths_and_aims(self):
@@ -357,12 +417,16 @@ class EyebrowsModule(object):
         transforms a la upCurve amb motionPath, i orienta els joints amb
         aimConstraint.
 
-        IMPORTANT: cada joint ha d'APUNTAR cap al següent joint de la
-        cadena (la direcció al llarg de la corba), NO cap al seu up
-        transform. El up transform (posicionat sobre la upCurve) només
-        serveix com a worldUpObject per estabilitzar el roll — és a dir,
-        la referència que li diu a l'aimConstraint "cap on és amunt" en
-        cada punt, no un objectiu d'apuntament.
+        Estructura en dues fases:
+        1) Cada up_trn (posicionat sobre la upCurve) s'orienta primer amb
+           un node aimMatrix (AMT), apuntant cap al següent up_trn de la
+           upCurve. Així el propi up_trn té una rotació coherent i no
+           només una posició.
+        2) Cada joint apunta (aimConstraint) cap al SEGÜENT joint de la
+           bezierCurve, fent servir el seu up_trn ja orientat com a
+           worldUpObject en mode "objectrotation" (més robust que "object"
+           perquè aprofita la rotació real del up_trn, no només la seva
+           posició).
         """
         if not (self.local_curve and self.local_up_curve and self.rig_joints):
             return
@@ -414,9 +478,36 @@ class EyebrowsModule(object):
 
         self.up_transforms = up_transforms
 
-        # 2) AimConstraints: cada joint apunta cap al SEGÜENT joint de la
+        # 2) Orientem cada up_trn amb un aimMatrix (AMT), apuntant cap al
+        #    següent up_trn de la upCurve (o cap enrere si és l'últim).
+        #    Això li dona una rotació coherent al llarg de la corba, en
+        #    comptes de només una posició.
+        for i, up_trn in enumerate(up_transforms):
+            if i < num_jnts - 1:
+                up_aim_target = up_transforms[i + 1]
+                up_aim_vector = self.chain_aim_vector
+            else:
+                up_aim_target = up_transforms[i - 1]
+                up_aim_vector = tuple(-v for v in self.chain_aim_vector)
+
+            idx_str = f"{i + 1:02d}"
+            up_target_matrix_plug = self._build_position_matrix(
+                up_aim_target, f"{self.prefix}_{idx_str}_upAimTarget_CMM"
+            )
+
+            self._orient_with_aim_matrix(
+                node=up_trn,
+                aim_target_matrix_plug=up_target_matrix_plug,
+                up_target_matrix_plug=None,
+                aim_vector=up_aim_vector,
+                up_vector=self.chain_up_vector,
+                name=f"{self.prefix}_{idx_str}_up_AMT",
+            )
+
+        # 3) AimConstraints: cada joint apunta cap al SEGÜENT joint de la
         #    cadena (o cap enrere si és l'últim), fent servir el seu up
-        #    transform corresponent com a worldUpObject.
+        #    transform (ja orientat amb l'AMT) com a worldUpObject en mode
+        #    "objectrotation".
         for i, jnt in enumerate(self.rig_joints):
             up_trn = up_transforms[i]
 
@@ -435,8 +526,9 @@ class EyebrowsModule(object):
                 jnt,
                 aimVector=aim_vector,
                 upVector=self.chain_up_vector,
-                worldUpType="object",
+                worldUpType="objectrotation",
                 worldUpObject=up_trn,
+                worldUpVector=self.chain_up_vector,
                 mo=False,
             )
 

@@ -12,6 +12,85 @@ from nodeCreator_module import NodeCreator
 
 class EyebrowsModule(object):
 
+    # ------------------------------------------------------------------
+    # ESPEJO DEL LADO R
+    # ------------------------------------------------------------------
+    # Las guias del lado derecho estan en mirror BEHAVIOUR respecto al
+    # izquierdo: sus ejes son los del espejo de L pero negados, o sea que la
+    # ceja derecha esta girada 180 grados, no reflejada. Esa convencion es la
+    # correcta para ROTACIONES (los mismos valores de rotate dan movimientos
+    # simetricos) pero es la contraria para TRASLACIONES, y este sistema mueve
+    # todo por traslacion: el _REL alimenta el translate del _Local_TRN.
+    #
+    # OJO, no sirve el truco del modulo de la boca (scaleX = -1 en el _GRP mas
+    # una matriz de espejo al final del multMatrix). Alli la cadena sube hasta
+    # el _GRP SIN incluirlo, asi que la escala negativa se queda fuera. Aqui
+    # generate_relative_control_transform sube hasta top_grp INCLUYENDOLO y
+    # ademas hornea la inversa del bind, asi que el espejo se cancela solo:
+    #
+    #     cadena  = A x M
+    #     invBind = (A0 x M)^-1 = M^-1 x A0^-1
+    #     delta   = A x M x M^-1 x A0^-1 = A x A0^-1
+    #
+    # La M desaparece. Por eso hay que corregir el signo DESPUES del
+    # decomposeMatrix, que es lo que hace el modulo de los ojos.
+    MIRROR_R_TRANSLATION = True
+    # Medido, no supuesto: moviendo cada control un paso y comparando el
+    # desplazamiento en MUNDO del control con el de su _Local_TRN, la X ya salia
+    # acompanando y la Y y la Z al reves. De ahi este triple.
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, 1.0)
+
+    # Las TANGENTES necesitan el signo contrario, y no es un capricho.
+    #
+    # Los _GRP de los sub acaban con rotate Z = 180 y scale Z = -1, que no los
+    # pone este modulo: los escribe Maya al hacer cmds.parent(sub_ctl_gen,
+    # main_ctl) de forma absoluta dentro de un padre con escala negativa. Para
+    # conservar la posicion de mundo compensa con un giro de 180 mas una escala
+    # negada. Los _GRP de las tangentes no necesitaron esa compensacion y se
+    # quedaron limpios (rotate 0, scale 1).
+    #
+    # Y eso importa porque cada _Local_OFF se matchea con rot=True contra su
+    # _GRP, asi que los dos sistemas viven en marcos girados 180 grados el uno
+    # respecto del otro. El mismo signo que corrige uno estropea el otro.
+    #
+    # La solucion limpia seria que ningun _GRP intermedio acabase con esas
+    # compensaciones, y entonces bastaria un unico signo para todo el modulo.
+    # Mientras tanto, esto.
+    # Exactamente el opuesto del de arriba, que es lo que confirma el
+    # diagnostico: los dos marcos se diferencian en ese giro de 180 grados.
+    MIRROR_R_TANGENT_SIGN = (1.0, -1.0, -1.0)
+
+    # La otra mitad del problema, esta vez del lado del animador.
+    #
+    # Con lo de arriba el sistema ya se mueve en espejo, pero el gizmo del
+    # control sigue en orientacion de behaviour, asi que el control tira hacia
+    # un lado y la ceja hacia el otro. Se le voltean los ejes al grupo del
+    # control principal, y los sub y las tangentes lo heredan porque cuelgan
+    # de el.
+    #
+    # scale y no rotate a proposito: la shape se dibuja alrededor del origen
+    # del grupo, asi que el control no se mueve de sitio, solo cambian las
+    # direcciones de sus canales.
+    # ------------------------------------------------------------------
+    # SLIDE SETUP (deslizamiento sobre la NURBS del craneo)
+    # ------------------------------------------------------------------
+    # Ejes del aimMatrix, tal como los pide el documento: el primario alineado
+    # con la tangente U de la superficie y el secundario con la V.
+    SLIDE_PRIMARY_AXIS = (-1.0, 0.0, 0.0)
+    SLIDE_SECONDARY_AXIS = (0.0, -1.0, 0.0)
+    SLIDE_PRIMARY_MODE = 2      # 2 = align
+    SLIDE_SECONDARY_MODE = 2    # 2 = align
+
+    # Fila extra de joints por encima de la ceja, deslizando por la misma NURBS
+    # con un desplazamiento en V. Por defecto DESACTIVADO: existe en el grafo de
+    # referencia pero no sabemos que comportamiento busca, y esta reconstruido
+    # de una captura donde los valores del remapValue no se leian.
+    BUILD_FOREHEAD_ROW = False
+    FOREHEAD_V_OFFSET = 0.15
+
+    MIRROR_R_CONTROL_AXES = True
+    MIRROR_R_CONTROL_SCALE = (-1.0, -1.0, -1.0)
+
     def __init__(
         self,
         guide_prefix="L_eyebrow_root",
@@ -73,12 +152,27 @@ class EyebrowsModule(object):
         self.local_up_curve = None
         self.up_transforms = []
 
+        # NURBS del craneo por la que deslizan las cejas. La crea el
+        # guides_module (EyebrowSkullGuides) y aqui solo se lee, igual que la
+        # superficie de la boca en mouthModule.
+        self.skull_surface = kwargs.get("skull_surface", "eyebrow_skull_NRB")
+
+        self.slide_projected_joints = []
+        # _ENV a los que se les ha aplicado la mezcla del slide.
+        self.slide_skin_joints = []
+        self.forehead_joints = []
+
     # ------------------------------------------------------------------
     # Connectors i creadors de transformacions relatives / locals
     # ------------------------------------------------------------------
     def generate_relative_control_transform(
-        self, control_name, top_grp, create_transform=True
+        self, control_name, top_grp, create_transform=True, mirror_sign=None
     ):
+        """
+        mirror_sign: signo del espejo de traslacion para este control en el lado
+        R. Si es None se usa MIRROR_R_TRANSLATION_SIGN. Las tangentes pasan
+        MIRROR_R_TANGENT_SIGN, ver el comentario de esa constante.
+        """
 
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
@@ -130,8 +224,15 @@ class EyebrowsModule(object):
         )
         cmds.parent(relative_trn, grp, relative=True)
 
+        translate_source = f"{dcm}.outputTranslate"
+        if self.side == "R" and self.MIRROR_R_TRANSLATION:
+            translate_source = self._build_translation_mirror(
+                base_name, dcm, mirror_sign)
+
+        cmds.connectAttr(
+            translate_source, f"{relative_trn}.translate", force=True
+        )
         for out_attr, in_attr in (
-            ("outputTranslate", "translate"),
             ("outputRotate", "rotate"),
             ("outputScale", "scale"),
         ):
@@ -140,6 +241,65 @@ class EyebrowsModule(object):
             )
 
         return relative_trn, dcm
+
+    def _build_translation_mirror(self, base_name, dcm, mirror_sign=None):
+        """
+        Mete un multiplyDivide entre el decomposeMatrix y el _REL para invertir
+        el signo de la traslacion en el lado R.
+
+        Solo toca translate: con orientaciones en mirror behaviour las
+        rotaciones ya salen simetricas y negarlas las romperia. Ver el
+        comentario de MIRROR_R_TRANSLATION arriba de la clase.
+
+        Devuelve el plug que hay que conectar al translate del _REL.
+        """
+        if mirror_sign is None:
+            mirror_sign = self.MIRROR_R_TRANSLATION_SIGN
+
+        node_name = f"{base_name}LocalMirror_MDV"
+
+        if not cmds.objExists(node_name):
+            node_name = cmds.createNode("multiplyDivide", name=node_name, ss=True)
+
+        cmds.setAttr(f"{node_name}.operation", 1)  # 1 = multiplicar
+        for index, axis in enumerate("XYZ"):
+            cmds.setAttr(f"{node_name}.input2{axis}", mirror_sign[index])
+
+        cmds.connectAttr(f"{dcm}.outputTranslate", f"{node_name}.input1",
+                         force=True)
+
+        return f"{node_name}.output"
+
+    def _mirror_control_axes(self, main_ctl_gen):
+        """
+        Voltea los ejes del grupo del control principal en el lado R.
+
+        Solo el principal: los sub cuelgan de main_ctl y las tangentes de su
+        sub, asi que heredan el volteo. Si se les pusiera tambien, se
+        cancelaria.
+
+        MUY IMPORTANTE el momento en que se llama: tiene que ser ANTES de
+        generar las redes de matrices de los sub. generate_relative_control_
+        transform hornea la inversa del bind leyendo el matrixSum en ese
+        instante, asi que si el volteo llega despues, el bind se calculo sin la
+        escala y la cadena viva si la lleva. El delta saldria descuadrado.
+        """
+        if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
+            return None
+
+        if not main_ctl_gen or not cmds.objExists(main_ctl_gen):
+            return None
+
+        for index, axis in enumerate("XYZ"):
+            plug = f"{main_ctl_gen}.scale{axis}"
+            if cmds.getAttr(plug, lock=True) or cmds.listConnections(
+                    plug, source=True, destination=False):
+                cmds.warning(f"[EyebrowsModule] '{plug}' esta bloqueado o "
+                             "conectado, no se voltea.")
+                continue
+            cmds.setAttr(plug, self.MIRROR_R_CONTROL_SCALE[index])
+
+        return main_ctl_gen
 
     def _connect_transform_channels(self, driver_node, driven_node):
         """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""
@@ -487,6 +647,312 @@ class EyebrowsModule(object):
             )
 
     # ------------------------------------------------------------------
+    # Organitzacio de l'outliner
+    # ------------------------------------------------------------------
+    def _ensure_group(self, group_name, parent=None):
+        """Crea el grupo si no existe, y lo reemparenta si hace falta."""
+        if not cmds.objExists(group_name):
+            group_node = cmds.group(em=True, n=group_name)
+        else:
+            group_node = group_name
+
+        if parent and cmds.objExists(parent):
+            current = cmds.listRelatives(group_node, parent=True) or []
+            if not current or current[0] != parent:
+                cmds.parent(group_node, parent)
+
+        return group_node
+
+    def _park_node(self, node_name, destination):
+        """
+        Mete un nodo en su grupo, solo si todavia cuelga de la raiz del mundo.
+
+        relative = True porque los grupos de destino estan en identidad, asi que
+        conservar los valores locales conserva la matriz mundial. Y ademas evita
+        que Maya intente escribir en canales que puedan estar conectados, que
+        aqui los hay a patadas: motionPath, offsetParentMatrix, decompose.
+        """
+        if not node_name or not cmds.objExists(node_name):
+            return False
+        if cmds.listRelatives(node_name, parent=True):
+            return False
+
+        cmds.parent(node_name, destination, relative=True)
+        return True
+
+    def _face_systems_root(self):
+        """C_<rig>_face_GRP, bajo el rig_GRP. Compartido con boca, jaw y ojos."""
+        rig_grp = f"{self.rig_name}_rig_GRP"
+        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
+            rig_grp = self.root_instance.get_rig_grp()
+
+        parent = rig_grp if cmds.objExists(rig_grp) else None
+        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
+
+    def _face_controls_root(self):
+        """
+        C_<rig>_faceControls_GRP, bajo el local_CTL.
+
+        Es el mismo grupo que usan la boca, el jaw y los ojos, y el que lleva el
+        parentConstraint desde el head_CTRL. Colgando aqui, los controles de
+        ceja siguen a la cabeza sin constraint propio y sin que ese movimiento
+        llegue a los joints, que es lo que rompia la blendShape en los otros
+        modulos.
+        """
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
+
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+
+    def _organize_outliner(self):
+        """
+        Reparte todo lo que el build deja suelto en la raiz del mundo.
+
+            C_<rig>_face_GRP                  (sistemas, bajo rig_GRP)
+               |- <prefix>_systems_GRP
+                    |- <prefix>_joints_GRP    bind, projected y forehead
+                    |- <prefix>_local_GRP     MainLocal_OFF y las curvas
+                    |- <prefix>_rel_GRP       los _REL
+                    |- <prefix>_up_GRP        los transforms de la upCurve
+
+            C_<rig>_faceControls_GRP          (controles, bajo local_CTL)
+               |- <prefix>_main_ctrl_GRP
+
+        Va al final del build, cuando ya existe todo. Es idempotente.
+        """
+        systems_grp = self._ensure_group(f"{self.prefix}_systems_GRP",
+                                         self._face_systems_root())
+
+        joints_grp = self._ensure_group(f"{self.prefix}_joints_GRP", systems_grp)
+        local_grp = self._ensure_group(f"{self.prefix}_local_GRP", systems_grp)
+        rel_grp = self._ensure_group(f"{self.prefix}_rel_GRP", systems_grp)
+        up_grp = self._ensure_group(f"{self.prefix}_up_GRP", systems_grp)
+
+        self.module_grp = systems_grp
+        self.joints_grp = joints_grp
+
+        for joint in (list(self.rig_joints)
+                      + list(self.slide_projected_joints)
+                      + list(self.forehead_joints)):
+            self._park_node(joint, joints_grp)
+
+        # El MainLocal_OFF arrastra toda la jerarquia local: los OFF y TRN de
+        # cada sub y de cada tangente cuelgan de el.
+        self._park_node(self.local_grp, local_grp)
+        self._park_node(self.local_curve, local_grp)
+        self._park_node(self.local_up_curve, local_grp)
+
+        for rel_node in cmds.ls(f"{self.prefix}_*_REL", type="transform") or []:
+            self._park_node(rel_node, rel_grp)
+
+        for up_trn in self.up_transforms:
+            self._park_node(up_trn, up_grp)
+
+        # Los controles van al grupo compartido de la cara, que es el que sigue
+        # a la cabeza. Aqui si se reemparenta aunque ya tenga padre.
+        controls_root = self._face_controls_root()
+        if self.controls_grp and cmds.objExists(self.controls_grp):
+            current = cmds.listRelatives(self.controls_grp, parent=True) or []
+            if not current or current[0] != controls_root:
+                cmds.parent(self.controls_grp, controls_root)
+
+        return systems_grp
+
+    # ------------------------------------------------------------------
+    # Slide setup sobre la NURBS del craneo
+    # ------------------------------------------------------------------
+    def _build_slide_setup(self):
+        """
+        Proyecta cada joint de la ceja sobre la NURBS del craneo y mezcla entre
+        las dos poses con el atributo slide.
+
+            NRB.worldSpace -> closestPointOnSurface.inputSurface
+                           -> pointOnSurfaceInfo.inputSurface
+            joint.translate -> CPS.inPosition
+            CPS.parameterU/V -> POSI.parameterU/V
+            POSI.position -> composeMatrix.inputTranslate
+            composeMatrix -> aimMatrix.inputMatrix
+            POSI.normalizedTangentU -> aimMatrix.primaryTargetVector
+            POSI.normalizedTangentV -> aimMatrix.secondaryTargetVector
+            aimMatrix.outputMatrix -> Projected_JNT.offsetParentMatrix
+
+        La mezcla se aplica sobre el _ENV que crea el SkinningModule, no sobre
+        el _bind_JNT: ese ya tiene el translate conectado al motionPath y un
+        constraint pelearia con el. Ver apply_slide_to_env.
+        """
+        if not self.skull_surface or not cmds.objExists(self.skull_surface):
+            cmds.warning(f"[EyebrowsModule] No existe la superficie "
+                         f"'{self.skull_surface}', no se monta el slide setup.")
+            return []
+
+        if not self.rig_joints:
+            return []
+
+        shape = self.skull_surface
+        if cmds.nodeType(shape) == "transform":
+            shapes = cmds.listRelatives(shape, s=True, ni=True, type="nurbsSurface")
+            if not shapes:
+                cmds.warning(f"[EyebrowsModule] '{self.skull_surface}' no tiene "
+                             "shape de nurbsSurface.")
+                return []
+            shape = shapes[0]
+
+        for index, driven_joint in enumerate(self.rig_joints):
+            base = f"{self.prefix}_{index + 1:02d}"
+
+            cps = self._ensure_node("closestPointOnSurface", f"{base}Slide_CPS")
+            posi = self._ensure_node("pointOnSurfaceInfo", f"{base}Slide_POSI")
+            cmx = self._ensure_node("composeMatrix", f"{base}Slide_CMM")
+            amx = self._ensure_node("aimMatrix", f"{base}Slide_AMT")
+
+            cmds.connectAttr(f"{shape}.worldSpace[0]", f"{cps}.inputSurface", f=True)
+            cmds.connectAttr(f"{shape}.worldSpace[0]", f"{posi}.inputSurface", f=True)
+            cmds.connectAttr(f"{driven_joint}.translate", f"{cps}.inPosition", f=True)
+            cmds.connectAttr(f"{cps}.parameterU", f"{posi}.parameterU", f=True)
+            cmds.connectAttr(f"{cps}.parameterV", f"{posi}.parameterV", f=True)
+            cmds.connectAttr(f"{posi}.position", f"{cmx}.inputTranslate", f=True)
+
+            cmds.connectAttr(f"{cmx}.outputMatrix", f"{amx}.inputMatrix", f=True)
+            cmds.connectAttr(f"{posi}.normalizedTangentU",
+                             f"{amx}.primaryTargetVector", f=True)
+            cmds.connectAttr(f"{posi}.normalizedTangentV",
+                             f"{amx}.secondaryTargetVector", f=True)
+
+            cmds.setAttr(f"{amx}.primaryInputAxis", *self.SLIDE_PRIMARY_AXIS)
+            cmds.setAttr(f"{amx}.secondaryInputAxis", *self.SLIDE_SECONDARY_AXIS)
+            cmds.setAttr(f"{amx}.primaryMode", self.SLIDE_PRIMARY_MODE)
+            cmds.setAttr(f"{amx}.secondaryMode", self.SLIDE_SECONDARY_MODE)
+
+            projected = f"{base}Projected_JNT"
+            if not cmds.objExists(projected):
+                cmds.select(clear=True)
+                projected = cmds.joint(name=projected)
+                cmds.setAttr(f"{projected}.inheritsTransform", 0)
+            cmds.connectAttr(f"{amx}.outputMatrix",
+                             f"{projected}.offsetParentMatrix", f=True)
+
+            if projected not in self.slide_projected_joints:
+                self.slide_projected_joints.append(projected)
+
+            if self.BUILD_FOREHEAD_ROW:
+                self._build_forehead_row_joint(base, shape, cps)
+
+        self.apply_slide_to_env()
+        return self.slide_projected_joints
+
+    def apply_slide_to_env(self):
+        """
+        Mezcla cada _ENV entre su joint conducido y su joint proyectado.
+
+        El _ENV lo crea el SkinningModule duplicando el _bind_JNT y poniendole
+        un parentConstraint de un solo target. Aqui se sustituye por uno de dos,
+        con el slide pesando el proyectado y su reverse el conducido: a 0 la
+        ceja va libre y a 1 va pegada al craneo.
+
+        ORDEN: necesita que el SkinningModule ya haya corrido. El build de cejas
+        va antes, asi que la primera pasada solo avisara. Vuelve a llamarlo
+        despues del skinning:
+
+            eyebrows.apply_slide_to_env()
+
+        Es idempotente.
+        """
+        main_ctl = f"{self.prefix}_Main_CTRL"
+        reverse_node = None
+
+        if cmds.objExists(main_ctl) and cmds.attributeQuery(
+                "slide", node=main_ctl, exists=True):
+            reverse_name = f"{self.prefix}_slide_REV"
+            if cmds.objExists(reverse_name):
+                reverse_node = reverse_name
+            else:
+                reverse_node = cmds.createNode("reverse", name=reverse_name, ss=True)
+                cmds.connectAttr(f"{main_ctl}.slide", f"{reverse_node}.inputX")
+        else:
+            cmds.warning(f"[EyebrowsModule] '{main_ctl}.slide' no existe; el "
+                         "slide se queda sin conectar.")
+
+        done = []
+        missing = []
+
+        for index, driven_joint in enumerate(self.rig_joints):
+            projected = f"{self.prefix}_{index + 1:02d}Projected_JNT"
+            env_joint = driven_joint.replace("_bind_JNT", "_ENV")
+
+            if not cmds.objExists(env_joint) or not cmds.objExists(projected):
+                missing.append(env_joint)
+                continue
+
+            old = cmds.listRelatives(env_joint, c=True, type="parentConstraint") or []
+            if old:
+                cmds.delete(old)
+
+            constraint = cmds.parentConstraint(
+                driven_joint, projected, env_joint, mo=True
+            )[0]
+
+            if reverse_node:
+                weights = cmds.parentConstraint(constraint, q=True, wal=True)
+                # weights[0] = el conducido, weights[1] = el proyectado.
+                cmds.connectAttr(f"{reverse_node}.outputX",
+                                 f"{constraint}.{weights[0]}", f=True)
+                cmds.connectAttr(f"{main_ctl}.slide",
+                                 f"{constraint}.{weights[1]}", f=True)
+
+            done.append(env_joint)
+
+        if missing:
+            cmds.warning(f"[EyebrowsModule] {len(missing)} _ENV sin montar "
+                         "(todavia no ha corrido el SkinningModule). Vuelve a "
+                         "llamar a apply_slide_to_env() despues del skinning.")
+
+        self.slide_skin_joints = done
+        return done
+
+    def _build_forehead_row_joint(self, base, shape, cps):
+        """
+        Joint extra por encima de la ceja, sobre la misma NURBS.
+
+        Reutiliza la U que ya calculo el closestPointOnSurface del joint de la
+        ceja y le suma un offset en V, asi que queda justo encima y acompaña el
+        deslizamiento.
+
+        AVISO: reconstruido a partir de una captura del grafo, no de una
+        especificacion. La forma general esta clara, los valores concretos no.
+        """
+        posi = self._ensure_node("pointOnSurfaceInfo", f"{base}Forehead_POSI")
+        offset = self._ensure_node("floatMath", f"{base}ForeheadOffset_FLM")
+
+        cmds.setAttr(f"{offset}.operation", 0)  # 0 = sumar
+        cmds.connectAttr(f"{cps}.parameterV", f"{offset}.floatA", f=True)
+        cmds.setAttr(f"{offset}.floatB", self.FOREHEAD_V_OFFSET)
+
+        cmds.connectAttr(f"{shape}.worldSpace[0]", f"{posi}.inputSurface", f=True)
+        cmds.connectAttr(f"{cps}.parameterU", f"{posi}.parameterU", f=True)
+        cmds.connectAttr(f"{offset}.outFloat", f"{posi}.parameterV", f=True)
+
+        joint_name = f"{base}Forehead_JNT"
+        if not cmds.objExists(joint_name):
+            cmds.select(clear=True)
+            joint_name = cmds.joint(name=joint_name)
+            cmds.setAttr(f"{joint_name}.inheritsTransform", 0)
+
+        cmds.connectAttr(f"{posi}.position", f"{joint_name}.translate", f=True)
+
+        if joint_name not in self.forehead_joints:
+            self.forehead_joints.append(joint_name)
+        return joint_name
+
+    @staticmethod
+    def _ensure_node(node_type, node_name):
+        """Crea el nodo si no existe, y si existe lo reutiliza."""
+        if cmds.objExists(node_name):
+            return node_name
+        return cmds.createNode(node_type, name=node_name, ss=True)
+
+    # ------------------------------------------------------------------
     # Build
     # ------------------------------------------------------------------
     def build(self):
@@ -529,6 +995,10 @@ class EyebrowsModule(object):
             main_ctl, mid_guide_name
         )
         cmds.parent(main_ctl_gen, main_ctl_grp)
+
+        # Volteo de ejes del lado R. Va aqui, antes de que se genere ninguna
+        # red de matrices, porque esas redes hornean la inversa del bind.
+        self._mirror_control_axes(main_ctl_gen)
 
         if not cmds.attributeQuery("slide", node=main_ctl, exists=True):
             cmds.addAttr(
@@ -646,6 +1116,7 @@ class EyebrowsModule(object):
                     control_name=tangent_ctl,
                     top_grp=main_ctl_grp,
                     create_transform=True,
+                    mirror_sign=self.MIRROR_R_TANGENT_SIGN,
                 )
 
                 self.controls.append(tangent_ctl)
@@ -681,3 +1152,10 @@ class EyebrowsModule(object):
 
         # 6) MOTION PATHS + AIM CONSTRAINTS
         self._setup_motion_paths_and_aims()
+
+        # 7) SLIDE SETUP SOBRE LA NURBS DEL CRANEO
+        #    Al final: necesita los joints ya conducidos por el motionPath.
+        self._build_slide_setup()
+
+        # 8) OUTLINER
+        self._organize_outliner()

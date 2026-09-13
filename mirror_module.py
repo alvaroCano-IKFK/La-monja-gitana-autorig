@@ -41,7 +41,7 @@ class Mirror(object):
         self.r_eyelid_up03 = None
         self.r_eyelid_low02 = None
         self.r_eyelid_low03 = None
-                self.r_eyebrow_end = None
+        self.r_eyebrow_end = None
 
     def mirror(self):
         # mirrorJoint devuelve una lista. El primer elemento [0] es la raíz duplicada.

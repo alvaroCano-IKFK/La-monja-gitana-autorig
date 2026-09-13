@@ -38,7 +38,14 @@ class EyebrowsModule(object):
     # Medido, no supuesto: moviendo cada control un paso y comparando el
     # desplazamiento en MUNDO del control con el de su _Local_TRN, la X ya salia
     # acompanando y la Y y la Z al reves. De ahi este triple.
-    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, 1.0)
+    # Medido control a control, comparando el desplazamiento en MUNDO del
+    # control con el de su _Local_TRN: la X y la Y ya acompanaban, la Z iba al
+    # reves. De ahi el -1 en la Z, y SOLO en la Z.
+    #
+    # Si este valor vuelve a aparecer como (-1.0, 1.0, 1.0), es que un merge se
+    # ha comido el signo: ya paso una vez y el sintoma es que las tangentes van
+    # bien y los sub se invierten en Z.
+    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, -1.0)
 
     # Las TANGENTES necesitan el signo contrario, y no es un capricho.
     #
@@ -610,6 +617,22 @@ class EyebrowsModule(object):
             f"{amt}.outputMatrix", f"{first_jnt}.offsetParentMatrix", force=True
         )
 
+        # Canals a zero DESPRES de connectar la matriu.
+        #
+        # El joint es va crear amb cmds.joint(p=...), aixi que porta la posicio
+        # escrita al translate. L'offsetParentMatrix es composa ABANS que els
+        # canals locals, de manera que si el translate es queda amb el valor
+        # antic la posicio s'aplica DUES vegades i el joint acaba al doble de
+        # distancia. Es el que passava amb el bind_01: translate i aimMatrix
+        # donaven exactament la mateixa posicio.
+        #
+        # Tambe el jointOrient: als joints Maya el suma a la rotacio, i aqui
+        # tota l'orientacio ja ve dins de la matriu.
+        cmds.setAttr(f"{first_jnt}.translate", 0, 0, 0)
+        cmds.setAttr(f"{first_jnt}.rotate", 0, 0, 0)
+        if cmds.attributeQuery("jointOrient", node=first_jnt, exists=True):
+            cmds.setAttr(f"{first_jnt}.jointOrient", 0, 0, 0)
+
         # 3) Segon joint (índex 1): l'ÚNIC que fa servir aimConstraint,
         #    cap al seu up_trn, amb el joint SEGÜENT (índex 2) com a
         #    worldUpObject.
@@ -770,7 +793,7 @@ class EyebrowsModule(object):
 
             NRB.worldSpace -> closestPointOnSurface.inputSurface
                            -> pointOnSurfaceInfo.inputSurface
-            joint.translate -> CPS.inPosition
+            joint.worldMatrix -> decomposeMatrix -> CPS.inPosition
             CPS.parameterU/V -> POSI.parameterU/V
             POSI.position -> composeMatrix.inputTranslate
             composeMatrix -> aimMatrix.inputMatrix
@@ -809,7 +832,18 @@ class EyebrowsModule(object):
 
             cmds.connectAttr(f"{shape}.worldSpace[0]", f"{cps}.inputSurface", f=True)
             cmds.connectAttr(f"{shape}.worldSpace[0]", f"{posi}.inputSurface", f=True)
-            cmds.connectAttr(f"{driven_joint}.translate", f"{cps}.inPosition", f=True)
+            # La posicion se lee del worldMatrix, NO del translate.
+            #
+            # El primer joint de la cadena recibe su posicion por
+            # offsetParentMatrix y tiene el translate a cero, asi que
+            # conectarlo directamente proyectaria el origen del mundo sobre la
+            # NURBS y el joint proyectado se iria lejisimos. Con un
+            # decomposeMatrix del worldMatrix funciona igual para todos, este
+            # conducido por matriz o por translate.
+            dcm = self._ensure_node("decomposeMatrix", f"{base}SlidePos_DCM")
+            cmds.connectAttr(f"{driven_joint}.worldMatrix[0]",
+                             f"{dcm}.inputMatrix", f=True)
+            cmds.connectAttr(f"{dcm}.outputTranslate", f"{cps}.inPosition", f=True)
             cmds.connectAttr(f"{cps}.parameterU", f"{posi}.parameterU", f=True)
             cmds.connectAttr(f"{cps}.parameterV", f"{posi}.parameterV", f=True)
             cmds.connectAttr(f"{posi}.position", f"{cmx}.inputTranslate", f=True)

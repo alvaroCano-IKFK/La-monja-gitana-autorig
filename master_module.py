@@ -28,10 +28,11 @@ import curvature_module
 import mouthModule
 import mirror_module
 import jaw_module
-import eyebrowsModule
 import eyes_module
 import progress_module
 import guides_io_module
+import eyebrowsModule
+
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez

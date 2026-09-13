@@ -1341,6 +1341,8 @@ class MouthModule(object):
             levator_ctrl_grp = self._get_ctrl_root_grp(levator_ctrl)
 
         depresor_name = f"{self.prefix}_depresor_CTRL"
+        depresor_neg_name = f"{self.prefix}_depresor_negative_GRP"
+
         if not cmds.objExists(depresor_name):
             depresor_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["mouthLower"],

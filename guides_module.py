@@ -601,6 +601,200 @@ class EyeGuides(object):
 
         cmds.select(clear=True)
 
+class EyeGuides(object):
+    """
+    Crea les guies de l'ull: el centre, les dues cantonades i les sis joints de les parpelles.
+    """
+    def __init__(self, eye_mid, eye_mid_end,eye_direct, 
+                 eye_inner_corner, eye_outer_corner,
+                 eyelid_up, eyelid_low, eyelid_up02, eyelid_up03, eyelid_low02, eyelid_low03,
+                 eye_position, eye_mid_end_position, eye_direct_position, 
+                 eye_inner_corner_position, eye_outer_corner_position,
+                 eyelid_up_position, eyelid_low_position,
+                 eyelid_up02_position, eyelid_up03_position,
+                 eyelid_low02_position, eyelid_low03_position):
+
+        self.eye_mid = eye_mid
+        self.eye_mid_end = eye_mid_end
+        self.eye_direct = eye_direct
+        
+        self.eye_inner_corner = eye_inner_corner
+        self.eye_outer_corner = eye_outer_corner
+
+        self.eyelid_up = eyelid_up
+        self.eyelid_low = eyelid_low
+        self.eyelid_up02 = eyelid_up02
+        self.eyelid_up03 = eyelid_up03
+        self.eyelid_low02 = eyelid_low02
+        self.eyelid_low03 = eyelid_low03
+
+        self.eye_position = eye_position
+        self.eye_mid_end_position = eye_mid_end_position
+        self.eye_direct_position = eye_direct_position
+        
+        self.eye_inner_corner_position = eye_inner_corner_position
+        self.eye_outer_corner_position = eye_outer_corner_position
+
+        self.eyelid_up_position = eyelid_up_position
+        self.eyelid_low_position = eyelid_low_position
+        self.eyelid_up02_position = eyelid_up02_position
+        self.eyelid_up03_position = eyelid_up03_position
+        self.eyelid_low02_position = eyelid_low02_position
+        self.eyelid_low03_position = eyelid_low03_position
+
+        self.guides_group = None
+
+    def eye_guides(self):
+        # Parelles nom / posicio de totes les joints de l'ull
+        joints_info = [
+            (self.eye_mid, self.eye_position),
+            (self.eye_mid_end, self.eye_mid_end_position),
+            (self.eye_direct, self.eye_direct_position),
+            (self.eye_inner_corner, self.eye_inner_corner_position),
+            (self.eye_outer_corner, self.eye_outer_corner_position),
+            (self.eyelid_up, self.eyelid_up_position),
+            (self.eyelid_low, self.eyelid_low_position),
+            (self.eyelid_up02, self.eyelid_up02_position),
+            (self.eyelid_up03, self.eyelid_up03_position),
+            (self.eyelid_low02, self.eyelid_low02_position),
+            (self.eyelid_low03, self.eyelid_low03_position),
+        ]
+
+        created_joints = []
+
+        for joint_name, joint_position in joints_info:
+            # Es deselecciona abans de cada joint perque surtin independents i no encadenades
+            cmds.select(clear=True)
+            new_joint = cmds.joint(p=joint_position, name=joint_name)
+            if not new_joint:
+                print(f"Error creando la joint: {joint_name}")
+                return
+            created_joints.append(new_joint)
+
+        # Crea el grup de les guies de l'ull
+        self.guides_group = cmds.group(created_joints, n="L_eye_guides_GRP")
+        if self.guides_group is None:
+            print("Error al crear el grupo de guías del ojo.")
+
+        cmds.select(clear=True)
+
+#########################################################################
+#EYEBROWS
+#########################################################################
+
+class EyebrowsGuides(object):
+    """
+    Crea automàticament 10 guies de les celles a partir de les posicions de referència.
+    """
+    def __init__(self, eyebrow_root, eyebrow_end, root_pos=(0, 24, 10), end_pos=(2.5, 24, 9)):
+        self.eyebrow_root = eyebrow_root
+        self.eyebrow_end = eyebrow_end
+        self.root_pos = root_pos
+        self.end_pos = end_pos
+        self.guides_group = None
+
+    def eyebrows_guides(self):
+        cmds.select(clear=True)
+        
+        created_joints = []
+        num_joints = 10  
+
+        for i in range(num_joints):
+            t = i / float(num_joints - 1)
+            
+            current_pos = [
+                round(self.root_pos[j] + (self.end_pos[j] - self.root_pos[j]) * t, 4)
+                for j in range(3)
+            ]
+
+            joint_name = f"{self.eyebrow_root}_{i+1:02d}"
+            
+            current_joint = cmds.joint(p=current_pos, name=joint_name)
+            if not current_joint:
+                print(f"Error creant el joint: {joint_name}")
+                return
+                
+            created_joints.append(current_joint)
+
+        self.guides_group = cmds.group(created_joints, n="eyebrows_guides_GRP")
+        if self.guides_group is None:
+            print("Error al crear el grup de guies de les celles.")
+
+        cmds.select(clear=True)
+        return self.guides_group
+
+class EyebrowSkullGuides(object):
+    """
+    Crea la NURBS con forma de craneo por la que deslizan las cejas.
+
+    Se hace como dice el documento: una curva de perfil en vista lateral y un
+    revolve alrededor del eje Y. Asi la superficie envuelve la frente y la
+    costura queda atras, fuera de la zona de la ceja, que es donde no molesta.
+
+    La forma es solo un punto de partida. Ajustala a mano sobre el modelo antes
+    de construir el rig: lo unico que importa es que cubra toda la zona por la
+    que se mueven las cejas, con margen por arriba si se va a usar la fila de la
+    frente.
+    """
+
+    def __init__(self, surface_name="eyebrow_skull_NRB",
+                 profile=None, center=(0.0, 34.0, 0.0), sections=12):
+        self.surface_name = surface_name
+        self.center = center
+        self.sections = sections
+
+        # Perfil en el plano YZ, de arriba abajo. (Z hacia delante, Y arriba),
+        # relativo a center. Sale una cupula achatada tipo frente.
+        self.profile = profile or [
+            (0.0, 4.0, 0.0),
+            (0.0, 3.6, 2.2),
+            (0.0, 2.4, 3.6),
+            (0.0, 0.8, 4.2),
+            (0.0, -1.0, 4.3),
+            (0.0, -2.6, 4.0),
+        ]
+
+        self.guides_group = None
+
+    def create_skull(self):
+        if cmds.objExists(self.surface_name):
+            cmds.warning(f"[Guides] '{self.surface_name}' ya existe, no se "
+                         "vuelve a crear.")
+            return self.surface_name
+
+        points = [(self.center[0] + p[0],
+                   self.center[1] + p[1],
+                   self.center[2] + p[2]) for p in self.profile]
+
+        profile_curve = cmds.curve(d=3, p=points, n=f"{self.surface_name}_profile_CRV")
+
+        # Revolve alrededor de Y, pasando por el centro. startSweep 180 para que
+        # la costura caiga en la nuca y no en la frente.
+        surface = cmds.revolve(
+            profile_curve,
+            ch=False,
+            po=0,
+            ax=(0, 1, 0),
+            pivot=self.center,
+            sections=self.sections,
+            degree=3,
+            startSweep=180,
+            endSweep=540,
+            n=self.surface_name,
+        )[0]
+
+        cmds.delete(profile_curve)
+
+        # Rebuild para tener una parametrizacion limpia y previsible, igual que
+        # se hace con la superficie de la boca.
+        cmds.rebuildSurface(surface, ch=0, rpo=1, kr=0, kcp=0, kc=0,
+                            su=8, du=3, sv=6, dv=3)
+
+        self.guides_group = cmds.group(surface, n="eyebrowSkull_guides_GRP")
+        cmds.select(clear=True)
+        return self.guides_group
+
+
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
@@ -699,6 +893,16 @@ class CharacterGuides(object):
         )
         #cmds.parent(eye_instance.eye_mid, eye_instance.eye_mid_end)
         eye_instance.eye_guides()
+
+        #Crea les guies de les celles
+        eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
+        eyebrows_instance.eyebrows_guides()
+
+        #Crea la NURBS del crani per la que llisquen les celles.
+        #El centre va a l'altura de les guies de les celles (Y = 34) perque
+        #despres tot el guides_GRP es mou junt.
+        skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
+        skull_instance.create_skull()
         
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -709,7 +913,9 @@ class CharacterGuides(object):
             hand_instance.group,
             boca_instance.guides_group,
             jaw_instance.guides_group,
-            eye_instance.guides_group
+            eye_instance.guides_group,
+            eyebrows_instance.guides_group,
+            skull_instance.guides_group
         ]
 
         # Filtra nomes els grups que existeixen

@@ -28,6 +28,7 @@ import curvature_module
 import mouthModule
 import mirror_module
 import jaw_module
+import eyebrowsModule
 import eyes_module
 import progress_module
 import guides_io_module
@@ -66,6 +67,7 @@ def run():
     importlib.reload(eyes_module)
     importlib.reload(progress_module)
     importlib.reload(guides_io_module)
+    importlib.reload(eyebrowsModule)
     
     ui = ui_module.UI()
     ui.main_UI()

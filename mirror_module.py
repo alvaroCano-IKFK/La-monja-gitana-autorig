@@ -1,7 +1,7 @@
 import maya.cmds as cmds
 
 class Mirror(object):
-    def __init__(self, clavicule_guide="L_clavicule", thigh_guide="L_hip", lip_end="L_lip_end",
+    def __init__(self, clavicule_guide="L_clavicule", thigh_guide="L_hip", lip_end="L_lip_end", eyebow_end="L_eyebrow_root_01",
                 eye_mid="L_eye_mid", eye_mid_end="L_eye_mid_end", eye_direct = "L_eye_direct",
                 eye_inner_corner="L_eye_inner_corner", eye_outer_corner="L_eye_outer_corner",
                 eyelid_up="L_eyelid_up", eyelid_low="L_eyelid_low",
@@ -23,6 +23,7 @@ class Mirror(object):
         self.eyelid_up03 = eyelid_up03
         self.eyelid_low02 = eyelid_low02
         self.eyelid_low03 = eyelid_low03
+        self.eyebrow_end = eyebow_end
         self.rig_name = rig_name
         
         # Variables para guardar los nombres de los joints creados
@@ -40,7 +41,8 @@ class Mirror(object):
         self.r_eyelid_up03 = None
         self.r_eyelid_low02 = None
         self.r_eyelid_low03 = None
-        
+                self.r_eyebrow_end = None
+
     def mirror(self):
         # mirrorJoint devuelve una lista. El primer elemento [0] es la raíz duplicada.
         if cmds.objExists(self.clavicule_guide):
@@ -57,7 +59,17 @@ class Mirror(object):
         else:
             cmds.warning(f"[Mirror] No se encontró {self.lip_end} en la escena, no se puede mirrorizar la boca.")
 
-        # Las tres joints del ojo son independientes (el group las separó), así que se mirrorizan una a una.
+        if cmds.objExists(self.eyebrow_end):
+            self.r_eyebrows = []
+        for i in range(1, 11):
+            brow_name = f"L_eyebrow_root_{i:02d}"
+            
+            if cmds.objExists(brow_name):
+                res_brow = cmds.mirrorJoint(brow_name, myz=True, mb=True, sr=("L", "R"))
+                if res_brow:
+                    self.r_eyebrows.append(res_brow[0])
+            else:
+                cmds.warning(f"[Mirror] No se encontró {brow_name} en la escena.")        # Las tres joints del ojo son independientes (el group las separó), así que se mirrorizan una a una.
         if cmds.objExists(self.eye_mid):
             res_eye = cmds.mirrorJoint(self.eye_mid, myz=True, mb=True, sr=("L", "R"))
             self.r_eye_mid = res_eye[0]

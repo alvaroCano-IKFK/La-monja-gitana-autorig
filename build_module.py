@@ -25,6 +25,7 @@ import soft_module
 import pvPin_module
 import mouthModule
 import jaw_module
+import eyebrowsModule
 import eyes_module
 import progress_module
 
@@ -246,6 +247,24 @@ class BuildRig(object):
                 side="C"
             )
         self.jaw_rig.build()
+
+        self.eyebrows_rig_l = eyebrowsModule.EyebrowsModule(
+            guide_prefix="L_eyebrow_root",
+            num_joints=10,
+            rig_name="Character",
+            side="L",
+            root_instance=self.root_rig
+)
+        self.eyebrows_rig_l.build()
+        
+        self.eyebrows_rig_r = eyebrowsModule.EyebrowsModule(
+            guide_prefix="R_eyebrow_root",
+            num_joints=10,
+            rig_name="Character",
+            side="R",
+            root_instance=self.root_rig
+        )
+        self.eyebrows_rig_r.build()
         
         prog.step("Ojos izquierda")
         self.eyes_rig = eyes_module.EyesModule(

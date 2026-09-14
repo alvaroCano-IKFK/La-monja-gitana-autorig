@@ -526,44 +526,27 @@ class JawGuides(object):
 
 class EyeGuides(object):
     """
-    Crea les guies de l'ull: el centre, les dues cantonades i les sis joints de les parpelles.
+    Crea les guies de l'ull: el centre, el seu end i el direct.
+
+    Les guies de parpella ja no existeixen: la seva posicio surt de la corba de
+    loop que es construeix des de l'edge de la malla (veure EyesModule).
     """
-    def __init__(self, eye_mid, eye_mid_end,eye_direct, 
-                 eye_inner_corner, eye_outer_corner,
-                 eyelid_up, eyelid_low, eyelid_up02, eyelid_up03, eyelid_low02, eyelid_low03,
-                 eye_position, eye_mid_end_position, eye_direct_position, 
-                 eye_inner_corner_position, eye_outer_corner_position,
-                 eyelid_up_position, eyelid_low_position,
-                 eyelid_up02_position, eyelid_up03_position,
-                 eyelid_low02_position, eyelid_low03_position):
+    def __init__(self, eye_mid, eye_mid_end, eye_direct,
+                 eye_position=(2, 26, 9),
+                 eye_mid_end_position=(2, 26, 10),
+                 eye_direct_position=(2, 26, 20)):
 
         self.eye_mid = eye_mid
         self.eye_mid_end = eye_mid_end
         self.eye_direct = eye_direct
-        
-        self.eye_inner_corner = eye_inner_corner
-        self.eye_outer_corner = eye_outer_corner
 
-        self.eyelid_up = eyelid_up
-        self.eyelid_low = eyelid_low
-        self.eyelid_up02 = eyelid_up02
-        self.eyelid_up03 = eyelid_up03
-        self.eyelid_low02 = eyelid_low02
-        self.eyelid_low03 = eyelid_low03
-
+        # Las posiciones siguen siendo parametros: eye_guides() las lee como
+        # self.eye_position / self.eye_mid_end_position / self.eye_direct_position.
+        # Al quitarlas del __init__ la llamada de create_guides() seguia pasando
+        # seis argumentos contra una firma de tres.
         self.eye_position = eye_position
         self.eye_mid_end_position = eye_mid_end_position
         self.eye_direct_position = eye_direct_position
-        
-        self.eye_inner_corner_position = eye_inner_corner_position
-        self.eye_outer_corner_position = eye_outer_corner_position
-
-        self.eyelid_up_position = eyelid_up_position
-        self.eyelid_low_position = eyelid_low_position
-        self.eyelid_up02_position = eyelid_up02_position
-        self.eyelid_up03_position = eyelid_up03_position
-        self.eyelid_low02_position = eyelid_low02_position
-        self.eyelid_low03_position = eyelid_low03_position
 
         self.guides_group = None
 
@@ -573,91 +556,7 @@ class EyeGuides(object):
             (self.eye_mid, self.eye_position),
             (self.eye_mid_end, self.eye_mid_end_position),
             (self.eye_direct, self.eye_direct_position),
-            (self.eye_inner_corner, self.eye_inner_corner_position),
-            (self.eye_outer_corner, self.eye_outer_corner_position),
-            (self.eyelid_up, self.eyelid_up_position),
-            (self.eyelid_low, self.eyelid_low_position),
-            (self.eyelid_up02, self.eyelid_up02_position),
-            (self.eyelid_up03, self.eyelid_up03_position),
-            (self.eyelid_low02, self.eyelid_low02_position),
-            (self.eyelid_low03, self.eyelid_low03_position),
-        ]
 
-        created_joints = []
-
-        for joint_name, joint_position in joints_info:
-            # Es deselecciona abans de cada joint perque surtin independents i no encadenades
-            cmds.select(clear=True)
-            new_joint = cmds.joint(p=joint_position, name=joint_name)
-            if not new_joint:
-                print(f"Error creando la joint: {joint_name}")
-                return
-            created_joints.append(new_joint)
-
-        # Crea el grup de les guies de l'ull
-        self.guides_group = cmds.group(created_joints, n="L_eye_guides_GRP")
-        if self.guides_group is None:
-            print("Error al crear el grupo de guías del ojo.")
-
-        cmds.select(clear=True)
-
-class EyeGuides(object):
-    """
-    Crea les guies de l'ull: el centre, les dues cantonades i les sis joints de les parpelles.
-    """
-    def __init__(self, eye_mid, eye_mid_end,eye_direct, 
-                 eye_inner_corner, eye_outer_corner,
-                 eyelid_up, eyelid_low, eyelid_up02, eyelid_up03, eyelid_low02, eyelid_low03,
-                 eye_position, eye_mid_end_position, eye_direct_position, 
-                 eye_inner_corner_position, eye_outer_corner_position,
-                 eyelid_up_position, eyelid_low_position,
-                 eyelid_up02_position, eyelid_up03_position,
-                 eyelid_low02_position, eyelid_low03_position):
-
-        self.eye_mid = eye_mid
-        self.eye_mid_end = eye_mid_end
-        self.eye_direct = eye_direct
-        
-        self.eye_inner_corner = eye_inner_corner
-        self.eye_outer_corner = eye_outer_corner
-
-        self.eyelid_up = eyelid_up
-        self.eyelid_low = eyelid_low
-        self.eyelid_up02 = eyelid_up02
-        self.eyelid_up03 = eyelid_up03
-        self.eyelid_low02 = eyelid_low02
-        self.eyelid_low03 = eyelid_low03
-
-        self.eye_position = eye_position
-        self.eye_mid_end_position = eye_mid_end_position
-        self.eye_direct_position = eye_direct_position
-        
-        self.eye_inner_corner_position = eye_inner_corner_position
-        self.eye_outer_corner_position = eye_outer_corner_position
-
-        self.eyelid_up_position = eyelid_up_position
-        self.eyelid_low_position = eyelid_low_position
-        self.eyelid_up02_position = eyelid_up02_position
-        self.eyelid_up03_position = eyelid_up03_position
-        self.eyelid_low02_position = eyelid_low02_position
-        self.eyelid_low03_position = eyelid_low03_position
-
-        self.guides_group = None
-
-    def eye_guides(self):
-        # Parelles nom / posicio de totes les joints de l'ull
-        joints_info = [
-            (self.eye_mid, self.eye_position),
-            (self.eye_mid_end, self.eye_mid_end_position),
-            (self.eye_direct, self.eye_direct_position),
-            (self.eye_inner_corner, self.eye_inner_corner_position),
-            (self.eye_outer_corner, self.eye_outer_corner_position),
-            (self.eyelid_up, self.eyelid_up_position),
-            (self.eyelid_low, self.eyelid_low_position),
-            (self.eyelid_up02, self.eyelid_up02_position),
-            (self.eyelid_up03, self.eyelid_up03_position),
-            (self.eyelid_low02, self.eyelid_low02_position),
-            (self.eyelid_low03, self.eyelid_low03_position),
         ]
 
         created_joints = []
@@ -871,26 +770,12 @@ class CharacterGuides(object):
             "L_eye_mid",
             "L_eye_mid_end",
             "L_eye_direct",
-            "L_eye_inner_corner",
-            "L_eye_outer_corner",
-            "L_eyelid_up",
-            "L_eyelid_low",
-            "L_eyelid_up02",
-            "L_eyelid_up03",
-            "L_eyelid_low02",
-            "L_eyelid_low03",
             (2, 26, 9),
             (2, 26, 10),
-            (2, 26, 20),
-            (1, 26, 9),
-            (3, 26, 9),
-            (2, 27, 9),
-            (2, 25, 9),
-            (1.3, 26.7, 9),
-            (2.6, 26.7, 9),
-            (1.3, 25.2, 9),
-            (2.6, 25.2, 9)
+            (2, 26, 20)
+         
         )
+        
         #cmds.parent(eye_instance.eye_mid, eye_instance.eye_mid_end)
         eye_instance.eye_guides()
 

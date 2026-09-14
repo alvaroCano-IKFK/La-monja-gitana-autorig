@@ -22,9 +22,10 @@ class UI(object):
         self.mirror_guides = mirror_module.Mirror()
         self.builder = build_module.BuildRig()
 
-        # Campos de la seccion de sets de loop, para poder leerlos desde los botones
+        # Campos de la seccion de curvas de loop, para leerlos desde los botones
         self.rig_name_field = None
         self.side_menu = None
+        self.inner_reference_field = None
 
     def main_UI(self):
         window_name = self.name
@@ -55,9 +56,15 @@ class UI(object):
         cmds.setParent(main_layout)
 
         # ------------------------------------------------------------------
-        # 3. EYE LOOP SETS
+        # 3. CURVAS DE LOOP DE LOS OJOS
+        #
+        # Sustituye a la antigua seccion de sets. El artefacto que se guarda ya
+        # no es un objectSet con indices de vertice, sino una curva de grado 1
+        # con un CV por vertice del borde del parpado. Se crea una vez por
+        # parpado y por lado, se queda en la escena y de ella sale todo lo
+        # demas: la linea del parpado y los joints de loop.
         # ------------------------------------------------------------------
-        cmds.frameLayout(l="3. Eye Loop Sets", collapsable=True, cl=True, marginHeight=5)
+        cmds.frameLayout(l="3. Eye Loop Curves", collapsable=True, cl=True, marginHeight=5)
         cmds.columnLayout(adj=True)
 
         self.rig_name_field = cmds.textFieldGrp(
@@ -68,15 +75,31 @@ class UI(object):
         cmds.menuItem(l="R")
 
         cmds.separator(h=8)
-        cmds.text(l="Selecciona el loop del borde del parpado y guardalo:", al="left")
-        cmds.button(l="Save Upper Loop Set",
-                    c=lambda x: self._save_loop_set(upper=True))
+        cmds.text(l="Selecciona el edge loop del borde del parpado:", al="left")
+        cmds.button(l="Create Upper Loop Curve",
+                    c=lambda x: self._build_loop_curve(upper=True))
         cmds.separator(h=4)
-        cmds.button(l="Save Lower Loop Set",
-                    c=lambda x: self._save_loop_set(upper=False))
+        cmds.button(l="Create Lower Loop Curve",
+                    c=lambda x: self._build_loop_curve(upper=False))
 
         cmds.separator(h=8)
-        cmds.button(l="Check Loop Sets", c=lambda x: self._report_loop_sets())
+        # Opcional: nodo del centro de la cara para decidir cual de los dos
+        # extremos del loop es la comisura interna. Vacio = se usa la X mundial
+        # 0, que vale si el personaje esta centrado en el origen.
+        self.inner_reference_field = cmds.textFieldButtonGrp(
+            l="Inner Ref", tx="", bl="<< Sel", cw3=(70, 120, 50), adj=2,
+            bc=lambda: self._set_inner_reference_from_selection())
+        cmds.text(l="(opcional: nodo del centro de la cara)", al="left")
+
+        cmds.separator(h=8)
+        cmds.button(l="Check Loop Curves", c=lambda x: self._report_loop_curves())
+        cmds.separator(h=4)
+        cmds.rowLayout(nc=2, cw2=(150, 150), adj=1)
+        cmds.button(l="Diagnose Upper",
+                    c=lambda x: self._diagnose_loop_curve(upper=True))
+        cmds.button(l="Diagnose Lower",
+                    c=lambda x: self._diagnose_loop_curve(upper=False))
+        cmds.setParent("..")
 
         cmds.setParent(main_layout)
 
@@ -111,36 +134,83 @@ class UI(object):
         return guides_io_module.import_guides()
 
     # ------------------------------------------------------------------
-    # SETS DE LOOP DE LOS OJOS
+    # CURVAS DE LOOP DE LOS OJOS
     # ------------------------------------------------------------------
     def _get_eye_naming(self):
         """
         Lado y nombre de rig que hay puestos en la ventana. Son solo para
-        construir el nombre del set: la configuracion del build sigue viviendo
-        en build_module, aqui no se guarda nada.
+        construir el nombre de la curva: la configuracion del build sigue
+        viviendo en build_module, aqui no se guarda nada.
         """
         rig_name = cmds.textFieldGrp(self.rig_name_field, q=True, tx=True) or "Character"
         side = cmds.optionMenuGrp(self.side_menu, q=True, v=True) or "L"
 
         return side, rig_name.strip()
 
-    def _save_loop_set(self, upper=True):
+    def _get_inner_reference(self):
         """
-        Guarda la seleccion como set de loop con el nombre de convencion, para
-        no tener que escribirlo a mano y arriesgarse a que el modulo no lo
-        encuentre y se caiga al contador sin avisar.
+        Nodo de referencia del centro de la cara, o None si el campo esta vacio
+        o apunta a algo que ya no existe.
+        """
+        value = cmds.textFieldButtonGrp(self.inner_reference_field, q=True, tx=True) or ""
+        value = value.strip()
+
+        if not value:
+            return None
+
+        if not cmds.objExists(value):
+            cmds.warning(f"[UI] '{value}' no existe en la escena. Se ignora la "
+                         f"referencia y se usa la X mundial 0.")
+            return None
+
+        return value
+
+    def _set_inner_reference_from_selection(self):
+        """
+        Mete en el campo el primer nodo seleccionado, para no escribir el
+        nombre a mano.
+        """
+        selection = cmds.ls(selection=True, long=False) or []
+
+        # Un componente no vale como referencia: hace falta un transform.
+        selection = [item for item in selection if "." not in item]
+        if not selection:
+            cmds.warning("[UI] Selecciona un nodo del centro de la cara.")
+            return None
+
+        cmds.textFieldButtonGrp(self.inner_reference_field, e=True, tx=selection[0])
+
+        return selection[0]
+
+    def _build_loop_curve(self, upper=True):
+        """
+        Crea la curva de loop del parpado a partir del edge seleccionado, con
+        el nombre de convencion para que el modulo la encuentre sola.
         """
         side, rig_name = self._get_eye_naming()
 
-        return eyes_module.EyesModule.save_loop_set(side, rig_name, upper=upper)
+        return eyes_module.EyesModule.build_loop_curve_from_selection(
+            side, rig_name, upper=upper,
+            inner_reference=self._get_inner_reference()
+        )
 
-    def _report_loop_sets(self):
+    def _report_loop_curves(self):
         """
-        Imprime que sets hay y cuantos joints saldrian, sin construir nada.
+        Imprime que curvas de loop hay y cuantos joints saldrian, sin construir
+        nada.
         """
         side, rig_name = self._get_eye_naming()
 
-        return eyes_module.EyesModule.report_loop_sets(side, rig_name)
+        return eyes_module.EyesModule.report_loop_curves(side, rig_name)
+
+    def _diagnose_loop_curve(self, upper=True):
+        """
+        Imprime, CV a CV, donde cae sobre la linea del parpado y a que
+        distancia. Necesita el rig ya construido: la linea no existe antes.
+        """
+        side, rig_name = self._get_eye_naming()
+
+        return eyes_module.EyesModule.diagnose_loop_curve(side, rig_name, upper=upper)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,22 @@ class JawModule(object):
         self.jaw_lower_local_trn = None
         self.corner_joints = {}
         self.lip_bind_joints = {}
+
+        # --- ORIENTACION DE LOS JOINTS DE BIND DE LOS LABIOS ---
+        # Con follow activo el motionPath saca rotacion tangente a la curva.
+        # El flip clasico del motionPath NO viene del follow, viene del up
+        # vector por defecto (worldUpType 0 = scene up): en cuanto la tangente
+        # se acerca al up, la orientacion pega un salto. Con worldUpType 2
+        # (object rotation up) el up sale de la matriz del jaw_root, que gira
+        # con la cabeza, y deja de haber zona de salto.
+        #
+        # frontAxis / upAxis: 0=X, 1=Y, 2=Z. Ajusta segun como esten orientados
+        # tus joints respecto de la curva (ver nota de mirror en el README).
+        self.lip_follow = True
+        self.lip_front_axis = 0
+        self.lip_up_axis = 1
+        self.lip_inverse_front = False
+        self.lip_inverse_up = False
         
         
     def _offset_control_shape(self, ctrl, move=(0, 0, 0), rotate=(0, 0, 0), scale=1.0):
@@ -606,8 +622,9 @@ class JawModule(object):
         Mismo patron que el del modulo de la boca con dos diferencias:
           - fractionMode a 1, asi u_value va de 0 a 1 y no depende del numero
             de spans de la curva (aqui reparto puntos, no coloco uno suelto).
-          - no conecto '.rotate': con follow apagado el motionPath saca siempre
-            0, y conectarlo solo serviria para bloquear el canal del locator.
+          - si self.lip_follow esta activo, conecto tambien '.rotate' con el
+            up vector anclado al jaw_root, asi el tracker gira siguiendo la
+            tangente de la curva y el joint de bind hereda esa rotacion.
         """
         prefix = f"{side}_{self.rig_name}" if side else f"C_{self.rig_name}"
         locator_name = f"{prefix}_{base_name}_tracker_LOC"
@@ -629,7 +646,43 @@ class JawModule(object):
         locator_tracker = cmds.spaceLocator(name=locator_name)[0]
         cmds.connectAttr(f"{motionpath_node}.allCoordinates", f"{locator_tracker}.translate")
 
+        if self.lip_follow:
+            self._setup_motion_path_follow(motionpath_node, locator_tracker)
+
         return motionpath_node, locator_tracker
+
+    def _setup_motion_path_follow(self, motionpath_node, locator_tracker):
+        """
+        Enciende el follow del motionPath y conecta su rotacion al tracker.
+
+        worldUpType 2 = 'Object Rotation Up': el up vector se transforma por la
+        rotacion de worldUpMatrix (aqui, el jaw_root). Como el jaw_root gira con
+        la cabeza, la referencia de up viaja con el personaje y no hay ningun
+        angulo en el que la tangente se alinee con ella de golpe. Eso es lo que
+        evita el flip, no apagar el follow.
+        """
+        if not cmds.objExists(self.jaw_root):
+            cmds.warning(f"[Jaw] No existe '{self.jaw_root}'. Dejo el follow apagado "
+                         "para no montar una orientacion inestable.")
+            return
+
+        cmds.setAttr(f"{motionpath_node}.follow", 1)
+        cmds.setAttr(f"{motionpath_node}.frontAxis", self.lip_front_axis)
+        cmds.setAttr(f"{motionpath_node}.upAxis", self.lip_up_axis)
+        cmds.setAttr(f"{motionpath_node}.inverseFront", self.lip_inverse_front)
+        cmds.setAttr(f"{motionpath_node}.inverseUp", self.lip_inverse_up)
+
+        cmds.setAttr(f"{motionpath_node}.worldUpType", 2)
+        cmds.setAttr(f"{motionpath_node}.worldUpVector", 0, 1, 0, type="double3")
+
+        up_plug = f"{self.jaw_root}.worldMatrix[0]"
+        if not cmds.isConnected(up_plug, f"{motionpath_node}.worldUpMatrix"):
+            cmds.connectAttr(up_plug, f"{motionpath_node}.worldUpMatrix", force=True)
+
+        # El motionPath saca la rotacion en su propio rotateOrder; conectarlo
+        # tambien evita sorpresas si alguien toca el del locator.
+        cmds.connectAttr(f"{motionpath_node}.rotate", f"{locator_tracker}.rotate", force=True)
+        cmds.connectAttr(f"{motionpath_node}.rotateOrder", f"{locator_tracker}.rotateOrder", force=True)
 
     def _build_final_lip_joints(self, pinch_lines, joint_count=7):
         """
@@ -690,10 +743,11 @@ class JawModule(object):
                 else:
                     joint = joint_name
 
-                # mo=True: el tracker solo tiene traslacion, asi que el joint
-                # conserva su orientacion de build y se limita a seguir el
-                # punto de la curva. Nada de rotacion del motionPath = nada
-                # de flips en las comisuras.
+                # mo=True sigue siendo lo correcto, pero ahora por otro motivo:
+                # el offset se calcula en pose de build, con el tracker ya
+                # rotado, asi que el joint conserva EXACTAMENTE la orientacion
+                # que tenia antes en reposo y lo que hereda del tracker es solo
+                # el DELTA de rotacion. Los pesos de skin viejos no se rompen.
                 if not cmds.listRelatives(joint, type="parentConstraint"):
                     cmds.parentConstraint(tracker, joint, mo=True)
 

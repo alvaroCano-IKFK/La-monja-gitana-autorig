@@ -9,6 +9,17 @@ import rigRoot_module
 
 class EyesModule(object):
 
+    # Rebuild de la linea del parpado: grado 3 con 4 spans = 7 CVs, que es el
+    # numero al que corresponde CV_WEIGHTS. Si cambias esto, CV_WEIGHTS deja de
+    # cuadrar.
+    LINE_CURVE_SPANS = 4
+    LINE_CURVE_DEGREE = 3
+
+    # Parametros (en fraccion del rango de la linea) donde se muestrean las 5
+    # posiciones de guia del parpado, de comisura interna a externa:
+    # [esquina_interna, secundario_interno, centro, secundario_externo, esquina_externa]
+    EYELID_GUIDE_FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)
+
     # Pesos de cada CV de las curvas de los parpados.
     # Cada lista sigue el orden de influencias interna -> externa:
     # [esquina_interna, secundario_interno, centro, secundario_externo, esquina_externa]
@@ -148,8 +159,10 @@ class EyesModule(object):
                  side="L",
                  eye_mid_end="eye_mid_end",
                  eye_direct="eye_direct",
-                 upper_loop_count=13,
-                 lower_loop_count=13,
+                 upper_loop_curve=None,
+                 lower_loop_curve=None,
+                 upper_loop_count=None,
+                 lower_loop_count=None,
                  upper_loop_set=None,
                  lower_loop_set=None):
         
@@ -268,21 +281,29 @@ class EyesModule(object):
         self.eye_sub_local_joints = {}
 
         # Joints de loop: uno por cada loop del parpado en la malla.
-        # Hay dos formas de decidir cuantos y donde:
-        #   - Sin malla: se reparten *_loop_count parametros a lo largo de la curva.
-        #   - Con malla: un objectSet con los vertices del borde del parpado, y
-        #     cada vertice da su parametro exacto sobre la curva.
-        # Si hay set, el set manda y el contador se ignora.
         #
-        # *_loop_set a None NO significa "no uses set": significa "buscalo por
-        # convencion de nombre" (loop_set_name). Asi el mismo build funciona con
-        # modelo y sin el, sin tocar una linea: si el set esta en la escena se
-        # usa, y si no esta se cae al contador. Solo hay que pasar un nombre a
-        # mano si el set se llama de otra forma.
-        self.upper_loop_count = upper_loop_count
-        self.lower_loop_count = lower_loop_count
-        self.upper_loop_set = upper_loop_set
-        self.lower_loop_set = lower_loop_set
+        # El origen es la CURVA de loop: grado 1, un CV por vertice del edge
+        # del parpado, creada una sola vez desde la seleccion con
+        # build_loop_curve_from_selection. De ella salen tanto la linea del
+        # parpado (rebuild a 7 CVs) como los joints de loop.
+        #
+        # *_loop_curve a None NO significa "no uses curva": significa "buscala
+        # por convencion de nombre" (loop_curve_name). Solo hay que pasar un
+        # nombre a mano si la curva se llama de otra forma.
+        self.upper_loop_curve = upper_loop_curve
+        self.lower_loop_curve = lower_loop_curve
+
+        # --- Compatibilidad con la UI antigua ---
+        # Los contadores y los sets de vertices ya no se usan. Se siguen
+        # aceptando para que una llamada vieja no reviente, pero avisan: si
+        # alguien los pasa esperando que hagan algo, tiene que enterarse.
+        if upper_loop_count is not None or lower_loop_count is not None:
+            cmds.warning("[EyesModule] upper_loop_count / lower_loop_count ya no "
+                         "se usan: el numero de joints lo decide la curva de loop.")
+        if upper_loop_set is not None or lower_loop_set is not None:
+            cmds.warning("[EyesModule] upper_loop_set / lower_loop_set ya no se "
+                         "usan: han sido sustituidos por upper_loop_curve / "
+                         "lower_loop_curve.")
 
         # Los joints de loop son solo marcadores de posicion: no llevan ninguna
         # conexion. De ellos sale, en el paso siguiente, la cadena de aim que si
@@ -721,10 +742,58 @@ class EyesModule(object):
 
         return self.eye_mid_aim_constraint
 
+    def _get_eyelid_guide_positions(self):
+        """
+        Posiciones de las 8 guias de parpado, muestreadas sobre las lineas.
+
+        Antes cada una era un joint de guia colocado a mano en la escena. Ahora
+        se sacan de la linea del parpado, que viene de la curva de loop, que
+        viene del edge de la malla. Los NOMBRES de guia se conservan tal cual
+        como identificadores, asi que todo lo que hay detras (controles,
+        fleshy, blink, in-between, mirror) no se entera del cambio.
+
+        Las dos comisuras las pone la linea superior: son el mismo punto en las
+        dos y si las pusiera tambien la inferior se pisarian entre ellas.
+        """
+        positions = {}
+
+        for upper in (True, False):
+            curve = self.upper_curve if upper else self.lower_curve
+            if not curve or not cmds.objExists(curve):
+                continue
+
+            parameter_range = self._get_curve_parameter_range(curve)
+            if not parameter_range:
+                continue
+
+            minimum, maximum = parameter_range
+            span = maximum - minimum
+
+            ordered_guides = self._get_ordered_eyelid_guides(upper=upper)
+
+            for guide, fraction in zip(ordered_guides, self.EYELID_GUIDE_FRACTIONS):
+                if guide in positions:
+                    continue
+                parameter = minimum + span * fraction
+                positions[guide] = cmds.pointOnCurve(curve, pr=parameter, position=True)
+
+        return positions
+
     def _build_eye_joints(self):
         """
-        Crea un joint nuevo por cada joint de guia del ojo, en la misma posicion y orientacion.
-        Los agrupa todos bajo un unico grupo del modulo.
+        Crea los joints del ojo.
+
+        eye_mid sigue saliendo de su guia: es el globo ocular y no tiene nada
+        que ver con el borde del parpado.
+
+        Las 8 guias de parpado ya no necesitan joint de guia en la escena: su
+        posicion se muestrea sobre la linea, que sale de la curva de loop. Por
+        eso este metodo tiene que correr DESPUES de _build_eyelid_curves.
+
+        La orientacion de los 8 la da el guia de eye_mid, no cada guia por su
+        cuenta: sin guias no hay de donde sacar 8 orientaciones distintas, y
+        compartir la del ojo es ademas lo que hace que los controles del
+        parpado tengan todos los mismos ejes.
         """
         guides = [
             self.eye_mid,
@@ -746,25 +815,43 @@ class EyesModule(object):
         self.eye_joints = {}
         created_joints = []
 
+        guide_positions = self._get_eyelid_guide_positions()
+        orientation_source = self._resolve_guide(self.eye_mid)
+
         for guide in guides:
-            # Acepta la guia con lado ("L_eye_mid") o sin el ("eye_mid")
-            guide_node = None
-            if cmds.objExists(guide):
-                guide_node = guide
-            elif cmds.objExists(f"{self.side}_{guide}"):
-                guide_node = f"{self.side}_{guide}"
-
-            if guide_node is None:
-                cmds.warning(f"[EyesModule] No se encontro la guia {guide}, se omite su joint.")
-                continue
-
             joint_name = f"{self.prefix}_{guide}_JNT"
             if cmds.objExists(joint_name):
                 cmds.delete(joint_name)
 
+            # El eye_mid es el unico que sigue necesitando su guia en la escena
+            if guide == self.eye_mid:
+                guide_node = self._resolve_guide(guide)
+                if guide_node is None:
+                    cmds.warning(f"[EyesModule] No se encontro la guia {guide}, "
+                                 f"se omite su joint.")
+                    continue
+
+                cmds.select(clear=True)
+                new_joint = cmds.joint(name=joint_name)
+                cmds.matchTransform(new_joint, guide_node, position=True, rotation=True)
+
+                self.eye_joints[guide] = new_joint
+                created_joints.append(new_joint)
+                continue
+
+            position = guide_positions.get(guide)
+            if position is None:
+                cmds.warning(f"[EyesModule] No hay posicion sobre la linea para "
+                             f"{guide}, se omite su joint.")
+                continue
+
             cmds.select(clear=True)
             new_joint = cmds.joint(name=joint_name)
-            cmds.matchTransform(new_joint, guide_node, position=True, rotation=True)
+            cmds.xform(new_joint, worldSpace=True, translation=position)
+
+            if orientation_source:
+                cmds.matchTransform(new_joint, orientation_source,
+                                    position=False, rotation=True)
 
             self.eye_joints[guide] = new_joint
             created_joints.append(new_joint)
@@ -809,55 +896,62 @@ class EyesModule(object):
         """
         return [f"{self.prefix}_{guide}_JNT" for guide in self._get_ordered_eyelid_guides(upper=upper)]
 
+    def _build_eyelid_line_curve(self, upper=True):
+        """
+        Construye la linea de un parpado a partir de su curva de loop.
+
+        La linea es un duplicado de la curva cruda rebuildeado a grado 3 con 4
+        spans, o sea 7 CVs. Ese numero no es negociable: CV_WEIGHTS reparte los
+        pesos por indice de CV y esta escrito para 7.
+
+        El rebuild es tambien el que convierte "una poligonal con un CV por
+        vertice" en "una curva suave que se puede deformar con 5 joints", que es
+        exactamente lo que el profe pedia: primero la curva desde la malla, y
+        encima de ella todo lo demas.
+        """
+        loop_curve = self._resolve_loop_curve(upper=upper)
+        if not loop_curve:
+            label = "superior" if upper else "inferior"
+            cmds.warning(f"[EyesModule] No hay curva de loop para el parpado "
+                         f"{label}. Selecciona el edge en la malla y lanza "
+                         f"build_loop_curve_from_selection antes de construir.")
+            return None
+
+        curve_name = self.line_curve_name(self.side, self.rig_name, upper=upper)
+        if cmds.objExists(curve_name):
+            cmds.delete(curve_name)
+
+        curve_transform = cmds.duplicate(loop_curve, name=curve_name)[0]
+
+        # Por si la curva de loop estaba dentro de algun grupo: la linea vive en
+        # el mundo hasta que _organize_outliner la coloque.
+        if cmds.listRelatives(curve_transform, parent=True):
+            curve_transform = cmds.parent(curve_transform, world=True)[0]
+
+        cmds.rebuildCurve(
+            curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
+            s=self.LINE_CURVE_SPANS, d=self.LINE_CURVE_DEGREE, tol=0.01
+        )
+        cmds.setAttr(f"{curve_transform}.lineWidth", 3)
+
+        cv_count = self._curve_cv_count(curve_transform)
+        if cv_count != len(self.CV_WEIGHTS):
+            cmds.warning(f"[EyesModule] {curve_name} ha salido con {cv_count} CVs y "
+                         f"CV_WEIGHTS tiene {len(self.CV_WEIGHTS)} entradas. El "
+                         f"skinning de la curva va a quedar incompleto.")
+
+        return curve_transform
+
     def _build_eyelid_curves(self):
         """
-        Crea las curvas de curvatura de los parpados (superior e inferior):
-        1. Curva de grado 1 con 7 CVs: los 5 joints de la linea mas 2 CVs intermedios,
-           uno entre cada esquina y el secundario contiguo (donde no hay joint).
-        2. rebuildCurve a grado 3, 4 spans (4+3 = 7 CVs -> mismo conteo, misma correspondencia).
+        Construye las dos lineas de parpado desde sus curvas de loop.
 
-        Solo se construye cuando existen los 5 joints de esa linea. Si falta alguno, no hace nada.
+        Esto ya no depende de los joints de guia: es al reves, son los joints
+        los que salen de estas lineas. Por eso en build() va antes que
+        _build_eye_joints.
         """
-        for upper in (True, False):
-            line_name = "eyelidUpperLine" if upper else "eyelidLowerLine"
-            curve_name = f"{self.prefix}_{line_name}_CRV"
-
-            if cmds.objExists(curve_name):
-                cmds.delete(curve_name)
-
-            ordered_joints = self._get_ordered_eyelid_joints(upper=upper)
-            if not all(cmds.objExists(jnt) for jnt in ordered_joints):
-                cmds.warning(f"[EyesModule] Faltan joints para construir {curve_name}.")
-                continue
-
-            joint_positions = [cmds.xform(jnt, q=True, ws=True, t=True) for jnt in ordered_joints]
-
-            # Punto medio entre esquina interna (0) y secundario interno (1)
-            inner_extra = [(a + b) * 0.5 for a, b in zip(joint_positions[0], joint_positions[1])]
-            # Punto medio entre secundario externo (3) y esquina externa (4)
-            outer_extra = [(a + b) * 0.5 for a, b in zip(joint_positions[3], joint_positions[4])]
-
-            positions = [
-                joint_positions[0],   # esquina interna
-                inner_extra,          # CV extra sin joint
-                joint_positions[1],   # secundario interno
-                joint_positions[2],   # centro del parpado
-                joint_positions[3],   # secundario externo
-                outer_extra,          # CV extra sin joint
-                joint_positions[4],   # esquina externa
-            ]
-
-            curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
-            cmds.rebuildCurve(
-                curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
-                s=4, d=3, tol=0.01
-            )
-            cmds.setAttr(f"{curve_transform}.lineWidth", 3)
-
-            if upper:
-                self.upper_curve = curve_transform
-            else:
-                self.lower_curve = curve_transform
+        self.upper_curve = self._build_eyelid_line_curve(upper=True)
+        self.lower_curve = self._build_eyelid_line_curve(upper=False)
 
         cmds.select(clear=True)
 
@@ -1717,117 +1811,188 @@ class EyesModule(object):
         return self.blink_curves_group
 
     # ------------------------------------------------------------------
-    # SETS DE LOOP (convencion de nombre + helpers para la UI)
+    # CURVAS DE LOOP (lo que antes eran los SETS de vertices)
+    #
+    # Antes el borde del parpado se guardaba como un objectSet con los
+    # vertices de la malla. Eso ataba el rig a los indices de vertice del
+    # modelo: si el modelador reordenaba, hacia un delete history o cambiaba
+    # la topologia, el set apuntaba a otro sitio sin avisar.
+    #
+    # Ahora el artefacto que se guarda es una CURVA de grado 1 con un CV por
+    # vertice del edge loop, construida una sola vez desde la seleccion. La
+    # curva es un nodo normal de la escena: se guarda con el archivo, se ve en
+    # el viewport, se puede mover y no depende de ningun indice de vertice.
+    #
+    # De esa curva salen las dos cosas:
+    #   - la LINEA del parpado (rebuild a grado 3 / 4 spans = 7 CVs), que es la
+    #     que skinean los joints locales y la que usa el blink,
+    #   - y los JOINTS de loop, uno por CV de la curva cruda.
     # ------------------------------------------------------------------
     @staticmethod
-    def loop_set_name(side, rig_name, upper=True):
+    def loop_curve_name(side, rig_name, upper=True):
         """
-        Nombre del objectSet con los vertices del borde del parpado.
+        Nombre de la curva cruda del borde del parpado (un CV por vertice).
 
         La convencion vive aqui y en ningun sitio mas: la UI la usa para crear
-        el set y el modulo para buscarlo. Si se escribiera en los dos lados,
-        cualquier cambio dejaria de encontrarlo en silencio.
+        la curva y el modulo para buscarla.
         """
         line = "eyelidUpperLoop" if upper else "eyelidLowerLoop"
 
-        return f"{side}_{rig_name}_{line}_SET"
+        return f"{side}_{rig_name}_{line}_CRV"
 
     @staticmethod
-    def save_loop_set(side, rig_name, upper=True, components=None):
+    def line_curve_name(side, rig_name, upper=True):
+        """Nombre de la linea del parpado (la curva ya rebuildeada a 7 CVs)."""
+        line = "eyelidUpperLine" if upper else "eyelidLowerLine"
+
+        return f"{side}_{rig_name}_{line}_CRV"
+
+    @staticmethod
+    def build_loop_curve_from_selection(side, rig_name, upper=True,
+                                        components=None, inner_reference=None):
         """
-        Guarda la seleccion actual como set de loop, con el nombre de convencion.
+        Construye la curva de loop a partir del edge seleccionado en la malla.
 
-        Acepta vertices, edges o caras: lo normal es seleccionar un edge loop,
-        asi que se convierte a vertices antes de guardar. Lo que no acepta es el
-        objeto entero, porque polyListComponentConversion devolveria toda la
-        malla y el set saldria con miles de vertices sin que salte ningun error.
+        Es el unico paso que necesita el modelo delante. Se hace una vez por
+        parpado y por lado, y a partir de ahi el build ya no toca la malla.
 
-        Devuelve (nombre_del_set, numero_de_vertices) o None si no hay nada
-        aprovechable en la seleccion.
+        Acepta edges, vertices o caras: se convierte todo a edges antes de
+        llamar a polyToCurve. polyToCurve con degree=1 saca exactamente un CV
+        por vertice y en orden a lo largo del loop, que es justo lo que se pide.
+        Se le borra el history acto seguido: la curva tiene que quedar estatica,
+        no viva contra la malla.
+
+        Devuelve (nombre_de_la_curva, numero_de_cvs) o None.
         """
         if components is None:
             components = cmds.ls(selection=True, flatten=True) or []
 
-        # Solo componentes: un transform o un shape no llevan "." en el nombre
+        # Solo componentes: un transform o un shape no llevan "." en el nombre.
         components = [item for item in components if "." in item]
         if not components:
-            cmds.warning("[EyesModule] Selecciona el loop de vertices o edges del parpado, "
+            cmds.warning("[EyesModule] Selecciona el edge loop del parpado, "
                          "no el objeto entero.")
             return None
 
-        converted = cmds.polyListComponentConversion(components, toVertex=True) or []
-        vertices = cmds.ls(converted, flatten=True) or []
-        if not vertices:
-            cmds.warning("[EyesModule] La seleccion no da ningun vertice.")
+        edges = cmds.ls(cmds.polyListComponentConversion(components, toEdge=True) or [],
+                        flatten=True)
+        if not edges:
+            cmds.warning("[EyesModule] La seleccion no da ningun edge.")
             return None
 
-        set_name = EyesModule.loop_set_name(side, rig_name, upper=upper)
+        expected = cmds.ls(cmds.polyListComponentConversion(edges, toVertex=True) or [],
+                           flatten=True)
 
-        if cmds.objExists(set_name):
-            cmds.delete(set_name)
+        curve_name = EyesModule.loop_curve_name(side, rig_name, upper=upper)
+        if cmds.objExists(curve_name):
+            cmds.delete(curve_name)
 
-        cmds.sets(vertices, n=set_name)
+        cmds.select(edges, replace=True)
+        created = cmds.polyToCurve(form=0, degree=1, conformToSmoothMeshPreview=0)
+        curve = created[0]
+
+        # Sin esto la curva se queda enganchada a la malla por el nodo
+        # polyToCurve y deja de ser una guia: pasa a ser un deformador mas.
+        cmds.delete(curve, constructionHistory=True)
+        curve = cmds.rename(curve, curve_name)
+
+        cv_count = EyesModule._curve_cv_count(curve)
+
+        if expected and cv_count != len(expected):
+            cmds.warning(f"[EyesModule] {curve_name}: {cv_count} CVs para "
+                         f"{len(expected)} vertices seleccionados. Lo normal es "
+                         f"que la seleccion no sea un loop continuo (hay un "
+                         f"salto, o has cogido edges de dos lineas distintas).")
+
+        EyesModule._orient_loop_curve(curve, side=side, inner_reference=inner_reference)
+
+        cmds.setAttr(f"{curve}.lineWidth", 3)
+        cmds.select(clear=True)
 
         side_label = "superior" if upper else "inferior"
-        print(f"[EyesModule] {set_name}: {len(vertices)} vertices guardados "
-              f"para el parpado {side_label}.")
+        print(f"[EyesModule] {curve_name}: {cv_count} CVs para el parpado {side_label}.")
 
-        return set_name, len(vertices)
+        return curve, cv_count
 
     @staticmethod
-    def report_loop_sets(side, rig_name):
-        """
-        Dice, sin construir nada, que sets hay y cuantos joints saldrian.
+    def _curve_cv_count(curve):
+        """Numero de CVs de una curva, leido de su shape."""
+        shape = cmds.listRelatives(curve, shapes=True, noIntermediate=True)
+        if not shape:
+            return 0
 
-        Si la linea del parpado ya existe en la escena se calculan tambien los
-        parametros de verdad, que es lo unico que te confirma que el descarte de
-        comisuras y el filtro de duplicados hacen lo que esperas. Sirve para no
-        lanzar builds a ciegas cuando la distribucion no cuadra.
+        shape = shape[0]
+
+        if cmds.getAttr(f"{shape}.form") == 2:   # periodica
+            return cmds.getAttr(f"{shape}.spans")
+
+        return cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+
+    @staticmethod
+    def _orient_loop_curve(curve, side="L", inner_reference=None):
+        """
+        Deja la curva siempre en el mismo sentido: CV[0] en la comisura INTERNA.
+
+        polyToCurve empieza por donde le apetece segun el orden de los edges de
+        la seleccion, asi que sin esto la mitad de las veces la curva sale del
+        reves. Y el sentido importa en todo lo que viene despues: los pesos de
+        CV_WEIGHTS van de interna a externa, y las guias se muestrean en ese
+        mismo orden.
+
+        Criterio por defecto: la comisura interna es el extremo mas cercano a la
+        linea media de la cara (X mundial 0). Si el personaje no esta centrado
+        en el origen, pasa 'inner_reference' (un nodo cualquiera del centro de
+        la cara, tipico el guia de la nariz) y se mide contra el.
+        """
+        cv_count = EyesModule._curve_cv_count(curve)
+        if cv_count < 2:
+            return curve
+
+        first = cmds.pointPosition(f"{curve}.cv[0]", world=True)
+        last = cmds.pointPosition(f"{curve}.cv[{cv_count - 1}]", world=True)
+
+        if inner_reference and cmds.objExists(inner_reference):
+            reference = cmds.xform(inner_reference, q=True, ws=True, t=True)
+            first_score = sum((a - b) ** 2 for a, b in zip(first, reference))
+            last_score = sum((a - b) ** 2 for a, b in zip(last, reference))
+        else:
+            first_score = abs(first[0])
+            last_score = abs(last[0])
+
+        if last_score < first_score:
+            cmds.reverseCurve(curve, ch=0, rpo=1)
+
+        return curve
+
+    @staticmethod
+    def report_loop_curves(side, rig_name):
+        """
+        Dice, sin construir nada, que curvas de loop hay y cuantos joints
+        saldrian de cada una. Sustituye al antiguo report_loop_sets.
         """
         lines = []
 
         for upper in (True, False):
             label = "Superior" if upper else "Inferior"
-            set_name = EyesModule.loop_set_name(side, rig_name, upper=upper)
+            curve_name = EyesModule.loop_curve_name(side, rig_name, upper=upper)
 
-            if not cmds.objExists(set_name):
-                lines.append(f"{label}: no hay set ({set_name}). Se usara el contador.")
+            matches = cmds.ls(curve_name) or []
+            if not matches:
+                lines.append(f"{label}: no hay curva de loop ({curve_name}). "
+                             f"Selecciona el edge del parpado y creala.")
                 continue
 
-            members = cmds.sets(set_name, q=True) or []
-            converted = cmds.polyListComponentConversion(members, toVertex=True) or []
-            vertices = cmds.ls(converted, flatten=True) or []
-
-            detail = ""
-            line_curve = f"{side}_{rig_name}_" + (
-                "eyelidUpperLine_CRV" if upper else "eyelidLowerLine_CRV")
-
-            matches = cmds.ls(line_curve) or []
             if len(matches) > 1:
                 lines.append(f"{label}: OJO, hay {len(matches)} nodos llamados "
-                             f"{line_curve}. Limpia la escena antes de fiarte del resto.")
+                             f"{curve_name}. Limpia la escena antes de fiarte del resto.")
 
-            if matches:
-                module = EyesModule(side=side, rig_name=rig_name)
-                if upper:
-                    module.upper_curve = line_curve
-                else:
-                    module.lower_curve = line_curve
+            cv_count = EyesModule._curve_cv_count(curve_name)
 
-                parameters = module._get_loop_parameters(upper=upper)
+            # El parpado superior se queda las dos comisuras; el inferior no,
+            # porque son vertices compartidos y saldrian dos joints peleandose.
+            joints = cv_count if upper else max(cv_count - 2, 0)
 
-                # La distancia media es lo que separa "el set es correcto" de
-                # "el set es de otra curva": los parametros solos no lo dicen.
-                samples = module._sample_loop_set(line_curve, set_name)
-                if samples:
-                    average = sum(s["distance"] for s in samples) / len(samples)
-                    size = module._get_curve_size(line_curve)
-                    detail = (f" -> {len(parameters)} joints"
-                              f" (dist. media {average:.3f} sobre una curva de {size:.3f})")
-                else:
-                    detail = f" -> {len(parameters)} joints"
-
-            lines.append(f"{label}: {len(vertices)} vertices en {set_name}{detail}")
+            lines.append(f"{label}: {cv_count} CVs en {curve_name} -> {joints} joints de loop")
 
         print("\n".join(lines))
 
@@ -1836,22 +2001,23 @@ class EyesModule(object):
     # ------------------------------------------------------------------
     # JOINTS DE LOOP
     # ------------------------------------------------------------------
-    def _resolve_loop_set(self, upper=True):
+    def _resolve_loop_curve(self, upper=True):
         """
-        Set que hay que usar para ese parpado.
+        Curva de loop que hay que usar para ese parpado.
 
-        Si se le paso uno explicito manda ese; si no, se busca el de convencion.
-        Devuelve None si no existe ninguno, que es la senal de caer al contador.
+        Si se le paso una explicita manda esa; si no, la de convencion.
+        Devuelve None si no existe ninguna: sin curva no hay parpado que valga,
+        asi que el build avisa y se para en vez de inventarse posiciones.
         """
-        explicit = self.upper_loop_set if upper else self.lower_loop_set
+        explicit = self.upper_loop_curve if upper else self.lower_loop_curve
 
         if explicit:
             if cmds.objExists(explicit):
                 return explicit
-            cmds.warning(f"[EyesModule] No existe el set {explicit}, se usa el contador.")
+            cmds.warning(f"[EyesModule] No existe la curva {explicit}.")
             return None
 
-        by_convention = self.loop_set_name(self.side, self.rig_name, upper=upper)
+        by_convention = self.loop_curve_name(self.side, self.rig_name, upper=upper)
 
         return by_convention if cmds.objExists(by_convention) else None
 
@@ -1869,162 +2035,50 @@ class EyesModule(object):
 
         return cmds.getAttr(f"{shape}.minValue"), cmds.getAttr(f"{shape}.maxValue")
 
-    def _get_loop_parameters_from_count(self, curve, count, include_corners):
+    def _get_curve_cv_positions(self, curve):
+        """Posiciones mundiales de todos los CVs de una curva, en orden."""
+        cv_count = self._curve_cv_count(curve)
+
+        return [cmds.pointPosition(f"{curve}.cv[{index}]", world=True)
+                for index in range(cv_count)]
+
+    def _filter_loop_cvs(self, curve, positions, include_corners):
         """
-        Reparte 'count' parametros a lo largo de la curva, sin necesidad de malla.
+        Quita CVs repetidos y, si toca, las dos comisuras.
 
-        En el parpado superior se incluyen las dos esquinas; en el inferior no,
-        porque las esquinas son vertices compartidos por los dos parpados y si
-        las pone tambien el de abajo acabas con dos joints peleandose en el mismo
-        sitio.
+        Los CVs ya vienen ordenados a lo largo del loop (polyToCurve los saca
+        asi), o sea que aqui no hay que ordenar nada: eso era necesario cuando
+        los miembros de un set llegaban en orden arbitrario.
 
-        Ojo: repartir uniforme en parametro no es repartir uniforme en espacio.
-        Los joints salen algo mas juntos donde la curva tiene mas curvatura. Para
-        una primera pasada da igual, y con el camino del set esto ni se aplica.
+        Repetidos: si el edge loop se cierra sobre si mismo o la seleccion tenia
+        un vertice de mas, pueden salir dos CVs en el mismo sitio. Se quedan en
+        uno solo.
         """
-        parameter_range = self._get_curve_parameter_range(curve)
-        if not parameter_range or count < 1:
+        if not positions:
             return []
 
-        minimum, maximum = parameter_range
-        span = maximum - minimum
+        size = self._get_curve_size(curve) or 1.0
+        tolerance = size * 1e-4
 
-        if include_corners:
-            if count == 1:
-                return [minimum + span * 0.5]
-            return [minimum + span * (index / float(count - 1)) for index in range(count)]
-
-        # Estrictamente por dentro: ni la primera ni la ultima caen en la esquina
-        return [minimum + span * ((index + 1) / float(count + 1)) for index in range(count)]
-
-    def _sample_loop_set(self, curve, loop_set):
-        """
-        Proyecta cada vertice del set sobre la curva y devuelve, por vertice,
-        su parametro y a que distancia estaba.
-
-        La distancia es la que permite detectar el fallo mas comun y mas
-        silencioso: que el set no corresponda a esa curva (loop del lado
-        contrario, curva duplicada de una build anterior, malla movida). Cuando
-        pasa eso nearestPointOnCurve no falla, sino que clava todos los vertices
-        contra el extremo mas cercano de la curva, y los 13 parametros salen
-        practicamente identicos.
-
-        Devuelve [] si no hay nada que muestrear.
-        """
-        if not loop_set or not cmds.objExists(loop_set):
-            return []
-
-        members = cmds.sets(loop_set, q=True) or []
-        if not members:
-            cmds.warning(f"[EyesModule] El set {loop_set} esta vacio.")
-            return []
-
-        converted = cmds.polyListComponentConversion(members, toVertex=True) or []
-        vertices = cmds.ls(converted, flatten=True) or []
-        if not vertices:
-            cmds.warning(f"[EyesModule] No se sacan vertices de {loop_set}.")
-            return []
-
-        curve_shape = self._get_deformed_shape(curve)
-        if not curve_shape:
-            return []
-
-        node = cmds.createNode("nearestPointOnCurve")
-        cmds.connectAttr(f"{curve_shape}.worldSpace[0]", f"{node}.inputCurve")
-
-        samples = []
-        for vertex in vertices:
-            position = cmds.pointPosition(vertex, world=True)
-            cmds.setAttr(f"{node}.inPosition", *position)
-
-            closest = cmds.getAttr(f"{node}.position")[0]
-            distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(position, closest)))
-
-            samples.append({
-                "vertex": vertex,
-                "parameter": cmds.getAttr(f"{node}.parameter"),
-                "distance": distance,
-            })
-
-        cmds.delete(node)
-
-        return samples
-
-    def _filter_loop_samples(self, curve, loop_set, samples, include_corners):
-        """
-        Ordena las muestras a lo largo de la curva, quita las que caen en el
-        mismo sitio y, si toca, descarta las comisuras.
-
-        Lo usan tanto el camino de parametros como el de posiciones, para que
-        los dos apliquen exactamente los mismos criterios.
-        """
-        if not samples:
-            return []
-
-        parameter_range = self._get_curve_parameter_range(curve)
-        if not parameter_range:
-            return []
-
-        minimum, maximum = parameter_range
-        span = maximum - minimum
-
-        # El orden de los miembros de un set es arbitrario y aqui hace falta ir
-        # de comisura a comisura.
-        ordered = sorted(samples, key=lambda sample: sample["parameter"])
-
-        # Dos vertices distintos pueden caer practicamente en el mismo sitio de
-        # la curva: se queda solo uno.
         unique = []
-        for sample in ordered:
-            if unique and abs(sample["parameter"] - unique[-1]["parameter"]) < span * 1e-4:
-                continue
-            unique.append(sample)
-
-        # Si el colapso es masivo, el set no encaja con esta curva. Sin este
-        # aviso el modulo construiria un joint suelto y tan tranquilo.
-        if len(unique) < len(ordered) * 0.5:
-            worst = max(sample["distance"] for sample in ordered)
-            size = self._get_curve_size(curve)
-            cmds.warning(
-                f"[EyesModule] {loop_set}: {len(ordered)} vertices se han quedado en "
-                f"{len(unique)} parametros sobre {curve}. El vertice mas lejano esta a "
-                f"{worst:.3f} (la curva mide {size:.3f}). Revisa que el set sea el loop "
-                f"de este parpado y de este lado."
-            )
+        for position in positions:
+            if unique:
+                distance = math.sqrt(sum((a - b) ** 2
+                                         for a, b in zip(position, unique[-1])))
+                if distance < tolerance:
+                    continue
+            unique.append(position)
 
         if not include_corners:
-            # Los vertices de las comisuras caen pegados a los extremos del rango.
-            # Son los que ya pone el parpado superior, asi que aqui se descartan.
-            tolerance = span * 0.02
-            unique = [sample for sample in unique
-                      if (sample["parameter"] - minimum) > tolerance
-                      and (maximum - sample["parameter"]) > tolerance]
+            # Las comisuras son los dos extremos del loop y ya las pone el
+            # parpado superior.
+            if len(unique) <= 2:
+                cmds.warning(f"[EyesModule] {curve} tiene {len(unique)} CVs: al "
+                             f"quitar las comisuras no queda ningun joint.")
+                return []
+            unique = unique[1:-1]
 
         return unique
-
-    def _get_loop_parameters_from_set(self, curve, loop_set, include_corners):
-        """
-        Parametros sobre la curva, uno por vertice del set. Sirve para informar
-        y diagnosticar; para colocar los joints se usan las posiciones.
-        """
-        samples = self._sample_loop_set(curve, loop_set)
-        filtered = self._filter_loop_samples(curve, loop_set, samples, include_corners)
-
-        return [sample["parameter"] for sample in filtered]
-
-    def _get_loop_positions_from_set(self, curve, loop_set, include_corners):
-        """
-        Posiciones de los vertices del set, ordenadas a lo largo de la curva.
-
-        Se devuelve la posicion del vertice, no la del punto proyectado sobre la
-        curva: el joint tiene que caer sobre la malla, que es donde de verdad
-        esta el loop. La proyeccion solo se usa para ordenarlos y para descartar
-        repetidos y comisuras.
-        """
-        samples = self._sample_loop_set(curve, loop_set)
-        filtered = self._filter_loop_samples(curve, loop_set, samples, include_corners)
-
-        return [cmds.pointPosition(sample["vertex"], world=True) for sample in filtered]
 
     def _get_curve_size(self, curve):
         """
@@ -2036,26 +2090,21 @@ class EyesModule(object):
         return math.sqrt(sum((box[i + 3] - box[i]) ** 2 for i in range(3)))
 
     @staticmethod
-    def diagnose_loop_set(side, rig_name, upper=True):
+    def diagnose_loop_curve(side, rig_name, upper=True):
         """
-        Imprime, vertice a vertice, en que parametro de la curva cae y a que
-        distancia estaba. Es lo que hay que mirar cuando el check dice que 13
-        vertices dan 1 joint.
+        Imprime, CV a CV, donde cae sobre la linea del parpado y a que distancia.
 
-        Como leerlo:
+        Es el equivalente del antiguo diagnose_loop_set. Como leerlo:
           - Distancias pequenas y parametros repartidos por todo el rango: bien.
-          - Distancias grandes y todos los parametros iguales (o pegados a 0 o al
-            maximo): el set no es de esta curva. Loop del ojo contrario, o una
-            curva duplicada de una build anterior.
-          - Vertices sueltos con distancia mucho mayor que el resto: se te ha
-            colado algun vertice que no es del loop.
+          - Distancias grandes o todos los parametros pegados a un extremo: la
+            curva de loop no corresponde a esta linea. Loop del ojo contrario, o
+            una curva duplicada de una build anterior.
         """
-        set_name = EyesModule.loop_set_name(side, rig_name, upper=upper)
-        line_curve = f"{side}_{rig_name}_" + (
-            "eyelidUpperLine_CRV" if upper else "eyelidLowerLine_CRV")
+        curve_name = EyesModule.loop_curve_name(side, rig_name, upper=upper)
+        line_curve = EyesModule.line_curve_name(side, rig_name, upper=upper)
 
-        if not cmds.objExists(set_name):
-            cmds.warning(f"[EyesModule] No existe {set_name}.")
+        if not cmds.objExists(curve_name):
+            cmds.warning(f"[EyesModule] No existe {curve_name}.")
             return []
 
         matches = cmds.ls(line_curve) or []
@@ -2064,50 +2113,71 @@ class EyesModule(object):
             return []
         if len(matches) > 1:
             cmds.warning(f"[EyesModule] Hay {len(matches)} nodos llamados {line_curve}. "
-                         f"Sobra alguno de una build anterior y se esta midiendo contra "
-                         f"el equivocado.")
+                         f"Sobra alguno de una build anterior y se esta midiendo "
+                         f"contra el equivocado.")
 
         module = EyesModule(side=side, rig_name=rig_name)
-        samples = module._sample_loop_set(line_curve, set_name)
-        if not samples:
+        positions = module._get_curve_cv_positions(curve_name)
+        if not positions:
             return []
 
+        line_shape = module._get_deformed_shape(line_curve)
+        if not line_shape:
+            return []
+
+        node = cmds.createNode("nearestPointOnCurve")
+        cmds.connectAttr(f"{line_shape}.worldSpace[0]", f"{node}.inputCurve")
+
+        samples = []
+        for index, position in enumerate(positions):
+            cmds.setAttr(f"{node}.inPosition", *position)
+            closest = cmds.getAttr(f"{node}.position")[0]
+            distance = math.sqrt(sum((a - b) ** 2 for a, b in zip(position, closest)))
+            samples.append({
+                "index": index,
+                "parameter": cmds.getAttr(f"{node}.parameter"),
+                "distance": distance,
+            })
+
+        cmds.delete(node)
+
         size = module._get_curve_size(line_curve)
-        print(f"[EyesModule] {set_name} contra {line_curve} (la curva mide {size:.3f}):")
-        for sample in sorted(samples, key=lambda s: s["parameter"]):
-            print(f"    u={sample['parameter']:7.4f}   dist={sample['distance']:8.4f}   "
-                  f"{sample['vertex']}")
+        print(f"[EyesModule] {curve_name} contra {line_curve} (la linea mide {size:.3f}):")
+        for sample in samples:
+            print(f"    cv[{sample['index']:02d}]   u={sample['parameter']:7.4f}   "
+                  f"dist={sample['distance']:8.4f}")
 
         return samples
 
     def _get_loop_parameters(self, upper=True):
         """
-        Devuelve la lista de parametros donde va a caer un joint de loop.
+        Parametros sobre la linea del parpado donde cae cada joint de loop.
 
-        El set se busca con _resolve_loop_set: el explicito si se paso uno, y si
-        no el de convencion. Si hay set manda el set y el contador se ignora; si
-        no hay (o sale vacio), se cae al reparto por contador. Asi el modulo
-        construye igual con modelo que sin el, sin tocar el build.
-
-        Los parametros se miden sobre la linea original del parpado, que es la
-        que esta en reposo y encaja con la malla. La curva Blinked que luego
-        conduce los joints es un duplicado suyo, asi que comparte
-        parametrizacion y los valores valen tal cual.
+        Solo sirve para informar y diagnosticar: para colocar los joints se usan
+        las posiciones de los CVs, que estan sobre la malla. La linea es una
+        aproximacion suave del loop y no pasa exactamente por todos ellos.
         """
         curve = self.upper_curve if upper else self.lower_curve
         if not curve or not cmds.objExists(curve):
             return []
 
-        loop_set = self._resolve_loop_set(upper=upper)
-        count = self.upper_loop_count if upper else self.lower_loop_count
+        line_shape = self._get_deformed_shape(curve)
+        if not line_shape:
+            return []
 
-        # El parpado superior se queda las dos comisuras; el inferior no.
-        include_corners = upper
+        positions = self._get_loop_positions(upper=upper)
+        if not positions:
+            return []
 
-        parameters = self._get_loop_parameters_from_set(curve, loop_set, include_corners)
+        node = cmds.createNode("nearestPointOnCurve")
+        cmds.connectAttr(f"{line_shape}.worldSpace[0]", f"{node}.inputCurve")
 
-        if not parameters:
-            parameters = self._get_loop_parameters_from_count(curve, count, include_corners)
+        parameters = []
+        for position in positions:
+            cmds.setAttr(f"{node}.inPosition", *position)
+            parameters.append(cmds.getAttr(f"{node}.parameter"))
+
+        cmds.delete(node)
 
         return parameters
 
@@ -2147,31 +2217,27 @@ class EyesModule(object):
 
     def _get_loop_positions(self, upper=True):
         """
-        Posiciones donde va a caer un joint de loop.
+        Posiciones donde va a caer un joint de loop: un CV de la curva cruda.
 
-        Con set: la posicion real de cada vertice del borde del parpado.
-        Sin set: puntos repartidos sobre la linea del parpado, que es lo unico
-        que hay cuando no hay malla.
+        Ya no hay reparto por contador ni proyeccion de vertices. La curva de
+        loop tiene un CV por vertice del borde del parpado, asi que el numero de
+        joints lo decide la topologia del modelo y no un numero escrito en el
+        modulo.
         """
-        curve = self.upper_curve if upper else self.lower_curve
-        if not curve or not cmds.objExists(curve):
+        loop_curve = self._resolve_loop_curve(upper=upper)
+        if not loop_curve:
+            label = "superior" if upper else "inferior"
+            cmds.warning(f"[EyesModule] No hay curva de loop para el parpado "
+                         f"{label}. Selecciona el edge en la malla y creala "
+                         f"antes de construir.")
             return []
 
         # El parpado superior se queda las dos comisuras; el inferior no.
         include_corners = upper
 
-        loop_set = self._resolve_loop_set(upper=upper)
-        if loop_set:
-            positions = self._get_loop_positions_from_set(curve, loop_set, include_corners)
-            if positions:
-                return positions
+        positions = self._get_curve_cv_positions(loop_curve)
 
-        count = self.upper_loop_count if upper else self.lower_loop_count
-        parameters = self._get_loop_parameters_from_count(curve, count, include_corners)
-
-        return [cmds.pointOnCurve(curve, pr=parameter, position=True)
-                for parameter in parameters]
-
+        return self._filter_loop_cvs(loop_curve, positions, include_corners)
     def _build_loop_joints(self):
         """
         Crea los joints de loop: marcadores de posicion, sin ninguna conexion.
@@ -2732,14 +2798,25 @@ class EyesModule(object):
         reparto que manda el grupo de settings, se skinean las curvas a los joints locales
         y se agrupa todo el setup del modulo.
         """
+        # =========================================================
+        # LINEAS DE LOS PARPADOS
+        # Van las PRIMERAS: ahora son la fuente de la que salen las posiciones
+        # de los joints de parpado, no al reves. Sin curva de loop en la escena
+        # no hay nada que construir, asi que se para aqui.
+        # =========================================================
+        self._build_eyelid_curves()
+        if self.upper_curve is None or self.lower_curve is None:
+            cmds.warning("[EyesModule] Faltan las curvas de loop. Selecciona el "
+                         "edge de cada parpado y creala con "
+                         "build_loop_curve_from_selection.")
+            return None
+
         self._build_eye_joints()
         if self.joints_group is None:
             return None
 
         # Cadena del ojo: eye_mid_end colgando del joint de eye_mid.
         self._build_eye_mid_end_joint()
-
-        self._build_eyelid_curves()
 
         # =========================================================
         # CONTROLES + GRUPOS + SETUP LOCAL (OFF / TRN) POR CADA JOINT

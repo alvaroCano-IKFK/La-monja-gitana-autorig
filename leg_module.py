@@ -23,7 +23,8 @@ class LegModule(object):
                  rig_name="Character",
                  side = "L",
                  hip_instance= None,
-                 root_instance= None):
+                 root_instance= None,
+                 pv_mult = 1.0):
                      
         self.thigh_guide = thigh_guide
         self.knee_guide = knee_guide
@@ -33,6 +34,7 @@ class LegModule(object):
         self.heel_guide = heel_guide
         
         self.side = side
+        self.pv_mult = pv_mult
         self.prefix = f"{self.side}_{rig_name}"         
         
         self.names = ["thigh", "knee", "ankle","ball","toe_tip","heel"]
@@ -68,12 +70,19 @@ class LegModule(object):
             world_space=world_space
     )
     
-    def define_poleVector(self, start, mid, end, distance=15):
+    def define_poleVector(self, start, mid, end, distance=None, mult = 1.0):
         """Calcula la posición del pole vector basándose en la posición de los joints."""
         # NO TOCADO: Tu método original exacto
         sh_p = cmds.xform(start, q=True, ws=True, t=True)
         el_p = cmds.xform(mid, q=True, ws=True, t=True)
         wr_p = cmds.xform(end, q=True, ws=True, t=True)
+
+        # --- distancia proporcional a la cadena ---
+        if distance is None:
+            upper = math.sqrt(sum((el_p[i] - sh_p[i]) ** 2 for i in range(3)))
+            lower = math.sqrt(sum((wr_p[i] - el_p[i]) ** 2 for i in range(3)))
+            distance = (upper + lower) * 0.5 * mult
+        # ------------------------------------------
 
         sw = [wr_p[i] - sh_p[i] for i in range(3)]
         se = [el_p[i] - sh_p[i] for i in range(3)]
@@ -251,7 +260,7 @@ class LegModule(object):
         #cmds.xform(switch_gen, r = True,t=(14,0,0) )
         
            
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], distance=15)
+        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], mult = self.pv_mult)
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
             final_name=f"{self.prefix}_poleVector_CTRL")

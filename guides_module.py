@@ -314,7 +314,7 @@ class HandGuides(object):
             cmds.parent(thumb_l_med, world=True)
             
             # 3. Forzamos la orientación base del eje X hacia donde estaba el hijo
-            cmds.joint(thumb_l_root, edit=True, oj="xyz", sao="yup", zso=True)
+            cmds.joint(thumb_l_root, edit=True, oj="xyz", sao="zup", zso=True)
             
             # 4. Metemos el TWIST en el Joint Orient X para encarar el eje de flexión hacia la palma
             # Ajusta este valor (ej. 30, 45, 60) hasta que veas que el eje Z o Y apunta hacia donde se cierra el puño

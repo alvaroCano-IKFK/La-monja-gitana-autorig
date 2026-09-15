@@ -19,7 +19,8 @@ class LimbModule(object):
                  clavicule_guide="clavicule",
                  rig_name="Character",
                  root_instance=None,
-                 side="L"):
+                 side="L",
+                 pv_mult = 1.0):
 
         self.shoulder_guide  = shoulder_guide
         self.elbow_guide     = elbow_guide
@@ -27,6 +28,7 @@ class LimbModule(object):
         self.clavicule_guide = clavicule_guide
         
         self.side   = side
+        self.pv_mult = pv_mult
         self.prefix = f"{self.side}_{rig_name}"
         
         self.names  = ["clavicule", "shoulder", "elbow", "wrist"]
@@ -54,11 +56,18 @@ class LimbModule(object):
         self.fk_chain   = []
 
 
-    def define_poleVector(self, shoulder, elbow, wrist, distance=15):
+    def define_poleVector(self, shoulder, elbow, wrist, distance=None, mult = 1.0):
         """Calcula la posición del pole vector basándose en la posición de los joints."""
         sh_p = cmds.xform(shoulder, q=True, ws=True, t=True)
         el_p = cmds.xform(elbow,    q=True, ws=True, t=True)
         wr_p = cmds.xform(wrist,    q=True, ws=True, t=True)
+
+        # --- distancia proporcional a la cadena ---
+        if distance is None:
+            upper = math.sqrt(sum((el_p[i] - sh_p[i]) ** 2 for i in range(3)))
+            lower = math.sqrt(sum((wr_p[i] - el_p[i]) ** 2 for i in range(3)))
+            distance = (upper + lower) * 0.5 * mult
+        # ------------------------------------------
 
         sw = [wr_p[i] - sh_p[i] for i in range(3)]
         se = [el_p[i] - sh_p[i] for i in range(3)]
@@ -242,7 +251,7 @@ class LimbModule(object):
         cmds.matchTransform(switch_gen,  sw_ctrl_target)
 
         # Pole Vector
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], distance=15)
+        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[2], mult=self.pv_mult)
         cmds.xform(pv_gen, ws=True, t=pv_pos )
         if self.side == "R":
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")

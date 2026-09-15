@@ -32,6 +32,7 @@ import eyes_module
 import progress_module
 import guides_io_module
 import eyebrowsModule
+import extraFingerAttributes_module
 
 
 def run():
@@ -69,6 +70,7 @@ def run():
     importlib.reload(progress_module)
     importlib.reload(guides_io_module)
     importlib.reload(eyebrowsModule)
+    importlib.reload(extraFingerAttributes_module)
     
     ui = ui_module.UI()
     ui.main_UI()

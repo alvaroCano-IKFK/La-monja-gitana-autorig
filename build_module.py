@@ -6,6 +6,7 @@ import json
 import spine_module
 import limbs_module
 import fingers_module
+import extraFingerAttributes_module
 import toes_module
 import neck_module
 import chest_module
@@ -36,7 +37,7 @@ class BuildRig(object):
     # Numero de llamadas a prog.step() que hay en _build_steps().
     # Si anades o quitas pasos, actualiza este numero o la barra se
     # quedara corta / larga.
-    TOTAL_STEPS = 25
+    TOTAL_STEPS = 27
 
     def build(self, show_progress=True):
         """
@@ -139,6 +140,24 @@ class BuildRig(object):
                 side="R",
                 root_instance=self.root_rig)
         self.mirror_fingers_rig.build()
+
+        # 4b. ATRIBUTOS EXTRA DE LA MANO (fan / spread / fist)
+        #     Tiene que ir DESPUES de los dedos: necesita los controles FK y sus
+        #     grupos _SDK, y cuelga los atributos del fingersSettings_CTRL.
+        prog.step("Atributos extra dedos")
+        self.extra_fingers_l = extraFingerAttributes_module.FingersExtraModule(
+                rig_name="Arm",
+                side="L",
+                fingers_module=self.fingers_rig
+            )
+        self.extra_fingers_l.build()
+
+        self.extra_fingers_r = extraFingerAttributes_module.FingersExtraModule(
+                rig_name="Arm",
+                side="R",
+                fingers_module=self.mirror_fingers_rig
+            )
+        self.extra_fingers_r.build()
             
         # Modifica LimbModule para que guarde self.b_sh al terminar build.
         shoulder_jnt = "L_Arm_shoulder_bind_JNT"

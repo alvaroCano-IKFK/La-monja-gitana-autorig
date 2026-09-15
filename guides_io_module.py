@@ -165,6 +165,28 @@ def _ask_for_file(save=True):
     return path
 
 
+def _walk_hierarchy(root_long):
+    """
+    Todos los transforms bajo root_long, en anchura y conservando el orden en
+    que Maya lista los hijos de cada nodo.
+
+    Anchura y no profundidad porque el import crea los nodos en este mismo
+    orden y necesita que el padre exista antes que el hijo.
+    """
+    ordered = []
+    queue = [root_long]
+
+    while queue:
+        node = queue.pop(0)
+        ordered.append(node)
+
+        children = cmds.listRelatives(node, c=True, f=True,
+                                      type="transform") or []
+        queue.extend(children)
+
+    return ordered
+
+
 # ----------------------------------------------------------------------
 # EXPORT
 # ----------------------------------------------------------------------
@@ -218,9 +240,12 @@ def _export_nurbs_surface(node, shape):
     form_u = cmds.getAttr(shape + ".formU")
     form_v = cmds.getAttr(shape + ".formV")
 
-    # En forma abierta el numero de CVs es spans + degree
-    num_u = spans_u + degree_u
-    num_v = spans_v + degree_v
+    # En forma abierta (0) el numero de CVs es spans + degree. En cerrada (1) o
+    # periodica (2) es solo spans: los CVs del final son los mismos del
+    # principio y pedirlos por indice da error. Antes esto solo estaba
+    # contemplado en las curvas, no en las superficies.
+    num_u = spans_u + degree_u if form_u == 0 else spans_u
+    num_v = spans_v + degree_v if form_v == 0 else spans_v
 
     cvs = []
     for i in range(num_u):
@@ -312,12 +337,53 @@ def _export_node(node, relative_path, relative_parent):
     return entry
 
 
-def export_guides(filepath=None, root=GUIDES_ROOT):
+def _serialize_recipe(recipe):
+    """
+    La receta de la ventana, lista para meter en el JSON.
+
+    features viaja como set y json no sabe escribir sets, asi que se pasa a
+    lista ordenada. Ordenada y no en orden de llegada para que dos exports del
+    mismo rig den ficheros identicos y se puedan comparar con un diff.
+    """
+    if not recipe:
+        return None
+
+    return [
+        {
+            "type": entry["type"],
+            "side": entry["side"],
+            "features": sorted(entry.get("features") or []),
+        }
+        for entry in recipe
+    ]
+
+
+def _deserialize_recipe(data):
+    """Receta del JSON de vuelta al formato que espera module_specs."""
+    stored = data.get("recipe")
+
+    if not stored:
+        return None
+
+    return [
+        {
+            "type": entry.get("type"),
+            "side": entry.get("side"),
+            "features": set(entry.get("features") or []),
+        }
+        for entry in stored
+    ]
+
+
+def export_guides(filepath=None, root=GUIDES_ROOT, recipe=None):
     """
     Guarda toda la jerarquia de guides_GRP en un JSON.
 
     filepath: ruta destino. Si es None se abre el file dialog.
     root: nodo raiz a exportar, por defecto guides_GRP.
+    recipe: la receta de modulos de la ventana. Opcional, pero es lo que hace
+            que el JSON sea el rig entero y no solo las posiciones: al
+            importarlo vuelven las guias Y la configuracion de modulos.
 
     Devuelve la ruta escrita, o None si algo ha fallado o se ha cancelado.
     """
@@ -341,14 +407,19 @@ def export_guides(filepath=None, root=GUIDES_ROOT):
 
         return long_name.lstrip("|")
 
-    # Se ordena por profundidad de ruta (numero de "|") para garantizar que
-    # los padres van siempre antes que los hijos: el import los crea en este
-    # mismo orden y necesita que el padre ya exista.
-    descendants = cmds.listRelatives(
-        root_long, ad=True, f=True, type="transform") or []
-    descendants.sort(key=lambda n: n.count("|"))
-
-    all_nodes = [root_long] + descendants
+    # Recorrido explicito en anchura, hijo a hijo.
+    #
+    # Antes esto era listRelatives(ad=True) ordenado por profundidad. Garantiza
+    # que los padres van antes que los hijos, que es lo que necesita el import,
+    # pero NO garantiza el orden entre hermanos: -allDescendents no promete
+    # ningun orden concreto y en la practica devuelve de abajo a arriba.
+    #
+    # El orden de hermanos importa. FingersModule.get_finger_roots() lee los
+    # hijos de la muneca en crudo, y fallback_curl_normal() usa el primero y el
+    # ultimo de esa lista (normalmente pulgar -> menique) para deducir el eje de
+    # la palma. Si el import invierte ese orden, los dedos que esten rectos en
+    # la guia se doblarian al reves.
+    all_nodes = _walk_hierarchy(root_long)
 
     nodes_data = []
     for node in all_nodes:
@@ -376,6 +447,10 @@ def export_guides(filepath=None, root=GUIDES_ROOT):
         "nodes": nodes_data,
     }
 
+    serialized_recipe = _serialize_recipe(recipe)
+    if serialized_recipe:
+        data["recipe"] = serialized_recipe
+
     directory = os.path.dirname(filepath)
     if directory and not os.path.isdir(directory):
         os.makedirs(directory)
@@ -383,7 +458,12 @@ def export_guides(filepath=None, root=GUIDES_ROOT):
     with open(filepath, "w") as f:
         json.dump(data, f, indent=4)
 
-    print("Guias exportadas ({0} nodos): {1}".format(len(nodes_data), filepath))
+    if serialized_recipe:
+        print("Guias exportadas ({0} nodos, {1} modulos): {2}".format(
+            len(nodes_data), len(serialized_recipe), filepath))
+    else:
+        print("Guias exportadas ({0} nodos, sin receta de modulos): {1}".format(
+            len(nodes_data), filepath))
 
     return filepath
 
@@ -522,25 +602,38 @@ def _apply_transform(node, entry):
             pass
 
 
-def import_guides(filepath=None, force=False, root=GUIDES_ROOT):
+def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
+                  return_data=False):
     """
     Reconstruye las guias desde un JSON exportado con export_guides.
 
     filepath: ruta del JSON. Si es None se abre el file dialog.
     force: si ya hay guides_GRP en la escena, True lo borra sin preguntar.
            Con False se pregunta por dialogo.
+    return_data: False (por defecto) devuelve solo el nombre del grupo raiz,
+           como siempre. True devuelve un diccionario con la raiz, la receta
+           de modulos y la ruta leida.
 
-    Devuelve el nombre del grupo raiz creado, o None si se cancela o falla.
+           Existe porque la ventana abre el file dialog DENTRO de esta
+           funcion, asi que despues no sabe de que fichero sacar la receta.
+           El valor por defecto se queda como estaba para no romper a quien ya
+           llamaba a import_guides() esperando un string.
+
+    Devuelve el nombre del grupo raiz creado (o el diccionario si
+    return_data=True), o None si se cancela o falla.
     """
+    def failed():
+        return {"root": None, "recipe": None, "path": filepath} if return_data else None
+
     if filepath is None:
         filepath = _ask_for_file(save=False)
         if not filepath:
-            return None
+            return failed()
 
     if not os.path.isfile(filepath):
         cmds.warning("No encuentro el archivo: {0}".format(filepath))
 
-        return None
+        return failed()
 
     with open(filepath, "r") as f:
         data = json.load(f)
@@ -570,7 +663,7 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT):
             if answer != "Borrar e importar":
                 print("Importacion cancelada.")
 
-                return None
+                return failed()
 
         cmds.delete(file_root)
 
@@ -647,6 +740,17 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT):
 
     cmds.select(clear=True)
 
-    print("Guias importadas ({0} nodos): {1}".format(len(created), filepath))
+    recipe = _deserialize_recipe(data)
+
+    if recipe:
+        print("Guias importadas ({0} nodos, {1} modulos): {2}".format(
+            len(created), len(recipe), filepath))
+    else:
+        print("Guias importadas ({0} nodos): {1}. El archivo no lleva receta "
+              "de modulos, el arbol de la ventana se queda como esta.".format(
+                  len(created), filepath))
+
+    if return_data:
+        return {"root": file_root, "recipe": recipe, "path": filepath}
 
     return file_root

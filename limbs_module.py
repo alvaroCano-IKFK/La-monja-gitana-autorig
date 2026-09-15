@@ -4,14 +4,26 @@ import controlsLibrary
 import groups_module 
 import rigRoot_module
 import nodeCreator_module
-import build_module
-import rigRoot_module
 import chest_module
 from nodeCreator_module import NodeCreator
 import twist_module
+import module_specs
 
-class LimbModule(object):
-    """Módulo para construir los brazos, con setup IK/FK y switch."""
+# OJO: curvature_module, soft_module y pvPin_module NO se importan aqui arriba.
+# curvature_module y twist_module importan limbs_module, asi que subirlos al
+# nivel de modulo cierra un circulo de imports. Se importan dentro de los
+# metodos que los usan, igual que hacia el codigo original.
+
+
+class LimbModule(module_specs.FeaturesMixin):
+    """Módulo para construir los brazos, con setup IK/FK y switch.
+
+    Lo que se construye ya no es fijo: depende del set de features que llega
+    desde la receta de la UI. IK, FK, el switch y el pole vector van siempre;
+    curvature, twist, soft IK y el pv pin son opcionales.
+    """
+
+    MODULE_TYPE = "arm"
 
     def __init__(self, shoulder_guide="shoulder", 
                  elbow_guide="elbow", 
@@ -20,7 +32,12 @@ class LimbModule(object):
                  rig_name="Character",
                  root_instance=None,
                  side="L",
-                 pv_mult = 1.0):
+                 pv_mult = 1.0,
+                 features=None):
+
+        # features=None => se comporta como siempre (todas las de por defecto),
+        # asi los scripts viejos que instancian el modulo a mano siguen yendo.
+        self._init_features(self.MODULE_TYPE, features)
 
         self.shoulder_guide  = shoulder_guide
         self.elbow_guide     = elbow_guide
@@ -54,6 +71,24 @@ class LimbModule(object):
         self.bind_chain = []
         self.ik_chain   = []
         self.fk_chain   = []
+
+        # ---- NOMBRES QUE PUBLICA EL MODULO ----
+        # Antes el soft IK y el pv pin se escribian a mano en build_module con
+        # strings tipo "L_Arm_armIk_CTRL". Ahora el modulo guarda lo que ha
+        # creado y post_build() lo lee de aqui: si algun dia cambia la
+        # convencion de nombres, solo cambia en un sitio.
+        self.ik_ctrl        = None
+        self.ik_root_ctrl   = None
+        self.pv_ctrl        = None
+        self.switch_ctrl    = None
+        self.clavicule_ctrl = None
+        self.ik_handle      = None
+        self.fk_ctrls       = []
+
+        # Resultados de las features opcionales
+        self.curvature   = None
+        self.twist       = None
+        self.soft_result = None
 
 
     def define_poleVector(self, shoulder, elbow, wrist, distance=None, mult = 1.0):
@@ -180,6 +215,7 @@ class LimbModule(object):
             sj=self.ik_chain[0], ee=self.ik_chain[2],
             sol="ikRPsolver", n=f"{self.prefix}_IKH"
         )
+        self.ik_handle = ik_h
         
         #cmds.setAttr(f"{ik_h}.tolerance", 1e-08)    
 
@@ -240,6 +276,15 @@ class LimbModule(object):
             fk_gens.append(gen)
             
         
+        # Publicamos los controles para que post_build() no tenga que
+        # reconstruir los nombres a mano.
+        self.clavicule_ctrl = clavicule_ctl
+        self.ik_root_ctrl   = ik_root_ctrl
+        self.ik_ctrl        = ik_ctrl
+        self.pv_ctrl        = pv_ctrl
+        self.switch_ctrl    = switch_ctrl
+        self.fk_ctrls       = fk_ctrls
+
         cmds.parent(ik_root_gen, ik_ctrl_gen, pv_gen, self.ik_grp)
         cmds.parent(clav_gen, self.main_rig_grp)
         cmds.parent(switch_gen, self.main_rig_grp)
@@ -300,7 +345,11 @@ class LimbModule(object):
         cmds.parentConstraint(clavicule_ctl, self.fk_grp, mo=True)
         
         cmds.addAttr(ik_ctrl, ln="ExtraAttr", nn="EXTRA_ATTR", at="enum", en="------", k=True)
-        cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
+
+        # El atributo .Soft solo tiene sentido si detras va a haber soft IK.
+        # Si no, es un canal muerto en el channel box del animador.
+        if self.has("soft_ik"):
+            cmds.addAttr(ik_ctrl, ln="Soft", at="double", min=0, max=1, dv=0, k=True)
         
 
 
@@ -308,7 +357,9 @@ class LimbModule(object):
         cmds.xform(switch_gen, r=True, os=True, t=(0, 10, 0)) 
         cmds.parentConstraint(clavicule_ctl, switch_gen, mo = True)
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1,dv = 1, k=True)
-        cmds.addAttr(switch_ctrl, ln = "Curvature", at="float",min = 0, max=1, dv=0, k =True)
+
+        if self.has("curvature"):
+            cmds.addAttr(switch_ctrl, ln="Curvature", at="float", min=0, max=1, dv=0, k=True)
 
         # 6. SWITCH & VISIBILIDAD
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
@@ -344,44 +395,54 @@ class LimbModule(object):
             cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{pbl}.weight")
             
         # =========================================================
-        # CURVATURA
+        # CURVATURA  (opcional)
         # =========================================================
-        import curvature_module
+        if self.has("curvature"):
+            import curvature_module
 
-        arm_curvature = curvature_module.CurvatureModule(
-            name=f"{self.prefix}_Arm_Curvature",
-            side=self.side,
-            guide_data=None,
-            root_instance=self.root_instance
-        )
-        arm_curvature.create_basic_curve(
-            start_joint    = self.bind_chain[0],
-            mid_joint      = self.bind_chain[1],
-            end_joint      = self.bind_chain[2],
-            switch_control = f"{self.prefix}_switch_CTRL"
-        )
+            self.curvature = curvature_module.CurvatureModule(
+                name=f"{self.prefix}_Arm_Curvature",
+                side=self.side,
+                guide_data=None,
+                root_instance=self.root_instance
+            )
+            self.curvature.create_basic_curve(
+                start_joint    = self.bind_chain[0],
+                mid_joint      = self.bind_chain[1],
+                end_joint      = self.bind_chain[2],
+                switch_control = self.switch_ctrl
+            )
+        else:
+            print(f"[{self.prefix}] Curvature desactivado en la receta.")
 
         # =========================================================
-        # TWIST  ← recibe las curvas ya detacheadas del Curvature
+        # TWIST  (opcional)
+        #
+        # Twist NO depende de curvature: si hay curva degree-2 se la pasamos
+        # como source_curve y el detach sale sobre ella; si no la hay,
+        # twist_module se crea la suya por el camino del fallback.
         # =========================================================
-        arm_twist = twist_module.TwistModule(
-            name="arm",
-            side=self.side,
-            root_instance=self.root_instance
-        )
-        arm_twist.create_basic_curve(
-            self.bind_chain[0],
-            self.bind_chain[1],
-            self.bind_chain[2],
-            aim_axis="y",
-             up_axis       = "z",
-             front_axis_idx= 0,
-             up_axis_idx   = 2,
-            source_curve = arm_curvature.degree2_curve
-        )
+        if self.has("twist"):
+            source_curve = self.curvature.degree2_curve if self.curvature else None
 
-                        
-                            
+            self.twist = twist_module.TwistModule(
+                name="arm",
+                side=self.side,
+                root_instance=self.root_instance
+            )
+            self.twist.create_basic_curve(
+                self.bind_chain[0],
+                self.bind_chain[1],
+                self.bind_chain[2],
+                aim_axis       = "y",
+                up_axis        = "z",
+                front_axis_idx = 0,
+                up_axis_idx    = 2,
+                source_curve   = source_curve
+            )
+        else:
+            print(f"[{self.prefix}] Twist desactivado en la receta.")
+
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
         if rig_grp and cmds.objExists(rig_grp):
@@ -403,4 +464,55 @@ class LimbModule(object):
             # Si entra aquí, es porque el pecho no se ha creado todavía en la escena
             print(f"ADVERTENCIA: No se pudo encontrar {chestControl}. Asegúrate de construir el ChestModule ANTES que los Limbs.")
 
-        print(f"Build {self.prefix} completo.")
+        print(f"Build {self.prefix} completo. Features: "
+              f"{', '.join(sorted(self.features))}")
+
+    # ------------------------------------------------------------------
+    # POST BUILD
+    # ------------------------------------------------------------------
+    def post_build(self):
+        """
+        Features que no se pueden montar durante el build del propio miembro
+        porque dependen de que el rig ya este entero (soft IK y pole vector
+        pin van despues del skinning, como hasta ahora).
+
+        Lo llama build_module en la pasada final, y ya no necesita saber ni un
+        solo nombre de nodo: todos salen de self.
+        """
+        import soft_module
+        import pvPin_module
+
+        if self.has("soft_ik"):
+            soft = soft_module.SoftIkModule(side=self.side, prefix=self.rig_name)
+            self.soft_result = soft.apply_soft_ik(
+                ik_ctrl    = self.ik_ctrl,
+                ik_handle  = self.ik_handle,
+                ik_hdl     = self.ik_handle,
+                root_ctrl  = self.ik_root_ctrl,
+                root_jnt   = self.ik_chain[0],
+                mid_jnt    = self.ik_chain[1],
+                low_jnt    = self.ik_chain[2],
+                global_ctrl= f"{self.root_instance.rig_name}_global_CTL"
+                             if self.root_instance else "Character_global_CTL"
+            )
+        else:
+            print(f"[{self.prefix}] Soft IK desactivado en la receta.")
+
+        # El pin necesita el diccionario que devuelve el soft. Si el soft no se
+        # ha construido no hay nada que pinear: module_specs ya obliga a que
+        # pv_pin arrastre soft_ik, esto es solo el cinturon de seguridad.
+        if self.has("pv_pin"):
+            if not self.soft_result:
+                cmds.warning(f"[{self.prefix}] pv_pin pedido sin soft IK. Se salta.")
+                return
+
+            pin = pvPin_module.Pv_pin(side=self.side, name=self.rig_name)
+            pin.setup_pole_vector_pin(
+                ik_control           = self.ik_ctrl,
+                root_control         = self.ik_root_ctrl,
+                pole_vector_control  = self.pv_ctrl,
+                soft_trn             = self.soft_result["softTransform_node"],
+                soft_condition_node  = self.soft_result["condition_node"],
+                upper_ik_joint       = self.ik_chain[1],
+                lower_ik_joint       = self.ik_chain[2]
+            )

@@ -6,8 +6,12 @@ import controlsLibrary
 from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 import rigRoot_module
+import module_specs
 
-class EyesModule(object):
+
+class EyesModule(module_specs.FeaturesMixin):
+
+    MODULE_TYPE = "eye"
 
     # Rebuild de la linea del parpado: grado 3 con 4 spans = 7 CVs, que es el
     # numero al que corresponde CV_WEIGHTS. Si cambias esto, CV_WEIGHTS deja de
@@ -164,7 +168,10 @@ class EyesModule(object):
                  upper_loop_count=None,
                  lower_loop_count=None,
                  upper_loop_set=None,
-                 lower_loop_set=None):
+                 lower_loop_set=None,
+                 features=None):
+
+        self._init_features(self.MODULE_TYPE, features)
         
 
         self.eye_mid = eye_mid
@@ -2928,7 +2935,10 @@ class EyesModule(object):
         # atributos vivan en ese control, asi que tiene que existir ya cuando
         # _get_attribute_host lo busca.
         # =========================================================
-        self._add_blink_attributes()
+        if self.has("blink"):
+            self._add_blink_attributes()
+        else:
+            print(f"[{self.prefix}] Blink desactivado en la receta.")
 
         # La shape del control de eye_mid se dibuja sobre el joint de
         # eye_mid_end; el transform y el pivote no se mueven.
@@ -2940,7 +2950,10 @@ class EyesModule(object):
         # control de eye_mid. Va antes de los constraints y de la agrupacion
         # para que se hagan con la jerarquia ya en su sitio.
         # =========================================================
-        self._build_fleshy_setup()
+        if self.has("fleshy"):
+            self._build_fleshy_setup()
+        else:
+            print(f"[{self.prefix}] Fleshy eye desactivado en la receta.")
 
         # =========================================================
         # EJES DE LOS CONTROLES DEL LADO R
@@ -3006,7 +3019,8 @@ class EyesModule(object):
         # Va al final: necesita las lineas ya skinneadas, el control des
         # eye_mid con sus atributos y el grupo del modulo ya creado.
         # =========================================================
-        self._build_blink_system()
+        if self.has("blink"):
+            self._build_blink_system()
 
         # =========================================================
         # JOINTS DE LOOP
@@ -3014,15 +3028,21 @@ class EyesModule(object):
         # curvas Blinked, que son el final de la cadena, asi que tienen que ir
         # despues del sistema de blink.
         # =========================================================
-        self._build_loop_joints()
+        # Dependen de las curvas Blinked, asi que module_specs ya obliga a que
+        # loop_joints arrastre blink. El has("blink") de aqui es solo el
+        # cinturon de seguridad para cuando se instancia el modulo a mano.
+        if self.has("loop_joints") and self.has("blink"):
+            self._build_loop_joints()
 
-        # =========================================================
-        # CADENA DE AIM DE LOS LOOPS
-        # Un pointOnCurveInfo sobre la curva Blinked y un aimMatrix desde el
-        # centro del ojo por cada marcador. De aqui saldran los joints de
-        # skinning.
-        # =========================================================
-        self._build_loop_aims()
+            # =====================================================
+            # CADENA DE AIM DE LOS LOOPS
+            # Un pointOnCurveInfo sobre la curva Blinked y un aimMatrix desde
+            # el centro del ojo por cada marcador. De aqui saldran los joints
+            # de skinning.
+            # =====================================================
+            self._build_loop_aims()
+        else:
+            print(f"[{self.prefix}] Loop joints desactivados en la receta.")
 
         # =========================================================
         # ORGANIZACION DEL OUTLINER

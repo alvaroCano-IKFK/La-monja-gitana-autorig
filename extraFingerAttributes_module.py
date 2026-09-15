@@ -35,16 +35,39 @@ class FingersExtraModule(object):
     # ------------------------------------------------------------------ #
     #  INIT
     # ------------------------------------------------------------------ #
+    #: Los tres atributos que sabe montar este modulo, en el orden en que se
+    #: crean en el channel box. La receta elige cuales de estos van.
+    ALL_ATTRIBUTES = ("fan", "spread", "fist")
+
     def __init__(self, rig_name="Character", side="L",
                  settings_ctrl=None,
-                 fingers_module=None):
-
+                 fingers_module=None,
+                 attributes=None):
+        """
+        Args:
+            attributes (iterable): cuales de fan / spread / fist se crean.
+                None = los tres, que es como se comportaba antes. Lo que no
+                este en la lista ni se anade al control ni genera SDK: no es
+                que se cree y se deje a cero, es que no existe.
+        """
         self.rig_name = rig_name
         self.side     = side
         self.prefix   = f"{self.side}_{self.rig_name}"
 
         self.settings_ctrl  = settings_ctrl
         self.fingers_module = fingers_module
+
+        if attributes is None:
+            self.attributes = list(self.ALL_ATTRIBUTES)
+        else:
+            # Se respeta el orden de ALL_ATTRIBUTES, no el orden en que llegan,
+            # para que el channel box salga igual en todos los personajes.
+            wanted = {str(a).strip().lower() for a in attributes}
+            unknown = wanted - set(self.ALL_ATTRIBUTES)
+            if unknown:
+                cmds.warning("[fingersExtra] Atributos desconocidos, se ignoran: "
+                             "{}".format(", ".join(sorted(unknown))))
+            self.attributes = [a for a in self.ALL_ATTRIBUTES if a in wanted]
 
         # --- atributos ---
         self.separator_name = "EXTRA_ATTR"
@@ -337,7 +360,7 @@ class FingersExtraModule(object):
             cmds.delete(junk)
 
         if remove_attrs and ctrl:
-            for attr in ("fan", "spread", "fist", self.separator_name):
+            for attr in list(self.attributes) + [self.separator_name]:
                 plug = f"{ctrl}.{attr}"
                 if cmds.objExists(plug):
                     cmds.setAttr(plug, lock=False)
@@ -348,8 +371,16 @@ class FingersExtraModule(object):
     # ------------------------------------------------------------------ #
     #  ATRIBUTOS
     # ------------------------------------------------------------------ #
+    def wants(self, attr):
+        return attr in self.attributes
+
     def create_attributes(self, ctrl):
-        """Separador EXTRA ATTR + fan / spread / fist."""
+        """Separador EXTRA ATTR + los atributos que pida la receta."""
+        # Sin ningun atributo no hace falta ni el separador: seria una linea de
+        # guiones presidiendo un hueco vacio en el channel box.
+        if not self.attributes:
+            return
+
         if not cmds.attributeQuery(self.separator_name, node=ctrl, exists=True):
             cmds.addAttr(ctrl, ln=self.separator_name, nn=self.separator_nice,
                          at="enum", en="------", k=True)
@@ -359,7 +390,7 @@ class FingersExtraModule(object):
             except Exception:
                 pass
 
-        for attr in ("fan", "spread", "fist"):
+        for attr in self.attributes:
             if not cmds.attributeQuery(attr, node=ctrl, exists=True):
                 cmds.addAttr(ctrl, ln=attr, at="double",
                              min=self.attr_min, max=self.attr_max, dv=0.0, k=True)
@@ -368,6 +399,11 @@ class FingersExtraModule(object):
     #  BUILD
     # ------------------------------------------------------------------ #
     def build(self):
+        if not self.attributes:
+            print("[fingersExtra] Ningun atributo extra pedido en la receta. "
+                  "No se monta nada.")
+            return
+
         ctrl = self.get_settings_ctrl()
         if not ctrl:
             return
@@ -391,24 +427,30 @@ class FingersExtraModule(object):
         # Gradiente de -1 a +1 a lo largo de la mano: el índice tira para un lado,
         # el meñique para el otro y el corazón casi no se mueve. Sin gradiente los
         # dedos girarían todos igual y no se abrirían.
-        total = len(no_thumb)
-        for i, name in enumerate(no_thumb):
-            ctrls = self.fingers[name]
-            base = self.get_base_index(ctrls)
-            sdk = self.get_sdk_node(ctrls[base])
+        #
+        # fan y spread comparten el bucle porque usan el mismo gradiente y el
+        # mismo control base; cada uno se aplica solo si esta en la receta.
+        if self.wants("fan") or self.wants("spread"):
+            total = len(no_thumb)
+            for i, name in enumerate(no_thumb):
+                ctrls = self.fingers[name]
+                base = self.get_base_index(ctrls)
+                sdk = self.get_sdk_node(ctrls[base])
 
-            mult = -1.0 + (2.0 * i / float(total - 1)) if total > 1 else 0.0
+                mult = -1.0 + (2.0 * i / float(total - 1)) if total > 1 else 0.0
 
-            fan_mult = -mult if self.fan_invert else mult
-            spread_mult = -mult if self.spread_invert else mult
+                if self.wants("fan"):
+                    fan_mult = -mult if self.fan_invert else mult
+                    self.set_driven(sdk, self.fan_axis, f"{ctrl}.fan",
+                                    self.fan_angle * fan_mult)
 
-            self.set_driven(sdk, self.fan_axis, f"{ctrl}.fan",
-                            self.fan_angle * fan_mult)
-            self.set_driven(sdk, self.spread_axis, f"{ctrl}.spread",
-                            self.spread_angle * spread_mult)
+                if self.wants("spread"):
+                    spread_mult = -mult if self.spread_invert else mult
+                    self.set_driven(sdk, self.spread_axis, f"{ctrl}.spread",
+                                    self.spread_angle * spread_mult)
 
         # ---------------- FIST ---------------- #
-        for name in names:
+        for name in (names if self.wants("fist") else []):
             ctrls = self.fingers[name]
             base = 0 if self.fist_include_metacarpal else self.get_base_index(ctrls)
             targets = ctrls[base:]
@@ -423,7 +465,8 @@ class FingersExtraModule(object):
                 angle = self.fist_angle * profile * scale * sign
                 self.set_driven(self.get_sdk_node(c), attr, f"{ctrl}.fist", angle)
 
-        print(f"[fingersExtra] Listo: {len(self.driven)} canales conducidos desde {ctrl}.\n")
+        print(f"[fingersExtra] Listo: {len(self.driven)} canales conducidos desde "
+              f"{ctrl} ({', '.join(self.attributes)}).\n")
 
     # ------------------------------------------------------------------ #
     #  DEBUG

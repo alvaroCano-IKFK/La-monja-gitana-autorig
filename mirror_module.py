@@ -1,66 +1,175 @@
+import re
+
 import maya.cmds as cmds
 
+import module_specs
+
+
 class Mirror(object):
-    def __init__(self, clavicule_guide="L_clavicule", thigh_guide="L_hip", lip_end="L_lip_end", eyebow_end="L_eyebrow_root_01",
-                eye_mid="L_eye_mid", eye_mid_end="L_eye_mid_end", eye_direct = "L_eye_direct",
+    """
+    Espeja las guias del lado L al lado R.
 
-                rig_name="R_Character"):
-        
-        self.clavicule_guide = clavicule_guide
-        self.thigh_guide = thigh_guide
-        self.lip_end = lip_end
-        self.eye_mid = eye_mid
-        self.eye_mid_end = eye_mid_end
-        self.eye_direct = eye_direct
+    Tres cosas cambian respecto a la version anterior:
 
-        self.eyebrow_end = eyebow_end
-        self.rig_name = rig_name
-        
-        # Variables para guardar los nombres de los joints creados
-        self.r_clavicule = None
-        self.r_hip = None
-        self.r_lip_end = None
-        self.r_eye_mid = None
-        self.r_eye_mid_end = None
-        self.r_eye_direct = None
-        self.r_eyebrow_end = None
+    1. Es IDEMPOTENTE. Antes, darle al boton dos veces creaba R_clavicule1,
+       R_clavicule2... porque mirrorJoint no comprueba si el destino ya existe.
+       Ahora, si la guia R ya esta, se borra y se vuelve a espejar. Que es lo
+       que uno espera del boton: mueves las guias de la izquierda, le das a
+       Mirror y la derecha se actualiza.
 
-    def mirror(self):
-        # mirrorJoint devuelve una lista. El primer elemento [0] es la raíz duplicada.
-        if cmds.objExists(self.clavicule_guide):
-            res_arm = cmds.mirrorJoint(self.clavicule_guide, myz=True, mb=True, sr=("L", "R"))
-            self.r_clavicule = res_arm[0]
-        
-        if cmds.objExists(self.thigh_guide):
-            res_leg = cmds.mirrorJoint(self.thigh_guide, myz=True, mb=True, sr=("L", "R"))
-            self.r_hip = res_leg[0]
-        
-        if cmds.objExists(self.lip_end):
-            res_lip = cmds.mirrorJoint(self.lip_end, myz=True, mb=True, sr=("L", "R"))
-            self.r_lip_end = res_lip[0] 
+    2. Lee la RECETA. Si en el arbol de la ventana solo hay un brazo L, no
+       tiene sentido espejar la cadera. Solo se espeja lo que hace falta.
+
+    3. Las cejas ya no pueden petar. En la version anterior, self.r_eyebrows se
+       inicializaba dentro de un if pero el bucle que hacia append estaba
+       fuera: si existia L_eyebrow_root_02 pero no L_eyebrow_root_01, saltaba
+       un AttributeError. La indentacion estaba mal, no era intencionado.
+    """
+
+    # Las guias de la cara ya NO estan escritas aqui: boca, mandibula, cejas y
+    # ojos son modulos de la receta, asi que sus mirror_roots viven en
+    # module_specs igual que los del brazo y la pierna. Una sola tabla.
+
+    def __init__(self, mirror_face=True):
+        """
+        Args:
+            mirror_face (bool): False para saltarse boca, ojos y cejas. Util
+                mientras se prueba solo el cuerpo.
+        """
+        self.mirror_face = mirror_face
+
+        # Que se ha espejado en la ultima pasada, para poder consultarlo
+        self.mirrored = []
+        self.skipped = []
+        self.replaced = []
+
+    # ------------------------------------------------------------------
+    # API
+    # ------------------------------------------------------------------
+    def mirror(self, recipe=None):
+        """
+        Espeja las guias.
+
+        Args:
+            recipe (list): la receta de la ventana. Si es None, o si viene
+                vacia, se espeja todo (que es como se comportaba antes).
+                Si trae modulos, solo se espejan las guias de los modulos
+                que tengan una entrada del lado R.
+
+        Returns:
+            list: nombres de las guias raiz creadas en el lado R
+        """
+        self.mirrored = []
+        self.skipped = []
+        self.replaced = []
+
+        roots = self._collect_roots(recipe)
+
+        if not roots:
+            cmds.warning("[Mirror] No hay ninguna guia que espejar.")
+            return []
+
+        for left_root in roots:
+            self._mirror_one(left_root)
+
+        self._report()
+
+        return list(self.mirrored)
+
+    # ------------------------------------------------------------------
+    # QUE HAY QUE ESPEJAR
+    # ------------------------------------------------------------------
+    def _collect_roots(self, recipe):
+        """
+        Decide la lista de guias raiz a espejar a partir de la receta.
+
+        Sin receta (o con el arbol vacio) se espeja todo: si no, darle a Mirror
+        antes de configurar los modulos no haria nada y el usuario pensaria que
+        el boton esta roto.
+        """
+        roots = []
+
+        if not recipe:
+            wanted = list(module_specs.module_types())
         else:
-            cmds.warning(f"[Mirror] No se encontró {self.lip_end} en la escena, no se puede mirrorizar la boca.")
+            # Solo los modulos que de verdad tienen un lado R en la receta.
+            # Espejar la cadera para construir solo una pierna izquierda es
+            # dejar guias sueltas en la escena que luego estorban.
+            wanted = sorted({entry["type"] for entry in recipe
+                             if entry.get("side") == "R"})
 
-        if cmds.objExists(self.eyebrow_end):
-            self.r_eyebrows = []
-        for i in range(1, 11):
-            brow_name = f"L_eyebrow_root_{i:02d}"
-            
-            if cmds.objExists(brow_name):
-                res_brow = cmds.mirrorJoint(brow_name, myz=True, mb=True, sr=("L", "R"))
-                if res_brow:
-                    self.r_eyebrows.append(res_brow[0])
-            else:
-                cmds.warning(f"[Mirror] No se encontró {brow_name} en la escena.")        # Las tres joints del ojo son independientes (el group las separó), así que se mirrorizan una a una.
-        if cmds.objExists(self.eye_mid):
-            res_eye = cmds.mirrorJoint(self.eye_mid, myz=True, mb=True, sr=("L", "R"))
-            self.r_eye_mid = res_eye[0]
-        else:
-            cmds.warning(f"[Mirror] No se encontró {self.eye_mid} en la escena, no se puede mirrorizar el ojo.")    
-        if cmds.objExists(self.eye_mid_end):
-            res_eye_mid_end = cmds.mirrorJoint(self.eye_mid_end, myz=True, mb=True, sr=("L", "R"))
-            self.r_eye_mid_end = res_eye_mid_end[0]   
-            
-        if cmds.objExists(self.eye_direct):
-            res_eye_direct = cmds.mirrorJoint(self.eye_direct, myz=True, mb=True, sr=("L", "R"))
-            self.r_eye_direct = res_eye_direct[0] 
+        for module_type in wanted:
+            if not self.mirror_face and module_specs.is_face(module_type):
+                continue
+            roots.extend(module_specs.mirror_roots(module_type))
+
+        # Sin duplicados y conservando el orden
+        seen = set()
+        unique = []
+        for root in roots:
+            if root not in seen:
+                seen.add(root)
+                unique.append(root)
+
+        return unique
+
+    # ------------------------------------------------------------------
+    # ESPEJAR UNA GUIA
+    # ------------------------------------------------------------------
+    @staticmethod
+    def right_name(left_name):
+        """L_clavicule -> R_clavicule. Solo toca el prefijo, no el resto."""
+        return re.sub(r"^L_", "R_", left_name)
+
+    def _mirror_one(self, left_root):
+        """
+        Espeja una cadena de guias. Si el destino ya existe lo borra primero,
+        para que el resultado sea el mismo le des al boton una vez o diez.
+        """
+        if not cmds.objExists(left_root):
+            self.skipped.append(left_root)
+            return None
+
+        right_root = self.right_name(left_root)
+
+        if cmds.objExists(right_root):
+            # Se borra la jerarquia entera del lado R, no solo la raiz:
+            # cmds.delete de un joint padre ya se lleva a los hijos.
+            cmds.delete(right_root)
+            self.replaced.append(right_root)
+
+        result = cmds.mirrorJoint(left_root, myz=True, mb=True, sr=("L", "R"))
+
+        if not result:
+            cmds.warning("[Mirror] mirrorJoint no devolvio nada para "
+                         "{}.".format(left_root))
+            return None
+
+        # mirrorJoint devuelve la lista de lo duplicado; el primero es la raiz
+        created = result[0]
+
+        # Si ya existia algo llamado R_loquesea en otro sitio de la escena,
+        # Maya renombra a R_loquesea1 sin avisar. Mejor enterarse ahora que
+        # cuando el build no encuentre la guia.
+        if created != right_root:
+            cmds.warning("[Mirror] Se esperaba '{}' pero Maya ha creado '{}'. "
+                         "Revisa si hay nombres duplicados en la "
+                         "escena.".format(right_root, created))
+
+        self.mirrored.append(created)
+
+        return created
+
+    # ------------------------------------------------------------------
+    def _report(self):
+        if self.replaced:
+            print("[Mirror] Reemplazadas {} guias que ya existian: {}".format(
+                len(self.replaced), ", ".join(self.replaced)))
+
+        if self.mirrored:
+            print("[Mirror] Espejadas {} guias: {}".format(
+                len(self.mirrored), ", ".join(self.mirrored)))
+
+        if self.skipped:
+            print("[Mirror] No estaban en la escena y se han saltado: "
+                  "{}".format(", ".join(self.skipped)))

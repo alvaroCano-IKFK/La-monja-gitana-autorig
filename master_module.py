@@ -33,6 +33,10 @@ import progress_module
 import guides_io_module
 import eyebrowsModule
 import extraFingerAttributes_module
+import module_specs
+import fingersIk_module
+
+window_instance = None
 
 
 def run():
@@ -71,6 +75,16 @@ def run():
     importlib.reload(guides_io_module)
     importlib.reload(eyebrowsModule)
     importlib.reload(extraFingerAttributes_module)
+    importlib.reload(module_specs)
+    importlib.reload(fingersIk_module)
     
-    ui = ui_module.UI()
-    ui.main_UI()
+    global window_instance
+
+    try:
+        window_instance.close()
+        window_instance.deleteLater()
+    except Exception:
+        pass
+
+    window_instance = ui_module.Window()
+    window_instance.show()

@@ -9,10 +9,19 @@ import hip_module
 from nodeCreator_module import NodeCreator
 import curvature_module
 import twist_module
+import module_specs
 
 
-class LegModule(object):
-    """Módulo para construir las piernas, con setup IK/FK y switch."""
+class LegModule(module_specs.FeaturesMixin):
+    """Módulo para construir las piernas, con setup IK/FK y switch.
+
+    Mismo patron que LimbModule: lo que se construye sale del set de features
+    que llega en la receta. IK, FK, switch, pole vector y reverse foot van
+    siempre (el reverse foot esta cosido al modulo y no se puede sacar sin
+    partirlo); curvature, twist, soft IK y el pv pin son opcionales.
+    """
+
+    MODULE_TYPE = "leg"
 
     def __init__(self, thigh_guide="hip", 
                  knee_guide="knee", 
@@ -24,8 +33,11 @@ class LegModule(object):
                  side = "L",
                  hip_instance= None,
                  root_instance= None,
-                 pv_mult = 1.0):
-                     
+                 pv_mult = 1.0,
+                 features=None):
+
+        self._init_features(self.MODULE_TYPE, features)
+
         self.thigh_guide = thigh_guide
         self.knee_guide = knee_guide
         self.ankle_guide = ankle_guide
@@ -60,6 +72,23 @@ class LegModule(object):
         self.ik_chain = []
         self.fk_chain = []
         self.leg_joints_grp = None
+
+        # ---- NOMBRES QUE PUBLICA EL MODULO ----
+        # Para que post_build() no tenga que reconstruir a mano strings como
+        # "L_Leg_legIk_CTRL". El modulo se guarda lo que ha creado.
+        self.ik_ctrl        = None
+        self.ik_root_ctrl   = None
+        self.pv_ctrl        = None
+        self.switch_ctrl    = None
+        self.foot_ball_ctrl = None
+        self.ik_handle      = None
+        self.fk_ctrls       = []
+
+        # Resultados de las features opcionales
+        self.curvature   = None
+        self.twist       = None
+        self.toes        = None
+        self.soft_result = None
 
     def create_offset_group(self, ctrl, target_proc, orient=False, world_space=True):
         """Crea un grupo de offset para el control, alineado con el target_proc."""
@@ -195,6 +224,7 @@ class LegModule(object):
         # ---- 4. IK HANDLES ----
         ik_h, _        = cmds.ikHandle(sj=self.ik_chain[0], ee=self.ik_chain[2],
                                         sol="ikRPsolver", n=f"{self.prefix}_IKH")
+        self.ik_handle = ik_h
         #cmds.setAttr(f"{ik_h}.tolerance", 1e-08)    
 
         ik_footBall, _ = cmds.ikHandle(sj=self.ik_chain[2], ee=self.ik_chain[3],
@@ -273,6 +303,14 @@ class LegModule(object):
             cur_tx = cmds.getAttr(f"{pv_gen}.translateX")
             cmds.setAttr(f"{pv_gen}.translateX", -cur_tx)
 
+        # Publicamos los controles antes de seguir, para que post_build() los
+        # tenga disponibles sin adivinar nombres.
+        self.ik_root_ctrl   = ik_root_ctrl
+        self.ik_ctrl        = ik_ctrl
+        self.pv_ctrl        = pv_ctrl
+        self.switch_ctrl    = switch_ctrl
+        self.foot_ball_ctrl = foot_ball_ctrl
+
         cmds.parent(ik_root_gen, ik_gen, foot_heel_gen, foot_ball_gen, foot_tip_gen, foot_bankIn_gen, foot_bankOut_gen, pv_gen, self.ik_grp)
 
         # FK Setup (Alineado con targets corregidos y solucionado el desfase del toe_tip)
@@ -288,6 +326,7 @@ class LegModule(object):
             gen = self.group_maker.create_rig_hierarchy(ctrl, fk_targets[i])
             fk_ctrls.append(ctrl)
             fk_gens.append(gen)
+        self.fk_ctrls = fk_ctrls
             
         for i in range(4):
             if i == 0:
@@ -334,7 +373,9 @@ class LegModule(object):
 
         # ---- SWITCH atributo + visibilidad ----
         cmds.addAttr(switch_ctrl, ln="IK_FK", at="double", min=0, max=1, k=True)
-        cmds.addAttr(switch_ctrl, ln = "Curvature", at="float",min = 0, max=1, dv=0, k =True)
+
+        if self.has("curvature"):
+            cmds.addAttr(switch_ctrl, ln="Curvature", at="float", min=0, max=1, dv=0, k=True)
 
         cmds.parentConstraint(ik_root_ctrl,switch_gen, mo = True )
         vis_rev = cmds.createNode("reverse", n=f"{self.prefix}_VIS_REV")
@@ -381,7 +422,10 @@ class LegModule(object):
         #Roll Straight Angle
         cmds.addAttr(ik_ctrl, ln ="RollStraightAngle", k=True, at="float", min = 0, dv =90 ) 
 
-        cmds.addAttr(ik_ctrl, ln = "Soft", at = "double", min = 0, max = 1, dv = 0, k =True)
+        # El canal .Soft solo se crea si luego va a haber red de soft IK
+        # detras. Si no, es un atributo muerto en el channel box.
+        if self.has("soft_ik"):
+            cmds.addAttr(ik_ctrl, ln="Soft", at="double", min=0, max=1, dv=0, k=True)
         
         
         def quick_node(node_type, name, tag, side="L", base_name="leg", parent=None):
@@ -466,43 +510,103 @@ class LegModule(object):
             cmds.warning(f"[{self.prefix}] No se pudo conectar al Hip porque 'hip_control_name' no está disponible.")
             
         # =========================================================
-        # CURVATURA
+        # CURVATURA  (opcional)
         # =========================================================
-        import curvature_module
+        if self.has("curvature"):
+            import curvature_module
 
-        leg_curvature = curvature_module.CurvatureModule(
-            name=f"{self.prefix}_Leg_Curvature",
-            side=self.side,
-            guide_data=None,
-            root_instance=self.root_instance
-        )
-        leg_curvature.create_basic_curve(
-            start_joint    = self.bind_chain[0],
-            mid_joint      = self.bind_chain[1],
-            end_joint      = self.bind_chain[2],
-            switch_control = f"{self.prefix}_switch_CTRL"
-        )
+            self.curvature = curvature_module.CurvatureModule(
+                name=f"{self.prefix}_Leg_Curvature",
+                side=self.side,
+                guide_data=None,
+                root_instance=self.root_instance
+            )
+            self.curvature.create_basic_curve(
+                start_joint    = self.bind_chain[0],
+                mid_joint      = self.bind_chain[1],
+                end_joint      = self.bind_chain[2],
+                switch_control = self.switch_ctrl
+            )
+        else:
+            print(f"[{self.prefix}] Curvature desactivado en la receta.")
 
         # =========================================================
-        # TWIST  ← recibe las curvas ya detacheadas del Curvature
+        # TWIST  (opcional)
+        #
+        # Si hay curvature, twist reaprovecha su curva degree-2. Si no, se
+        # crea la suya por el camino del fallback de twist_module.
         # =========================================================
-        leg_twist = twist_module.TwistModule(
-            name="leg",
-            side=self.side,
-            parent=self,
-            root_instance=self.root_instance
-        )
-        leg_twist.create_basic_curve(
-            self.bind_chain[0],
-            self.bind_chain[1],
-            self.bind_chain[2],
-            aim_axis      = "x",
-            up_axis       = "zneg",
-            front_axis_idx= 0,
-            up_axis_idx   = 2,
-            source_curve = leg_curvature.degree2_curve
-)
+        if self.has("twist"):
+            source_curve = self.curvature.degree2_curve if self.curvature else None
 
+            self.twist = twist_module.TwistModule(
+                name="leg",
+                side=self.side,
+                parent=self,
+                root_instance=self.root_instance
+            )
+            self.twist.create_basic_curve(
+                self.bind_chain[0],
+                self.bind_chain[1],
+                self.bind_chain[2],
+                aim_axis       = "x",
+                up_axis        = "zneg",
+                front_axis_idx = 0,
+                up_axis_idx    = 2,
+                source_curve   = source_curve
+            )
+        else:
+            print(f"[{self.prefix}] Twist desactivado en la receta.")
 
-        print(f"Build {self.prefix} leg completo.")
-        print(f"Leg Module {self.side} construido con éxito.")
+        print(f"Build {self.prefix} leg completo. Features: "
+              f"{', '.join(sorted(self.features))}")
+
+    # ------------------------------------------------------------------
+    # POST BUILD
+    # ------------------------------------------------------------------
+    def post_build(self):
+        """
+        Soft IK y pole vector pin. Van despues del skinning, por eso no se
+        montan dentro de build(): los llama build_module en la pasada final.
+
+        La diferencia con el brazo esta en el goal_ctrl. En la pierna, el ik
+        handle principal NO lo manda el ik_ctrl sino el control de la bola del
+        pie (el parentConstraint del ik_ctrl al ik handle esta comentado en
+        build(), porque quien manda es la cadena del reverse foot). Si le pasas
+        el ik_ctrl como goal, el pie se desplaza al activar el Soft.
+        """
+        import soft_module
+        import pvPin_module
+
+        if self.has("soft_ik"):
+            soft = soft_module.SoftIkModule(side=self.side, prefix=self.rig_name)
+            self.soft_result = soft.apply_soft_ik(
+                ik_ctrl    = self.ik_ctrl,
+                ik_handle  = self.ik_handle,
+                ik_hdl     = self.ik_handle,
+                root_ctrl  = self.ik_root_ctrl,
+                root_jnt   = self.ik_chain[0],
+                mid_jnt    = self.ik_chain[1],
+                low_jnt    = self.ik_chain[2],
+                global_ctrl= f"{self.root_instance.rig_name}_global_CTL"
+                             if self.root_instance else "Character_global_CTL",
+                goal_ctrl  = self.foot_ball_ctrl,
+            )
+        else:
+            print(f"[{self.prefix}] Soft IK desactivado en la receta.")
+
+        if self.has("pv_pin"):
+            if not self.soft_result:
+                cmds.warning(f"[{self.prefix}] pv_pin pedido sin soft IK. Se salta.")
+                return
+
+            pin = pvPin_module.Pv_pin(side=self.side, name=self.rig_name)
+            pin.setup_pole_vector_pin(
+                ik_control           = self.ik_ctrl,
+                root_control         = self.ik_root_ctrl,
+                pole_vector_control  = self.pv_ctrl,
+                soft_trn             = self.soft_result["softTransform_node"],
+                soft_condition_node  = self.soft_result["condition_node"],
+                upper_ik_joint       = self.ik_chain[1],
+                lower_ik_joint       = self.ik_chain[2]
+            )

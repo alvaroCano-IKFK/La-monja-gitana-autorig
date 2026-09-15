@@ -12,25 +12,6 @@ from nodeCreator_module import NodeCreator
 
 class EyebrowsModule(object):
 
-    # ------------------------------------------------------------------
-    # ESPEJO DEL LADO R
-    # ------------------------------------------------------------------
-    # Les guies del costat dret estan en mirror BEHAVIOUR: això significa
-    # que estan girades 180 graus. Perquè la traslació correspongui a un mirall
-    # real basat en aquesta orientació, cal invertir els eixos afectats
-    # per la rotació de matrius (X i Z), mantenint Y per a l'alçada.
-    MIRROR_R_TRANSLATION = True
-    MIRROR_R_TRANSLATION_SIGN = (-1.0, 1.0, -1.0)
-
-    # Les tangents necessiten el signe oposat per compensar el desajust
-    # dels marcs locals _GRP respecte al control principal.
-    MIRROR_R_TANGENT_SIGN = (1.0, -1.0, 1.0)
-
-    # Invertim els eixos del gizmo del control principal per al costat R
-    # perquè coincideixin perfectament amb la direcció del mirall.
-    MIRROR_R_CONTROL_AXES = True
-    MIRROR_R_CONTROL_SCALE = (-1.0, 1.0, -1.0)
-
     def __init__(
         self,
         guide_prefix="L_eyebrow_root",
@@ -86,12 +67,23 @@ class EyebrowsModule(object):
         self.local_up_curve = None
         self.up_transforms = []
 
+        # NURBS del craneo por la que deslizan las cejas. La crea el
+        # guides_module (EyebrowSkullGuides) y aqui solo se lee, igual que la
+        # superficie de la boca en mouthModule.
+        self.skull_surface = kwargs.get("skull_surface", "eyebrow_skull_NRB")
+
+        self.slide_projected_joints = []
+        # _ENV a los que se les ha aplicado la mezcla del slide.
+        self.slide_skin_joints = []
+        self.forehead_joints = []
+
     # ------------------------------------------------------------------
     # Connectors i creadors de transformacions relatives / locals
     # ------------------------------------------------------------------
     def generate_relative_control_transform(
         self, control_name, top_grp, create_transform=True, mirror_sign=None
     ):
+
         base_name = control_name.replace("_CTRL", "").replace("_ctl", "")
         grp = cmds.listRelatives(control_name, parent=True, type="transform")[0]
 
@@ -157,42 +149,6 @@ class EyebrowsModule(object):
             )
 
         return relative_trn, dcm
-
-    def _build_translation_mirror(self, base_name, dcm, mirror_sign=None):
-        if mirror_sign is None:
-            mirror_sign = self.MIRROR_R_TRANSLATION_SIGN
-
-        node_name = f"{base_name}LocalMirror_MDV"
-
-        if not cmds.objExists(node_name):
-            node_name = cmds.createNode("multiplyDivide", name=node_name, ss=True)
-
-        cmds.setAttr(f"{node_name}.operation", 1)
-        for index, axis in enumerate("XYZ"):
-            cmds.setAttr(f"{node_name}.input2{axis}", mirror_sign[index])
-
-        cmds.connectAttr(f"{dcm}.outputTranslate", f"{node_name}.input1",
-                         force=True)
-
-        return f"{node_name}.output"
-
-    def _mirror_control_axes(self, main_ctl_gen):
-        if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
-            return None
-
-        if not main_ctl_gen or not cmds.objExists(main_ctl_gen):
-            return None
-
-        for index, axis in enumerate("XYZ"):
-            plug = f"{main_ctl_gen}.scale{axis}"
-            if cmds.getAttr(plug, lock=True) or cmds.listConnections(
-                    plug, source=True, destination=False):
-                cmds.warning(f"[EyebrowsModule] '{plug}' esta bloqueado o "
-                             "conectado, no se voltea.")
-                continue
-            cmds.setAttr(plug, self.MIRROR_R_CONTROL_SCALE[index])
-
-        return main_ctl_gen
 
     def _connect_transform_channels(self, driver_node, driven_node):
         for attr in ("translate", "rotate", "scale"):
@@ -473,6 +429,9 @@ class EyebrowsModule(object):
                 f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
             )
 
+    # ------------------------------------------------------------------
+    # Build
+    # ------------------------------------------------------------------
     def build(self):
         base_prefix = self.guide_prefix.replace("L_", "").replace("R_", "")
 
@@ -511,8 +470,6 @@ class EyebrowsModule(object):
             main_ctl, mid_guide_name
         )
         cmds.parent(main_ctl_gen, main_ctl_grp)
-
-        self._mirror_control_axes(main_ctl_gen)
 
         if not cmds.attributeQuery("slide", node=main_ctl, exists=True):
             cmds.addAttr(
@@ -653,3 +610,10 @@ class EyebrowsModule(object):
 
         self._create_local_bezier_curve()
         self._setup_motion_paths_and_aims()
+
+        # 7) SLIDE SETUP SOBRE LA NURBS DEL CRANEO
+        #    Al final: necesita los joints ya conducidos por el motionPath.
+        self._build_slide_setup()
+
+        # 8) OUTLINER
+        self._organize_outliner()

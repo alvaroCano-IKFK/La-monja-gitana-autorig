@@ -508,6 +508,78 @@ class EyebrowsGuides(object):
         cmds.select(clear=True)
         return self.guides_group
 
+class EyebrowSkullGuides(object):
+    """
+    Crea la NURBS con forma de craneo por la que deslizan las cejas.
+
+    Se hace como dice el documento: una curva de perfil en vista lateral y un
+    revolve alrededor del eje Y. Asi la superficie envuelve la frente y la
+    costura queda atras, fuera de la zona de la ceja, que es donde no molesta.
+
+    La forma es solo un punto de partida. Ajustala a mano sobre el modelo antes
+    de construir el rig: lo unico que importa es que cubra toda la zona por la
+    que se mueven las cejas, con margen por arriba si se va a usar la fila de la
+    frente.
+    """
+
+    def __init__(self, surface_name="eyebrow_skull_NRB",
+                 profile=None, center=(0.0, 34.0, 0.0), sections=12):
+        self.surface_name = surface_name
+        self.center = center
+        self.sections = sections
+
+        # Perfil en el plano YZ, de arriba abajo. (Z hacia delante, Y arriba),
+        # relativo a center. Sale una cupula achatada tipo frente.
+        self.profile = profile or [
+            (0.0, 4.0, 0.0),
+            (0.0, 3.6, 2.2),
+            (0.0, 2.4, 3.6),
+            (0.0, 0.8, 4.2),
+            (0.0, -1.0, 4.3),
+            (0.0, -2.6, 4.0),
+        ]
+
+        self.guides_group = None
+
+    def create_skull(self):
+        if cmds.objExists(self.surface_name):
+            cmds.warning(f"[Guides] '{self.surface_name}' ya existe, no se "
+                         "vuelve a crear.")
+            return self.surface_name
+
+        points = [(self.center[0] + p[0],
+                   self.center[1] + p[1],
+                   self.center[2] + p[2]) for p in self.profile]
+
+        profile_curve = cmds.curve(d=3, p=points, n=f"{self.surface_name}_profile_CRV")
+
+        # Revolve alrededor de Y, pasando por el centro. startSweep 180 para que
+        # la costura caiga en la nuca y no en la frente.
+        surface = cmds.revolve(
+            profile_curve,
+            ch=False,
+            po=0,
+            ax=(0, 1, 0),
+            pivot=self.center,
+            sections=self.sections,
+            degree=3,
+            startSweep=180,
+            endSweep=540,
+            n=self.surface_name,
+        )[0]
+
+        cmds.delete(profile_curve)
+
+        # Rebuild para tener una parametrizacion limpia y previsible, igual que
+        # se hace con la superficie de la boca.
+        cmds.rebuildSurface(surface, ch=0, rpo=1, kr=0, kcp=0, kc=0,
+                            su=8, du=3, sv=6, dv=3)
+
+        self.guides_group = cmds.group(surface, n="eyebrowSkull_guides_GRP")
+        cmds.select(clear=True)
+        return self.guides_group
+
+
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
@@ -578,6 +650,12 @@ class CharacterGuides(object):
         #Crea les guies de les celles
         eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
         eyebrows_instance.eyebrows_guides()
+
+        #Crea la NURBS del crani per la que llisquen les celles.
+        #El centre va a l'altura de les guies de les celles (Y = 34) perque
+        #despres tot el guides_GRP es mou junt.
+        skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
+        skull_instance.create_skull()
         
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -588,7 +666,8 @@ class CharacterGuides(object):
             hand_instance.group,
             boca_instance.guides_group,
             jaw_instance.guides_group,
-            eyebrows_instance.guides_group
+            eyebrows_instance.guides_group,
+            skull_instance.guides_group
         ]
 
         # Filtra nomes els grups que existeixen
@@ -607,5 +686,3 @@ class CharacterGuides(object):
         #Agrupa totes les guies sota un únic grup principal
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
-
-        

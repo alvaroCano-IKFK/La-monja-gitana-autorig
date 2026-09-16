@@ -24,6 +24,11 @@ class FingersIkModule(object):
     twist_module, que tambien recibe parent=self.
     """
 
+    #: Nombre del atributo de seguimiento en el control IK. Se declara como
+    #: atributo de clase para que ToesIkModule solo tenga que cambiarlo.
+    FOLLOW_ATTR = "FollowHand"
+    FOLLOW_NICE = "Follow Hand"
+
     def __init__(self, parent, side="L", prefix="L_Character",
                  pref_angle=8.0,
                  ik_start_index=1,
@@ -360,8 +365,8 @@ class FingersIkModule(object):
         if cmds.objExists(bind_wrist):
             cmds.parentConstraint(bind_wrist, space_hand, mo=True)
 
-        if not cmds.attributeQuery("FollowHand", node=ik_ctrl, exists=True):
-            cmds.addAttr(ik_ctrl, ln="FollowHand", nn="Follow Hand", at="double",
+        if not cmds.attributeQuery(self.FOLLOW_ATTR, node=ik_ctrl, exists=True):
+            cmds.addAttr(ik_ctrl, ln=self.FOLLOW_ATTR, nn=self.FOLLOW_NICE, at="double",
                          min=0, max=1, dv=self.ik_follow_hand, k=True)
 
         pc = cmds.parentConstraint(space_world, space_hand, ik_gen, mo=True)[0]
@@ -371,9 +376,9 @@ class FingersIkModule(object):
         world_alias, hand_alias = aliases[0], aliases[1]
 
         rev = cmds.createNode("reverse", n=f"{self.prefix}_{finger_name}_ikFollow_REV")
-        cmds.connectAttr(f"{ik_ctrl}.FollowHand", f"{rev}.inputX")
+        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{rev}.inputX")
         cmds.connectAttr(f"{rev}.outputX", f"{pc}.{world_alias}")
-        cmds.connectAttr(f"{ik_ctrl}.FollowHand", f"{pc}.{hand_alias}")
+        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{pc}.{hand_alias}")
 
         return pc
 
@@ -386,3 +391,66 @@ class FingersIkModule(object):
         return self.create_finger_ik(ik_chain, bind_wrist, finger_name,
                                      parent_grp=parent_grp,
                                      curl_normal=curl_normal)
+
+
+class ToesIkModule(FingersIkModule):
+    """IK de los dedos del pie.
+
+    Es igual que el de la mano salvo el space switch: el dedo del pie se queda
+    clavado en el suelo mientras el talon despega, y el espacio alternativo es
+    el pie, no la muneca.
+
+    Esta clase existe porque ToesModule hereda de FingersModule y sobreescribia
+    create_ik_space_switch. Al sacar el IK a su propio modulo, ese override
+    dejaba de tener efecto: create_finger_ik llama a self.create_ik_space_switch
+    y ese self ya no es el modulo de dedos, es el de IK. La solucion es que el
+    modulo de dedos diga QUE clase de IK quiere (FingersModule.IK_BUILDER) y los
+    pies apunten a esta.
+    """
+
+    FOLLOW_ATTR = "FollowFoot"
+    FOLLOW_NICE = "Follow Foot"
+
+    def create_ik_space_switch(self, ik_gen, ik_ctrl, bind_ball, toe_name, parent_grp):
+        """Dos espacios para el control IK del dedo del pie.
+
+        - WORLD: grupo estático. Con FollowFoot = 0 el dedo se queda clavado en
+          el suelo aunque el pie ruede: es justo lo que se quiere para que los
+          dedos se queden pegados al suelo mientras el talón despega.
+        - FOOT: grupo constreñido al ball bind. Con FollowFoot = 1 el control
+          viaja con el pie.
+        """
+        spaces_grp = cmds.group(em=True,
+                                n=f"{self.prefix}_{toe_name}_ikSpaces_GRP",
+                                p=parent_grp)
+        cmds.setAttr(f"{spaces_grp}.visibility", 0)
+
+        space_world = cmds.group(em=True,
+                                 n=f"{self.prefix}_{toe_name}_ikSpaceWorld_GRP",
+                                 p=spaces_grp)
+        space_foot = cmds.group(em=True,
+                                n=f"{self.prefix}_{toe_name}_ikSpaceFoot_GRP",
+                                p=spaces_grp)
+
+        cmds.matchTransform(space_world, ik_gen)
+        cmds.matchTransform(space_foot, ik_gen)
+
+        if cmds.objExists(bind_ball):
+            cmds.parentConstraint(bind_ball, space_foot, mo=True)
+
+        if not cmds.attributeQuery(self.FOLLOW_ATTR, node=ik_ctrl, exists=True):
+            cmds.addAttr(ik_ctrl, ln=self.FOLLOW_ATTR, nn=self.FOLLOW_NICE,
+                         at="double", min=0, max=1, dv=self.ik_follow_hand, k=True)
+
+        pc = cmds.parentConstraint(space_world, space_foot, ik_gen, mo=True)[0]
+        cmds.setAttr(f"{pc}.interpType", 2)      # shortest, para que no flipee
+
+        aliases = cmds.parentConstraint(pc, q=True, weightAliasList=True)
+        world_alias, foot_alias = aliases[0], aliases[1]
+
+        rev = cmds.createNode("reverse", n=f"{self.prefix}_{toe_name}_ikFollow_REV")
+        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{rev}.inputX")
+        cmds.connectAttr(f"{rev}.outputX", f"{pc}.{world_alias}")
+        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{pc}.{foot_alias}")
+
+        return pc

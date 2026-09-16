@@ -29,6 +29,7 @@ import jaw_module
 import eyebrowsModule
 import eyes_module
 import progress_module
+import controlsLibrary
 import module_specs
 
 
@@ -306,6 +307,11 @@ class BuildRig(object):
     # PASOS FIJOS
     # ==================================================================
     def _core_root(self):
+        # Se mide el personaje ANTES de crear el primer control. Todo lo que
+        # venga despues coge el tamano de aqui, asi que ningun modulo necesita
+        # saber lo grande que es el personaje.
+        controlsLibrary.update_rig_scale_from_guides()
+
         self.root_rig = rigRoot_module.RigRoot(rig_name=self.RIG_NAME)
         self.root_rig.build()
 

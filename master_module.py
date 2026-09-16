@@ -35,6 +35,7 @@ import eyebrowsModule
 import extraFingerAttributes_module
 import module_specs
 import fingersIk_module
+import toes_module
 
 window_instance = None
 
@@ -77,6 +78,7 @@ def run():
     importlib.reload(extraFingerAttributes_module)
     importlib.reload(module_specs)
     importlib.reload(fingersIk_module)
+    importlib.reload(toes_module)
     
     global window_instance
 

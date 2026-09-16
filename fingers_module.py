@@ -28,6 +28,11 @@ class FingersModule(module_specs.FeaturesMixin):
 
     MODULE_TYPE = "finger"
 
+    #: Clase que monta el IK. Las subclases la cambian en vez de sobreescribir
+    #: metodos: ToesModule apunta a ToesIkModule, que tiene su propio space
+    #: switch (mundo <-> pie en vez de mundo <-> mano).
+    IK_BUILDER = fingersIk_module.FingersIkModule
+
     # ------------------------------------------------------------------ #
     #  INIT
     # ------------------------------------------------------------------ #
@@ -371,6 +376,38 @@ class FingersModule(module_specs.FeaturesMixin):
             cmds.connectAttr(f"{pbl}.outRotate",    f"{bnd}.rotate")
             cmds.connectAttr(switch_attr, f"{pbl}.weight")
 
+    def _setup_ik_builder(self):
+        """
+        Crea (o no) el modulo que monta el IK, segun la receta.
+
+        Va en un metodo propio y no dentro de build() porque ToesModule
+        sobreescribe build() entero: si esto viviera alli, en los dedos del pie
+        no se ejecutaria nunca y self.ik_builder se quedaria a None con
+        build_ik a True. Cualquier subclase que reescriba build() tiene que
+        llamar a esto despues de crear los grupos maestros, que es de donde
+        cuelgan los controles y los ikHandles.
+        """
+        if not self.build_ik:
+            self.ik_builder = None
+            print(f"[{self.prefix}] IK desactivado en la receta.")
+
+            return None
+
+        self.ik_builder = self.IK_BUILDER(
+            parent=self,
+            side=self.side,
+            prefix=self.prefix,
+            pref_angle=self.pref_angle,
+            ik_start_index=self.ik_start_index,
+            ik_tip_rotation=self.ik_tip_rotation,
+            ik_follow_hand=self.ik_follow_hand,
+            curl_axis_override=self.curl_axis_override,
+            ctrls_master_grp=self.ctrls_master_grp,
+            ikh_master_grp=self.ikh_master_grp,
+        )
+
+        return self.ik_builder
+
     # ------------------------------------------------------------------ #
     #  BUILD
     # ------------------------------------------------------------------ #
@@ -394,22 +431,7 @@ class FingersModule(module_specs.FeaturesMixin):
         self.ikh_master_grp = ikh_grp_name if cmds.objExists(ikh_grp_name) \
             else cmds.group(em=True, n=ikh_grp_name)
 
-        # ---- MODULO DE IK (solo si la receta lo pide) ----
-        if self.build_ik:
-            self.ik_builder = fingersIk_module.FingersIkModule(
-                parent=self,
-                side=self.side,
-                prefix=self.prefix,
-                pref_angle=self.pref_angle,
-                ik_start_index=self.ik_start_index,
-                ik_tip_rotation=self.ik_tip_rotation,
-                ik_follow_hand=self.ik_follow_hand,
-                curl_axis_override=self.curl_axis_override,
-                ctrls_master_grp=self.ctrls_master_grp,
-                ikh_master_grp=self.ikh_master_grp,
-            )
-        else:
-            print(f"[{self.prefix}] IK de dedos desactivado en la receta.")
+        self._setup_ik_builder()
 
         finger_roots = self.get_finger_roots()
         if not finger_roots:
@@ -454,7 +476,11 @@ class FingersModule(module_specs.FeaturesMixin):
 
             # 3.2 Duplicar cadenas FK / IK
             fk_chain = self.duplicate_chain(bind_chain, "fk")
-            ik_chain = self.duplicate_chain(bind_chain, "ik") if self.build_ik else []
+            # La cadena IK depende del builder, NO de self.build_ik. Si
+            # dependiera del flag, bastaria que alguien se saltase
+            # _setup_ik_builder() para tener cadena IK y ningun modulo que la
+            # monte: exactamente el AttributeError sobre None que daba antes.
+            ik_chain = self.duplicate_chain(bind_chain, "ik") if self.ik_builder else []
 
             # 3.3 Emparentar las tres cadenas bajo el wrist bind (mismos valores locales)
             if cmds.objExists(target_bind_wrist):

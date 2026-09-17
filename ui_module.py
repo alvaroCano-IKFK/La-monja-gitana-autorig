@@ -284,8 +284,11 @@ class Window(QtWidgets.QDialog):
         #-------------------------------------------------
         self.data_title = self.collapsible("1. Data management")
 
-        self.guides_btn = QtWidgets.QPushButton("GUIDES")
+        self.guides_btn = QtWidgets.QPushButton("BIPED TEMPLATE")
         self.general_style(self.guides_btn)
+
+        self.guides_btn02 = QtWidgets.QPushButton("QUADRUPED TEMPLATE")
+        self.general_style(self.guides_btn02)
 
         self.export_btn = QtWidgets.QPushButton("EXPORT GUIDES")
         self.general_style(self.export_btn)
@@ -479,6 +482,7 @@ class Window(QtWidgets.QDialog):
         main_layout.addStretch()
 
         self.data_title[1].addWidget(self.guides_btn)
+        self.data_title[1].addWidget(self.guides_btn02)
 
         imp_exp_layout = QtWidgets.QHBoxLayout()
         imp_exp_layout.addWidget(self.export_btn)
@@ -961,6 +965,7 @@ class Window(QtWidgets.QDialog):
 
     def create_connections(self):
         self.guides_btn.clicked.connect(lambda: self.character.create_guides())
+        #self.guides_btn02.clicked.connect(lambda: self.character.create_guides())
 
         self.export_btn.clicked.connect(self.export_guides)
         self.import_btn.clicked.connect(self.import_guides)

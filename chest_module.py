@@ -2,7 +2,7 @@ import maya.cmds as cmds
 
 import guides_module
 import limbs_module
-import spine_module
+import horse_spine
 import controlsLibrary
 import groups_module  
 

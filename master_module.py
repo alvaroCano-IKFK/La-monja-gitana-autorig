@@ -1,6 +1,6 @@
 import ui_module
 import guides_module
-import spine_module
+import horse_spine
 import importlib
 import limbs_module
 import controls_module
@@ -28,7 +28,7 @@ import curvature_module
 
 def run():
     # Esto obliga a Maya a leer los archivos del disco otra vez
-    importlib.reload(spine_module)
+    importlib.reload(horse_spine)
     importlib.reload(guides_module)
     importlib.reload(ui_module)
     importlib.reload(limbModule)

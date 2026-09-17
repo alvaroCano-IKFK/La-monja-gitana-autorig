@@ -52,6 +52,29 @@ class SpineGuides(object):
         if self.guides_group is None:
             print("Error al crear el grupo de guías.")
         
+class HorseSpineGuides(object):
+    """
+    Guies de l espina del quadrupede: 4 joints de la grupa a la creu.
+
+    Es mantenen els noms "root" i "chest" perque el hip_module, el
+    chest_module i el neck fan servir aquestes guies.
+    """
+    def __init__(self, names=("root", "spine_lumbar", "spine_thoracic", "chest"),
+                 positions=((0, 3, -15), (0, 2.5, -6.5), (0, 2.5, 2), (0, 3, 11))):
+        self.names = names
+        self.positions = positions
+        self.guides_group = None
+
+    def spine_guides(self):
+        cmds.select(clear=True)
+        joints = []
+        for name, pos in zip(self.names, self.positions):
+            joints.append(cmds.joint(p=pos, name=name))   #cada joint penja de l anterior
+
+        self.guides_group = cmds.group(joints[0], n="spine_guides_GRP")
+        cmds.select(clear=True)
+        return self.guides_group
+
 ########################################################################
 #NECK
 ########################################################################
@@ -204,47 +227,45 @@ class LegGuides(LimbGuides):
         cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
 
         # 5. Grupo con clavicule_start como raíz
-        self.guides_group = cmds.group(clav_start, n="leg_guides_GRP")
-
-        return self.guides_group
-    
-class BackLegGuides(LegGuides): 
-    def __init__(self, clavicule_start, limb_root, limb_mid, limb_end,
-                 clavicule_start_pos, limb_root_pos, limb_mid_pos, limb_end_pos):
-        
-        super(BackLegGuides, self).__init__(
-            clavicule_start, clavicule_start,   # passa clavicule_start dos vegades per no trencar LegGuides
-            limb_root, limb_mid, limb_end,
-            clavicule_start_pos, clavicule_start_pos,  # idem amb la pos
-            limb_root_pos, limb_mid_pos, limb_end_pos
-        )
-        self.group_name = "back_leg_guides_GRP"
-
-    def create_chain(self):
-        """
-        Cadena sense clavicule: clavicule_start -> hip -> knee -> ankle
-        """
-        cmds.select(clear=True)
-
-        hip   = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
-        knee  = cmds.joint(n=self.limb_mid,  p=self.limb_mid_pos)
-        ankle = cmds.joint(n=self.limb_end,  p=self.limb_end_pos)
-
-        cmds.joint(hip, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
-        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
-
-        cmds.select(clear=True)
-        clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)
-
-        # Hip directament sota clavicule_start (sense clavicule intermedi)
-        cmds.parent(hip, clav_start)
-
-        cmds.joint(clav_start, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
-        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
-
         self.guides_group = cmds.group(clav_start, n=self.group_name)
 
         return self.guides_group
+    
+class HindLegGuides(object):
+    """
+    Pota del darrere del quadrupede: 3 segments, sense clavicula.
+
+      hip   maluc (articulacio coxofemoral)
+      knee  babilla (stifle)
+      hock  garro (hock)
+      ankle menudillo (fetlock)
+
+    La pelvis es la de l espina, per aixo no hi ha clavicule_start/clavicule.
+    """
+    def __init__(self, hip, knee, hock, ankle,
+                 hip_pos, knee_pos, hock_pos, ankle_pos,
+                 group_name="back_leg_guides_GRP"):
+        self.names = [hip, knee, hock, ankle]
+        self.positions = [hip_pos, knee_pos, hock_pos, ankle_pos]
+        self.group_name = group_name
+        self.joint_orient = "xzy"
+        self.up_axis = "zdown"
+        self.ankle_joint = ankle
+        self.guides_group = None
+
+    def create_chain(self):
+        cmds.select(clear=True)
+        joints = []
+        for name, pos in zip(self.names, self.positions):
+            joints.append(cmds.joint(n=name, p=pos))   #cada joint penja de l anterior
+
+        cmds.joint(joints[0], edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+        cmds.setAttr(f"{joints[-1]}.jointOrient", 0, 0, 0)
+
+        self.guides_group = cmds.group(joints[0], n=self.group_name)
+        cmds.select(clear=True)
+        return self.guides_group
+
 ############################################################
 #FOOT
 ############################################################
@@ -308,6 +329,58 @@ class FootGuides(object):
         cmds.parent(ball, ankle)
         cmds.parent(heel, ankle) 
 
+############################################################
+#HOOF (quadrupede)
+############################################################
+
+class HoofGuides(object):
+    """
+    Guies del casc a partir del menudillo (ankle de la cama).
+
+      coronet (ball)   corona, inici del casc
+      toe     (tip)    lumbre, punta del casc a terra
+      heel             talons, darrere del casc a terra
+      bank_in/out      vores interna i externa del casc a terra
+
+    Els offsets son relatius al menudillo. Per al costat L, +X es l exterior.
+    """
+    def __init__(self, leg_instance, coronet_name, toe_name, heel_name,
+                 bank_in_name, bank_out_name,
+                 coronet_offset=(0, -3.5, 1.2),
+                 toe_offset=(0, -5.5, 2.5),
+                 heel_offset=(0, -5.5, -0.3),
+                 bank_in_offset=(-1.2, -5.5, 1.0),
+                 bank_out_offset=(1.2, -5.5, 1.0)):
+        self.leg = leg_instance
+        self.data = [
+            (coronet_name, coronet_offset),
+            (toe_name, toe_offset),
+            (heel_name, heel_offset),
+            (bank_in_name, bank_in_offset),
+            (bank_out_name, bank_out_offset),
+        ]
+        self.joints = []
+
+    def hoof_guides(self):
+        ankle = self.leg.ankle_joint
+        ankle_pos = cmds.xform(ankle, q=True, ws=True, t=True)
+
+        created = {}
+        for name, offset in self.data:
+            cmds.select(clear=True)
+            pos = [ankle_pos[i] + offset[i] for i in range(3)]
+            created[name] = cmds.joint(n=name, p=pos)
+
+        coronet, toe, heel, bank_in, bank_out = [created[n] for n, _ in self.data]
+
+        #corona, talons i vores pengen del menudillo; la lumbre de la corona
+        cmds.parent(coronet, heel, bank_in, bank_out, ankle)
+        cmds.parent(toe, coronet)
+
+        self.joints = [coronet, toe, heel, bank_in, bank_out]
+        cmds.select(clear=True)
+        return self.joints
+
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
@@ -324,7 +397,8 @@ class CharacterGuides(object):
 
         """
         #Crea les guies de la spine
-        spine_instance = SpineGuides("root", "chest", (0, 3, 11))
+        #Espina del quadrupede (grupa -> creu)
+        spine_instance = HorseSpineGuides()
         spine_instance.spine_guides()
 
         #Crea les guies del coll
@@ -344,39 +418,34 @@ class CharacterGuides(object):
         )
         leg_instance.create_chain()
         
-        back_leg_instance = BackLegGuides(
-            "L_clavicule_start_back","L_hip_back", "L_knee_back", "L_ankle_back",
-            (3.6,2,-17),
-            (3.6, -5, -14),
-            (3.6, -16.5, -19),
+        #Pota del darrere: 3 segments i sense clavicula (la pelvis es la de l espina)
+        #maluc -> babilla (endavant) -> garro (enrere) -> menudillo
+        back_leg_instance = HindLegGuides(
+            "L_hip_back", "L_knee_back", "L_hock_back", "L_ankle_back",
+            (3.6, -1, -16.5),
+            (3.6, -9, -13),
+            (3.6, -18, -20),
             (3.6, -27, -19.5)
         )
         back_leg_instance.create_chain()
 
 
 
-        #Crea les guies del peu a partir de la cama
-        foot_instance = FootGuides(
+        #Crea les guies dels cascos (ankle = menudillo)
+        #Es mantenen els noms ball/toe_tip/heel perque el LegModule els fa servir
+        hoof_instance = HoofGuides(
             leg_instance,
-            "L_ball",
-            "L_toe_tip",
-            "L_heel",
-            (0, -2, 1),
-            (0, -5, 3),
-            (0,-5,-3)
+            "L_ball", "L_toe_tip", "L_heel",
+            "L_hoof_in", "L_hoof_out"
         )
-        foot_instance.foot_guides()
-        
-        back_foot_instance = FootGuides(
+        hoof_instance.hoof_guides()
+
+        back_hoof_instance = HoofGuides(
             back_leg_instance,
-            "L_ball_back",
-            "L_toe_tip_back",
-            "L_heel_back",
-            (0, -2, 1),
-            (0, -5, 3),
-            (0, -5, -3)
+            "L_ball_back", "L_toe_tip_back", "L_heel_back",
+            "L_hoof_in_back", "L_hoof_out_back"
         )
-        back_foot_instance.foot_guides()
+        back_hoof_instance.hoof_guides()
        
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -402,5 +471,3 @@ class CharacterGuides(object):
         #Agrupa totes les guies sota un únic grup principal
         self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
         cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
-
-        

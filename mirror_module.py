@@ -1,8 +1,23 @@
 import maya.cmds as cmds
 
+
 class Mirror(object):
-    def __init__(self, clavicule_guide="L_clavicule_start", 
-                 clavicule_guide_back="L_clavicule_start_back",
+    """
+    Mirror de les guies de les potes L -> R.
+
+    Davant:  L_clavicule_start -> L_clavicule -> L_hip -> L_knee -> L_ankle
+    Darrere: L_hip_back -> L_knee_back -> L_hock_back -> L_ankle_back
+             (sense clavicula: la pelvis es la de l espina)
+
+    Casc (fills del menudillo): ball (amb toe_tip a dins), heel, hoof_in, hoof_out.
+    La cadena principal es fa amb mirrorJoint; els joints del casc es tornen
+    a crear a ma espellant la X, com abans.
+    """
+
+    FOOT_NAMES = ["ball", "toe_tip", "heel", "hoof_in", "hoof_out"]
+
+    def __init__(self, clavicule_guide="L_clavicule_start",
+                 clavicule_guide_back="L_hip_back",
                  foot_joints=None,
                  foot_joints_back=None,
                  rig_name="R_Character"):
@@ -14,32 +29,71 @@ class Mirror(object):
         self.r_clavicule_start = None
         self.r_clavicule_start_back = None
 
+    # ------------------------------------------------------------------ #
+    # HELPERS
+    # ------------------------------------------------------------------ #
+    def _foot_list(self, given, suffix):
+        """
+        Llista de joints del casc: [ball, toe_tip, heel, hoof_in, hoof_out].
+        Si la UI passa la llista antiga de 3 (ball, tip, heel), s hi afegeixen
+        les vores del casc.
+        """
+        defaults = [f"L_{n}{suffix}" for n in self.FOOT_NAMES]
+        if not given:
+            return defaults
+        given = list(given)
+        for extra in defaults[len(given):]:
+            given.append(extra)
+        return given
+
+    @staticmethod
+    def _to_r(name):
+        return name.replace("L_", "R_", 1)
+
+    def _resolve_back_root(self):
+        """Compatibilitat: si arriba el nom antic de la clavicula del darrere, fa servir L_hip_back."""
+        if cmds.objExists(self.clavicule_guide_back):
+            return self.clavicule_guide_back
+        if cmds.objExists("L_hip_back"):
+            print(f"[Mirror] {self.clavicule_guide_back} no existeix, es fa servir L_hip_back.")
+            return "L_hip_back"
+        return self.clavicule_guide_back
+
+    # ------------------------------------------------------------------ #
+    # MIRROR D UNA CADENA
+    # ------------------------------------------------------------------ #
     def _mirror_chain(self, guide, foot_joints, ankle_name):
         if not cmds.objExists(guide):
             cmds.warning(f"No existe: {guide}")
             return None
+        if not cmds.objExists(ankle_name):
+            cmds.warning(f"No existe: {ankle_name}")
+            return None
 
-        # foot_joints esperado: [ball, tip, heel]
-        # Solo sacamos al mundo los joints raíz (ball y heel), tip va con ball
-        ball_jnt = foot_joints[0]  # ball
-        tip_jnt  = foot_joints[1]  # tip (hijo de ball, no tocar)
-        heel_jnt = foot_joints[2]  # heel
+        ball_jnt, tip_jnt = foot_joints[0], foot_joints[1]
+        # tot menys el tip (que va dins del ball) penja directament del menudillo
+        root_foot_joints = [j for j in foot_joints if j != tip_jnt and cmds.objExists(j)]
 
-        root_foot_joints = [ball_jnt, heel_jnt]  # solo los que van directo al ankle
+        # 0. Si ja hi ha un R d abans, s esborra per no crear R_xxx1
+        r_root_name = self._to_r(guide)
+        if cmds.objExists(r_root_name):
+            cmds.delete(r_root_name)
+            print(f"[Mirror] Esborrat {r_root_name} anterior.")
+        for jnt in foot_joints:
+            r_old = self._to_r(jnt)
+            if cmds.objExists(r_old):
+                cmds.delete(r_old)
 
-        # 1. Saca solo ball y heel al mundo (tip sale con ball)
+        # 1. Treu els joints del casc al mon (el tip surt amb el ball)
         for jnt in root_foot_joints:
-            if cmds.objExists(jnt):
-                cmds.parent(jnt, world=True)
+            cmds.parent(jnt, world=True)
 
-        # 2. Guarda el padre del grupo
+        # 2-3. Treu la cadena del seu grup
         original_parent = cmds.listRelatives(guide, parent=True)
-
-        # 3. Saca al mundo
         if original_parent:
             cmds.parent(guide, world=True)
 
-        # 4. Mirror cadena principal
+        # 4. Mirror de la cadena principal
         mirrored = cmds.mirrorJoint(
             guide,
             mirrorYZ=True,
@@ -48,59 +102,55 @@ class Mirror(object):
         )
         r_guide = mirrored[0]
 
-        # 5. Reemparenta L al grupo original
+        # 5-6. Torna a posar L on era
         if original_parent:
             cmds.parent(guide, original_parent[0])
-
-        # 6. Reemparenta ball y heel L de vuelta al ankle L (tip ya va con ball)
         for jnt in root_foot_joints:
-            if cmds.objExists(jnt):
-                cmds.parent(jnt, ankle_name)
+            cmds.parent(jnt, ankle_name)
 
-        # 7. Crea los joints del pie R espejando X manualmente
-        r_ankle_name = ankle_name.replace("L_", "R_")
+        # 7. Crea el casc R espellant la X
+        r_ankle_name = self._to_r(ankle_name)
 
-        # Crea R_ball (sin padre aún)
+        def mirrored_pos(jnt):
+            p = cmds.xform(jnt, q=True, ws=True, t=True)
+            return (-p[0], p[1], p[2])
+
+        # ball + tip (fill del ball)
         cmds.select(clear=True)
-        ball_pos = cmds.xform(ball_jnt, q=True, ws=True, t=True)
-        r_ball_name = ball_jnt.replace("L_", "R_")
-        r_ball = cmds.joint(n=r_ball_name, p=(-ball_pos[0], ball_pos[1], ball_pos[2]))
-
-        # Crea R_tip hijo de R_ball
-        tip_pos = cmds.xform(tip_jnt, q=True, ws=True, t=True)
-        r_tip_name = tip_jnt.replace("L_", "R_")
-        r_tip = cmds.joint(n=r_tip_name, p=(-tip_pos[0], tip_pos[1], tip_pos[2]))  # ya queda hijo de r_ball
-
-        # Emparenta R_ball al R_ankle
+        r_ball = cmds.joint(n=self._to_r(ball_jnt), p=mirrored_pos(ball_jnt))
+        if cmds.objExists(tip_jnt):
+            cmds.joint(n=self._to_r(tip_jnt), p=mirrored_pos(tip_jnt))
         if cmds.objExists(r_ankle_name):
             cmds.parent(r_ball, r_ankle_name)
 
-        # Crea R_heel hijo de R_ankle
+        # heel, hoof_in, hoof_out: fills directes del menudillo
+        for jnt in root_foot_joints:
+            if jnt == ball_jnt:
+                continue
+            cmds.select(clear=True)
+            r_jnt = cmds.joint(n=self._to_r(jnt), p=mirrored_pos(jnt))
+            if cmds.objExists(r_ankle_name):
+                cmds.parent(r_jnt, r_ankle_name)
         cmds.select(clear=True)
-        heel_pos = cmds.xform(heel_jnt, q=True, ws=True, t=True)
-        r_heel_name = heel_jnt.replace("L_", "R_")
-        r_heel = cmds.joint(n=r_heel_name, p=(-heel_pos[0], heel_pos[1], heel_pos[2]))
-        if cmds.objExists(r_ankle_name):
-            cmds.parent(r_heel, r_ankle_name)
 
-        # 8. Mete R al mismo grupo
+        # 8. R al mateix grup que L
         if original_parent:
             cmds.parent(r_guide, original_parent[0])
 
         print(f"Mirror OK -> {r_guide}")
         return r_guide
-    
+
     def mirror(self):
-        # Mirror pata delantera
+        # Pota de davant
         self.r_clavicule_start = self._mirror_chain(
             self.clavicule_guide,
-            self.foot_joints,
+            self._foot_list(self.foot_joints, ""),
             "L_ankle"
         )
 
-        # Mirror pata trasera
+        # Pota del darrere (arrel = maluc, sense clavicula)
         self.r_clavicule_start_back = self._mirror_chain(
-            self.clavicule_guide_back,
-            self.foot_joints_back,
+            self._resolve_back_root(),
+            self._foot_list(self.foot_joints_back, "_back"),
             "L_ankle_back"
         )

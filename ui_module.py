@@ -4,7 +4,7 @@ import os
 import math
 import json
 import guides_module
-import spine_module
+import horse_spine
 import limbs_module
 import reorient_module
 import mirror_module

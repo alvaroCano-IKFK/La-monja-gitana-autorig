@@ -1,5 +1,5 @@
 import maya.cmds as cmds
-import spine_module
+import horse_spine
 import controlsLibrary
 import guides_module
 import groups_module 

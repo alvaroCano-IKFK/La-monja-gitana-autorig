@@ -1,6 +1,6 @@
 import maya.cmds as cmds
 import guides_module
-import spine_module
+import horse_spine
 import hip_module
 import body_module
 import limbs_module

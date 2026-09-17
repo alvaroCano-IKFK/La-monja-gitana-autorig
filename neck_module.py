@@ -2,7 +2,7 @@ import maya.cmds as cmds
 import controlsLibrary
 from groups_module import ControlsGroups
 import guides_module
-import spine_module
+import horse_spine
 
 
 class NeckModule(object):

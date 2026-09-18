@@ -49,7 +49,13 @@ class JawModule(object):
         #
         # frontAxis / upAxis: 0=X, 1=Y, 2=Z. Ajusta segun como esten orientados
         # tus joints respecto de la curva (ver nota de mirror en el README).
-        self.lip_follow = True
+        # A False: la rotacion de estos joints NO puede salir de la tangente
+        # de la JawPinchLine. Esa curva cambia de forma al abrir la boca, asi
+        # que la tangente barre un angulo enorme y rompe el skinning.
+        # Segun la infografia ("Output Joints"), la orientacion de estos joints
+        # sale de un aimMatrix alineado al control local del jaw, no de la
+        # curva. Mientras eso no este montado, sin rotacion es lo correcto.
+        self.lip_follow = False
         self.lip_front_axis = 0
         self.lip_up_axis = 1
         self.lip_inverse_front = False
@@ -1207,6 +1213,18 @@ class JawModule(object):
 
         print(f"[Jaw] Upper lip driven: {upper_driven_local} / {upper_driven_global}")
         print(f"[Jaw] Lower lip driven: {lower_driven_local} / {lower_driven_global}")
+        # Los composeMatrix de los trackers de la boca se crearon sin rotacion
+        # porque MouthModule corre antes que esto y los *Local_TRN del jaw no
+        # existian. Ahora si, asi que se rematan.
+        for mouth in self.mouth_instances:
+            if hasattr(mouth, "connect_tracker_rotations"):
+                mouth.connect_tracker_rotations()
+                break
+        else:
+            cmds.warning("[Jaw] Sin mouth_instances: los trackers de la boca se "
+                         "quedan sin rotacion de mandibula. Llama a "
+                         "MouthModule.connect_tracker_rotations() a mano.")
+
         print(f"[Jaw] Corner joints: {corner_joints}")
         print(f"[Jaw] Pinch lines:   {jaw_pinch_lines}")
         print(f"[Jaw] Pinch skins:   {jaw_pinch_skins}")

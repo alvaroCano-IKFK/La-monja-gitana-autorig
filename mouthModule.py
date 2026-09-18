@@ -50,6 +50,10 @@ class MouthModule(object):
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
+
+        # True  -> la cadena cuelga de dos padres (centro del labio + comisura).
+        # False -> vuelve al sistema de trackers sobre curva, con su flip.
+        self.chain_from_two_parents = True
         
         # Nodos que expone el modulo para que el jaw pueda engancharse.
         self.mid_lip_ctrl = None
@@ -678,6 +682,159 @@ class MouthModule(object):
 
         return self.curve_transform, upperCurve, lowerCurve, levatorCurve, depresorCurve, upperPinchCurve, lowerPinchCurve
 
+    # ==================================================================
+    # LA CADENA COLGADA DE DOS PADRES (sin locators ni matrices)
+    # ------------------------------------------------------------------
+    # Cada control intermedio se cuelga de un parentConstraint con dos
+    # targets: el control del centro del labio y el de la comisura, con
+    # pesos. El centro del labio inferior lo sigue conduciendo el jaw, asi
+    # que la apertura llega igual.
+    #
+    # Por que esto no puede flipar: los dos targets son controles, no una
+    # curva. Un parentConstraint interpola entre dos transforms y la
+    # orientacion que sale es intermedia entre las dos, o sea que los
+    # controles se inclinan solos segun se separen el centro y la comisura.
+    # No hay ninguna derivada por el camino.
+    #
+    # Peso = el del CENTRO del labio; la comisura se lleva el resto.
+    # Son los numeros del profe, con el mismo falloff arriba y abajo.
+    # ==================================================================
+    CHAIN_PARENT_WEIGHTS = {
+        "levator":    0.75,
+        "upperPinch": 0.35,
+        "depresor":   0.75,
+        "lowerPinch": 0.35,
+    }
+
+    def _get_chain_target_group(self, base_name):
+        """
+        Grupo del control al que hay que aplicar el constraint.
+
+        Unos controles llevan un '_negative_GRP' por encima del '_GRP' (el que
+        invierte la escala) y otros no. El bueno es el de mas arriba, porque es
+        el que mouthModule constrenia antes.
+        """
+        negative = f"{self.prefix}_{base_name}_negative_GRP"
+        if cmds.objExists(negative):
+            return negative
+
+        group = f"{self.prefix}_{base_name}_GRP"
+
+        return group if cmds.objExists(group) else None
+
+    def _constrain_chain_to_lip_and_corner(self):
+        """
+        Cuelga los controles de la cadena entre el centro del labio y la
+        comisura, y quita los constraints de tracker que hubiera.
+
+        Sustituye al sistema de '*Follow_trackerGlobal_LOC'. Es mas lento de
+        calcular que las matrices, pero no depende de la forma de ninguna curva
+        y por eso no puede dar saltos.
+        """
+        corner_ctrl = f"{self.prefix}_end_LIP_CTRL"
+        if not cmds.objExists(corner_ctrl):
+            cmds.warning(f"[Mouth] No existe '{corner_ctrl}'. No cuelgo la cadena.")
+            return []
+
+        constraints = []
+
+        for base_name, center_weight in self.CHAIN_PARENT_WEIGHTS.items():
+            half = "lipUpper" if base_name in ("levator", "upperPinch") else "lipLower"
+            center_ctrl = f"C_{self.rig_name}_mid_{half}_CTRL"
+
+            if not cmds.objExists(center_ctrl):
+                cmds.warning(f"[Mouth] No existe '{center_ctrl}'.")
+                continue
+
+            group = self._get_chain_target_group(base_name)
+            if not group:
+                cmds.warning(f"[Mouth] No encuentro el grupo de '{base_name}'.")
+                continue
+
+            # Fuera los de antes: dos parentConstraint en el mismo nodo se
+            # pelean, no se suman.
+            for constraint in cmds.listRelatives(group, children=True,
+                                                 type="parentConstraint") or []:
+                cmds.delete(constraint)
+
+            constraint = cmds.parentConstraint(center_ctrl, corner_ctrl,
+                                               group, mo=True)[0]
+            aliases = cmds.parentConstraint(constraint, q=True, weightAliasList=True)
+            cmds.setAttr(f"{constraint}.{aliases[0]}", center_weight)
+            cmds.setAttr(f"{constraint}.{aliases[1]}", 1.0 - center_weight)
+
+            # Con dos targets el interpType por defecto (Average) promedia
+            # angulos de Euler, que es donde salen los saltos de 180.
+            cmds.setAttr(f"{constraint}.interpType", 2)   # Shortest
+
+            constraints.append(constraint)
+            print(f"[Mouth] {group}: {center_ctrl} {center_weight:.2f} / "
+                  f"{corner_ctrl} {1.0 - center_weight:.2f}")
+
+        return constraints
+
+    def _get_jaw_rotation_source(self, base_name):
+        """
+        Control local de la mandibula del que sale la rotacion de un tracker.
+
+        La cadena de arriba (labio superior, levator, upperPinch) mira al
+        jawUpper; la de abajo (labio inferior, depresor, lowerPinch) al
+        jawLower. Es el reparto que describe la infografia.
+        """
+        lower_keys = ("lower", "depresor")
+        half = "Lower" if any(key in base_name.lower() for key in
+                              [k.lower() for k in lower_keys]) else "Upper"
+
+        return f"C_{self.rig_name}_jaw{half}Local_TRN"
+
+    def _connect_tracker_rotation(self, aim_node, base_name):
+        """
+        Engancha el control local del jaw como target del aimMatrix.
+
+        Devuelve True si ha podido. Es idempotente y no pisa una conexion que
+        ya este puesta.
+        """
+        source = self._get_jaw_rotation_source(base_name)
+
+        if not cmds.objExists(source):
+            return False
+
+        plug = f"{aim_node}.primaryTargetMatrix"
+        if cmds.listConnections(plug, source=True, destination=False):
+            return True
+
+        cmds.connectAttr(f"{source}.worldMatrix[0]", plug, force=True)
+
+        return True
+
+    def connect_tracker_rotations(self):
+        """
+        Engancha la rotacion de TODOS los trackers ya creados a la mandibula.
+
+        Hay que llamarla DESPUES de construir el jaw: cuando corre MouthModule
+        los *Local_TRN del jaw no existen todavia, asi que los composeMatrix se
+        quedan con inputRotate a cero. Esta pasada los remata.
+        """
+        connected = []
+        missing = []
+
+        for aim_node in cmds.ls("*_tracker_AMX", type="aimMatrix") or []:
+            # <prefix>_<base_name>_tracker_AMX
+            base_name = aim_node.split("_")[-3] if aim_node.count("_") >= 3 else aim_node
+
+            if self._connect_tracker_rotation(aim_node, base_name):
+                connected.append(aim_node)
+            else:
+                missing.append(aim_node)
+
+        if missing:
+            cmds.warning(f"[Mouth] {len(missing)} trackers sin rotacion de jaw: "
+                         f"no encuentro los *Local_TRN. {missing}")
+
+        print(f"[Mouth] Rotacion de jaw conectada en {len(connected)} trackers.")
+
+        return connected
+
     def _get_or_create_curve_motion_locator(self, curve_name, base_name, u_value, side=None):
         """
         Crea (una única vez) un motionPath sobre `curve_name` fijo en `u_value`,
@@ -703,11 +860,97 @@ class MouthModule(object):
         motionpath_node = cmds.rename(motionpath_node, motionpath_name)
 
         cmds.connectAttr(f"{curve_name}.worldSpace[0]", f"{motionpath_node}.geometryPath")
+        # ==========================================================
+        # fractionMode = 1  (en el Attribute Editor: "Parametric Length"
+        # DESMARCADO, que es justo lo que pide la infografia)
+        # ----------------------------------------------------------
+        # Sin esto, uValue NO es una fraccion de 0 a 1: es el PARAMETRO de la
+        # curva. Estas curvas se rebuildean a grado 3 con 4 spans, o sea rango
+        # de parametro 0 a 4.
+        #
+        # Con lo que se le estaba pasando, el reparto quedaba asi:
+        #     levator  L u=0.25  R u=0.75   -> los dos dentro del primer span
+        #     pinch    L u=0.10  R u=0.90   -> idem, primer 22% de la curva
+        #
+        # O sea que el tracker del lado R no estaba en el lado R: estaba pegado
+        # al del lado L, los dos amontonados junto a la comisura del principio.
+        # Y ahi es donde la curva tiene mas curvatura, asi que cualquier
+        # deformacion mueve mucho esa zona y los trackers se cruzan entre ellos.
+        # Eso es el flip.
+        #
+        # Con fractionMode a 1, u=0.25 es el 25% de la longitud y u=0.75 el 75%,
+        # que es lo que se pretendia.
+        cmds.setAttr(f"{motionpath_node}.fractionMode", 1)
         cmds.setAttr(f"{motionpath_node}.uValue", u_value)
 
         locatorTracker = cmds.spaceLocator(name=locator_name)[0]
-        cmds.connectAttr(f"{motionpath_node}.allCoordinates", f"{locatorTracker}.translate")
-        cmds.connectAttr(f"{motionpath_node}.rotate", f"{locatorTracker}.rotate")
+
+        # ==========================================================
+        # POSICION DE LA CURVA, ROTACION DE LA MANDIBULA
+        # ----------------------------------------------------------
+        # Esto es literalmente lo que pide la infografia en "Individual lip
+        # control": "With a composeMatrix get the translations from the
+        # allCoordinates and the rotations from the upperJaw/lowerJaw".
+        #
+        # Antes se conectaba 'motionPath.rotate' directo al locator. Esa
+        # rotacion es la TANGENTE de la curva, y la curva cambia de forma
+        # cuando se abre la mandibula o cuando mueves un control de la cadena.
+        # De ahi el flip, y de ahi que mover mucho el depresor rotara los pinch:
+        # el tracker del lowerPinch va sobre la curva del depresor.
+        #
+        # El composeMatrix separa las dos cosas: la curva aporta DONDE, y el
+        # control local de la mandibula aporta COMO. El locator se queda con
+        # los canales a 0 y todo entra por offsetParentMatrix, asi que no hay
+        # nada que se pueda mover a mano por error.
+        # ==========================================================
+        compose_node = NodeCreator(
+            side=prefix, node_type="composeMatrix", base_name=base_name,
+            name="Tracker", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        compose_node = cmds.rename(compose_node, f"{prefix}_{base_name}_tracker_CMX")
+
+        cmds.connectAttr(f"{motionpath_node}.allCoordinates",
+                         f"{compose_node}.inputTranslate")
+
+        # --- ORIENTACION: aimMatrix, no la tangente ---
+        # Infografia, "Output Joints": "For each motionPath create an aimMatrix
+        # to align the vertical axis with the upper/lower jaw local control and
+        # the horizontal to any world horizontal axis."
+        #
+        # La diferencia con lo de antes es de donde sale la orientacion:
+        #   - tangente de la curva -> es una DERIVADA. Basta que la curva se
+        #     doble un poco para que pegue un barrido enorme. De ahi el flip.
+        #   - aimMatrix contra un transform -> el eje vertical copia al del
+        #     control del jaw y el horizontal queda clavado al mundo. Los
+        #     controles se inclinan al abrir la boca (la rotacion "natural" que
+        #     se ve en el gif) pero no hay nada que pueda dar un salto, porque
+        #     ninguna de las dos referencias depende de la forma de la curva.
+        aim_node = NodeCreator(
+            side=prefix, node_type="aimMatrix", base_name=base_name,
+            name="Tracker", tag="CTRL", parent=None, custom_suffix=None
+        ).create()
+        aim_node = cmds.rename(aim_node, f"{prefix}_{base_name}_tracker_AMX")
+
+        cmds.connectAttr(f"{compose_node}.outputMatrix", f"{aim_node}.inputMatrix")
+
+        # Vertical: se ALINEA con el eje Y del control local del jaw.
+        cmds.setAttr(f"{aim_node}.primaryMode", 2)            # align
+        cmds.setAttr(f"{aim_node}.primaryInputAxis", 0, 1, 0, type="double3")
+        cmds.setAttr(f"{aim_node}.primaryTargetVector", 0, 1, 0, type="double3")
+
+        # Horizontal: contra el mundo. El secondaryTargetMatrix se queda en
+        # identidad a proposito, asi que el eje X no depende de nada movil.
+        cmds.setAttr(f"{aim_node}.secondaryMode", 2)          # align
+        cmds.setAttr(f"{aim_node}.secondaryInputAxis", 1, 0, 0, type="double3")
+        cmds.setAttr(f"{aim_node}.secondaryTargetVector", 1, 0, 0, type="double3")
+
+        cmds.connectAttr(f"{aim_node}.outputMatrix",
+                         f"{locatorTracker}.offsetParentMatrix")
+
+        # El target del aim se engancha aparte: cuando corre MouthModule el jaw
+        # todavia no existe. Sin el, el aimMatrix alinea contra el mundo y los
+        # controles salen rectos (que es lo que estabas viendo).
+        self._connect_tracker_rotation(aim_node, base_name)
         
         # 3. Crear Tracker Global limpio
         if not cmds.objExists(locatorGlobal_name):
@@ -2025,5 +2268,10 @@ class MouthModule(object):
             upperPinch_ctrl_grp,
             lowerPinch_ctrl_grp,
         ])
+
+        # Los controles de la cadena, colgados del centro del labio y de la
+        # comisura. Va al final: necesita que los controles ya existan.
+        if self.chain_from_two_parents:
+            self._constrain_chain_to_lip_and_corner()
 
         return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn

@@ -350,18 +350,59 @@ class BuildRig(object):
     # donde solo estan las del brazo, la boca se salta con un aviso en vez de
     # tirar el build entero.
     # ==================================================================
+    @staticmethod
+    def _mouth_class():
+        """
+        La clase de boca que haya en mouthModule.
+
+        El contenido del modulo simple se pego dentro de mouthModule.py
+        conservando el nombre de archivo, asi que la clase puede llamarse
+        SimpleMouthModule o MouthModule segun como quedara el pegado. Se
+        aceptan las dos para no depender de ese detalle.
+        """
+        for name in ("SimpleMouthModule", "MouthModule"):
+            mouth_class = getattr(mouthModule, name, None)
+            if mouth_class is not None:
+                return mouth_class
+
+        return None
+
     def _build_mouth(self, side, features):
-        if not cmds.objExists("boca_surface"):
-            cmds.warning(f"[Mouth {side}] No hay 'boca_surface'. Se salta.")
+        """
+        El sistema simple construye LOS DOS LADOS de una vez.
+
+        La receta puede traer una entrada de boca por lado. Si ya se construyo
+        en la primera, la segunda devuelve la misma instancia en vez de montar
+        todo otra vez encima: el modulo saca el lado R negando la X de la guia
+        L, asi que no necesita una pasada por lado ni las guias del lado R.
+        """
+        mouth_class = self._mouth_class()
+        if mouth_class is None:
+            cmds.warning("[Mouth] No encuentro ninguna clase de boca en "
+                         "mouthModule. Se salta.")
             return None
 
-        mouth = mouthModule.MouthModule(
-            boca_surface="boca_surface",
-            lip_mid="C_lip_mid",
-            lip_end=f"{side}_lip_end",
-            root_instance=self.root_rig,
+        existing = self.modules.get(("mouth", "L")) or self.modules.get(("mouth", "R"))
+        if isinstance(existing, mouth_class):
+            print(f"[Mouth {side}] Ya construida en la otra pasada.")
+            return existing
+
+        # El sistema simple no usa la NURBS: lo que necesita son las guias.
+        required = ["C_lip_mid", "L_lip_end", "L_lip_in01", "L_lip_in02"]
+        missing = [guide for guide in required if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Mouth {side}] Faltan guias: {missing}. Se salta. "
+                         f"Si vienes de una escena antigua, borra las guias y "
+                         f"vuelve a crearlas: lip_in01 y lip_in02 son nuevas.")
+            return None
+
+        mouth = mouth_class(
             rig_name=self.RIG_NAME,
-            side=side,
+            root_instance=self.root_rig,
+            lip_mid="C_lip_mid",
+            lip_end="L_lip_end",
+            lip_in01="L_lip_in01",
+            lip_in02="L_lip_in02",
         )
         mouth.build()
 
@@ -388,6 +429,14 @@ class BuildRig(object):
             mouth_instances=mouth_instances,
         )
         self.jaw_rig.build()
+
+        # La boca se puede haber construido ANTES que el jaw, y entonces sus
+        # constraints contra la mandibula quedaron pendientes. Ahora los
+        # controles del jaw ya existen, asi que se rematan. attach_to_jaw() es
+        # idempotente, de modo que si ya se engancho no hace nada.
+        for instance in mouth_instances:
+            if hasattr(instance, "attach_to_jaw"):
+                instance.attach_to_jaw()
 
         return self.jaw_rig
 

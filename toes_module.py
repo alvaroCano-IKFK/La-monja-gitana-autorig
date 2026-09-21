@@ -52,6 +52,10 @@ class ToesModule(fingers_module.FingersModule):
     #: que el IK vive en su propio modulo, se cambia la clase que lo monta.
     IK_BUILDER = fingersIk_module.ToesIkModule
 
+    #: Tipo de modulo en module_specs. Sin esto heredaria "finger" de
+    #: FingersModule y leeria las features de la mano (fan, spread, fist...).
+    MODULE_TYPE = "toe"
+
     # ------------------------------------------------------------------ #
     #  INIT
     # ------------------------------------------------------------------ #
@@ -67,7 +71,8 @@ class ToesModule(fingers_module.FingersModule):
                  settings_ctrl=None,
                  ik_follow_foot=0.0,
                  attach_joint=None,
-                 leg_grp=None):
+                 leg_grp=None,
+                 features=None):
 
         super(ToesModule, self).__init__(
             wrist_guide=ball_guide,
@@ -78,6 +83,7 @@ class ToesModule(fingers_module.FingersModule):
             pref_angle=pref_angle,
             settings_ctrl=settings_ctrl,
             ik_follow_hand=ik_follow_foot,
+            features=features,
         )
 
         self.ball_guide = ball_guide

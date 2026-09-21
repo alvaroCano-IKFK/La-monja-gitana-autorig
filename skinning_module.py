@@ -33,10 +33,14 @@ class SkinningModule(object):
             # ----------------------------------------------------------
             "PreBind",        # todos los prebind (solo alimentan bindPreMatrix)
             "_freeze_",       # ancla central de los skinCluster de las curvas
-            "_levator_",      # deforma lipCurvatureLevator_CRV
-            "_depresor_",     # deforma lipCurvatureDepresor_CRV
-            "Pinch_JNT",      # upperPinch_JNT / lowerPinch_JNT
             "_jawCorner_",    # solo conduce las JawPinchLine
+
+            # QUITADOS con la SimpleMouthModule: "_levator_", "_depresor_" y
+            # "Pinch_JNT". En la boca vieja eran joints que deformaban curvas;
+            # en la nueva, {side}_<rig>_levator_JNT, _depresor_JNT,
+            # _upperPinch_JNT y _lowerPinch_JNT son justo los joints de skin
+            # (pasajeros de sus controles). Con estos filtros la boca se
+            # construia pero se quedaba sin ningun _ENV en los labios.
 
             # ----------------------------------------------------------
             # OJOS

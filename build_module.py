@@ -64,7 +64,6 @@ class BuildRig(object):
         (0,  "_core_root",      "Root rig"),
         (1,  "_core_body",      "Body"),
         (11, "_core_chest",     "Chest"),
-        (12, "_core_neck",      "Cuello"),
         (13, "_core_hip",       "Hip"),
         (70, "_core_skinning",  "Skinning"),
         (80, "_core_post",      "Soft IK y pole vector pins"),
@@ -183,9 +182,11 @@ class BuildRig(object):
         """Construye un modulo de la receta con su set de features."""
         builders = {
             "spine":  self._build_spine,
+            "neck":   self._build_neck,
             "arm":    self._build_arm,
             "finger": self._build_finger,
             "leg":    self._build_leg,
+            "toe":    self._build_toe,
             "mouth":   self._build_mouth,
             "jaw":     self._build_jaw,
             "eyebrow": self._build_eyebrow,
@@ -284,24 +285,44 @@ class BuildRig(object):
         )
         leg_rig.build()
 
-        # Los dedos del pie van justo detras de la pierna: necesitan
-        # {prefix}_ball_bind_JNT, y tienen que existir ANTES del skinning para
-        # entrar en el esqueleto _ENV.
-        if "toes" in features:
-            toes_rig = toes_module.ToesModule(
-                ball_guide=f"{side}_ball",
-                tip_guide=f"{side}_toe_tip",
-                heel_guide=f"{side}_heel",
-                rig_name="Leg",
-                side=side,
-                root_instance=self.root_rig,
-            )
-            toes_rig.build()
-            leg_rig.toes = toes_rig
-        else:
-            print(f"[{side}_Leg] Toes desactivado en la receta.")
+        # Los dedos del pie ya no se construyen aqui: son su propio modulo de
+        # la receta ("toe"), con _build_toe.
 
         return leg_rig
+
+    def _build_toe(self, side, features):
+        """
+        Dedos del pie. Modulo propio, como los dedos de la mano.
+
+        Cuelgan de {side}_Leg_ball_bind_JNT, que lo crea la pierna. El orden de
+        la receta ya pone "toe" (45) detras de "leg" (40), pero si en el arbol
+        hay dedos del pie sin pierna de ese lado, no hay de donde colgarlos: se
+        avisa y se salta, en vez de tumbar el build.
+        """
+        attach = f"{side}_Leg_ball_bind_JNT"
+
+        if not cmds.objExists(attach):
+            cmds.warning(f"[Toes {side}] No existe {attach}: los dedos del pie "
+                         f"necesitan la pierna {side}. Anade Leg {side} al arbol. "
+                         f"Se saltan los dedos del pie {side}.")
+            return None
+
+        toes_rig = toes_module.ToesModule(
+            ball_guide=f"{side}_ball",
+            tip_guide=f"{side}_toe_tip",
+            heel_guide=f"{side}_heel",
+            rig_name="Leg",
+            side=side,
+            root_instance=self.root_rig,
+            features=features,
+        )
+        toes_rig.build()
+
+        leg_rig = self.get_module("leg", side)
+        if leg_rig is not None:
+            leg_rig.toes = toes_rig
+
+        return toes_rig
 
     # ==================================================================
     # PASOS FIJOS
@@ -329,7 +350,19 @@ class BuildRig(object):
         )
         self.chest_rig.build()
 
-    def _core_neck(self):
+    def _build_neck(self, side, features):
+        """
+        Cuello y cabeza. Antes era un paso fijo; ahora es un modulo de la
+        receta y solo se construye si esta en el arbol.
+
+        Quien depende de el lo lleva bien si falta: los faciales avisan y no
+        siguen a la cabeza, y los space switches se saltan el espacio "Head".
+        """
+        if not (cmds.objExists("neck_root") and cmds.objExists("neck_end")):
+            cmds.warning("[Neck] No hay guias de cuello (neck_root / neck_end). "
+                         "Se salta el cuello.")
+            return None
+
         self.neck_rig = neck_module.NeckModule(
             neck_root="neck_root",
             neck_end="neck_end",
@@ -337,6 +370,8 @@ class BuildRig(object):
             root_instance=self.root_rig,
         )
         self.neck_rig.build()
+
+        return self.neck_rig
 
     def _core_hip(self):
         self.hip_rig = hip_module.HipModule(
@@ -356,61 +391,41 @@ class BuildRig(object):
     # donde solo estan las del brazo, la boca se salta con un aviso en vez de
     # tirar el build entero.
     # ==================================================================
-    @staticmethod
-    def _mouth_class():
-        """
-        La clase de boca que haya en mouthModule.
-
-        El contenido del modulo simple se pego dentro de mouthModule.py
-        conservando el nombre de archivo, asi que la clase puede llamarse
-        SimpleMouthModule o MouthModule segun como quedara el pegado. Se
-        aceptan las dos para no depender de ese detalle.
-        """
-        for name in ("SimpleMouthModule", "MouthModule"):
-            mouth_class = getattr(mouthModule, name, None)
-            if mouth_class is not None:
-                return mouth_class
-
-        return None
-
     def _build_mouth(self, side, features):
         """
-        El sistema simple construye LOS DOS LADOS de una vez.
+        Boca (SimpleMouthModule). Una sola instancia para los dos lados.
 
-        La receta puede traer una entrada de boca por lado. Si ya se construyo
-        en la primera, la segunda devuelve la misma instancia en vez de montar
-        todo otra vez encima: el modulo saca el lado R negando la X de la guia
-        L, asi que no necesita una pasada por lado ni las guias del lado R.
+        Ya no necesita boca_surface: la cadena sale de cuatro guias, que solo
+        existen en +X (el lado R se espeja en X dentro del modulo).
         """
-        mouth_class = self._mouth_class()
-        if mouth_class is None:
-            cmds.warning("[Mouth] No encuentro ninguna clase de boca en "
-                         "mouthModule. Se salta.")
-            return None
-
-        existing = self.modules.get(("mouth", "L")) or self.modules.get(("mouth", "R"))
-        if isinstance(existing, mouth_class):
-            print(f"[Mouth {side}] Ya construida en la otra pasada.")
-            return existing
-
-        # El sistema simple no usa la NURBS: lo que necesita son las guias.
-        required = ["C_lip_mid", "L_lip_end", "L_lip_in01", "L_lip_in02"]
-        missing = [guide for guide in required if not cmds.objExists(guide)]
+        needed = ["C_lip_mid", "L_lip_end", "L_lip_in01", "L_lip_in02"]
+        missing = [guide for guide in needed if not cmds.objExists(guide)]
         if missing:
-            cmds.warning(f"[Mouth {side}] Faltan guias: {missing}. Se salta. "
-                         f"Si vienes de una escena antigua, borra las guias y "
-                         f"vuelve a crearlas: lip_in01 y lip_in02 son nuevas.")
+            cmds.warning(f"[Mouth] Faltan guias ({', '.join(missing)}). "
+                         f"Se salta la boca.")
             return None
 
-        mouth = mouth_class(
+        mouth = mouthModule.SimpleMouthModule(
             rig_name=self.RIG_NAME,
             root_instance=self.root_rig,
             lip_mid="C_lip_mid",
             lip_end="L_lip_end",
             lip_in01="L_lip_in01",
             lip_in02="L_lip_in02",
+            sides=("L", "R"),
         )
+
+        # Las dos capas opcionales del modulo son flags de instancia, no
+        # argumentos: se ajustan antes de build().
+        mouth.use_cascade = "cascade" in features
+        mouth.corner_upper_lower_attr = "corner_attr" in features
+
+        # build() intenta engancharse al jaw. Como la boca va antes (50 < 52),
+        # aqui todavia no hay jaw y lo avisa: es esperado, _build_jaw lo
+        # engancha despues.
         mouth.build()
+
+        self.mouth_rig = mouth
 
         return mouth
 
@@ -419,30 +434,27 @@ class BuildRig(object):
             cmds.warning("[Jaw] No hay guias de mandibula. Se salta.")
             return None
 
-        # La mandibula lee los controles de comisura de la boca. Se le pasan
-        # las instancias que ya haya construido la receta; si no hay ninguna,
-        # el modulo los busca por nombre en la escena como hacia antes.
-        mouth_instances = [instance for (module_type, _), instance
-                           in self.modules.items()
-                           if module_type == "mouth" and instance is not None]
-
+        # mouth_instances vacio a proposito. Esa lista era para la MouthModule
+        # vieja: el jaw le leia la comisura (end_lip_ctrl) y las curvas de
+        # pinch. La SimpleMouthModule no tiene nada de eso; la relacion va al
+        # reves, es la boca la que cuelga del jaw (attach_to_jaw, abajo).
         self.jaw_rig = jaw_module.JawModule(
             jaw_root="jaw_root",
             jaw_end="jaw_end",
             root_instance=self.root_rig,
             rig_name=self.RIG_NAME,
             side="C",
-            mouth_instances=mouth_instances,
+            mouth_instances=[],
         )
         self.jaw_rig.build()
 
-        # La boca se puede haber construido ANTES que el jaw, y entonces sus
-        # constraints contra la mandibula quedaron pendientes. Ahora los
-        # controles del jaw ya existen, asi que se rematan. attach_to_jaw() es
-        # idempotente, de modo que si ya se engancho no hace nada.
-        for instance in mouth_instances:
-            if hasattr(instance, "attach_to_jaw"):
-                instance.attach_to_jaw()
+        # Ahora que existen jawUpper_CTRL y jawLower_CTRL, se engancha la boca.
+        # attach_to_jaw() es idempotente: si ya estaba enganchada no repite.
+        mouth = self.get_module("mouth", "C")
+        if mouth is not None and hasattr(mouth, "attach_to_jaw"):
+            if not mouth.attach_to_jaw():
+                cmds.warning("[Jaw] No se ha podido enganchar la boca: no "
+                             "encuentro jawUpper_CTRL / jawLower_CTRL.")
 
         return self.jaw_rig
 
@@ -519,6 +531,24 @@ class BuildRig(object):
             instance.post_build()
 
     # ------------------------------------------------------------------
+    def _existing_spaces(self, space_dict, target_control):
+        """
+        Quita del diccionario de espacios los que no existen en la escena.
+
+        Antes todos los espacios se daban por hechos. Con modulos opcionales ya
+        no: sin cuello no hay head_CTRL, y pasarle a SpaceModule un nodo que no
+        existe tumbaria el build en el ultimo paso, con todo lo demas ya
+        construido. Se avisa de cada espacio que se quita.
+        """
+        kept = {}
+        for space_name, driver in space_dict.items():
+            if cmds.objExists(driver):
+                kept[space_name] = driver
+            else:
+                print(f"[Spaces] {target_control}: sin espacio '{space_name}' "
+                      f"({driver} no existe).")
+        return kept
+
     def _core_spaces(self):
         """
         Dynamic parents. Esta parte ya era tolerante a que faltasen modulos
@@ -538,13 +568,13 @@ class BuildRig(object):
             if cmds.objExists(arm_ik_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=arm_ik_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "MasterWalk": f"{self.RIG_NAME}_global_CTL",
                         "Chest": f"{self.RIG_NAME}_chestFix_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
                         "Hip": f"{self.RIG_NAME}_localHip_CTL",
                         "Head": f"{self.RIG_NAME}_head_CTRL",
-                    },
+                    }, arm_ik_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
@@ -554,11 +584,11 @@ class BuildRig(object):
             if cmds.objExists(leg_ik_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=leg_ik_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "MasterWalk": f"{self.RIG_NAME}_global_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
                         "Hip": f"{self.RIG_NAME}_localHip_CTL",
-                    },
+                    }, leg_ik_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
@@ -566,13 +596,13 @@ class BuildRig(object):
             if cmds.objExists(arm_pv_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=arm_pv_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "MasterWalk": f"{self.RIG_NAME}_global_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
                         "Chest": f"{self.RIG_NAME}_chestFix_CTL",
                         "ArmIk": f"{side}_Arm_armIk_CTRL",
                         "Clavicule": f"{side}_Arm_clavicule_CTRL",
-                    },
+                    }, arm_pv_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
@@ -580,11 +610,11 @@ class BuildRig(object):
             if cmds.objExists(leg_pv_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=leg_pv_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "MasterWalk": f"{self.RIG_NAME}_global_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
                         "LegIk": f"{side}_Leg_legIk_CTRL",
-                    },
+                    }, leg_pv_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
@@ -592,11 +622,11 @@ class BuildRig(object):
             if cmds.objExists(arm_fk_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=arm_fk_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "Clavicule": f"{side}_Arm_clavicule_CTRL",
                         "Chest": f"{self.RIG_NAME}_chestFix_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
-                    },
+                    }, arm_fk_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
@@ -604,14 +634,20 @@ class BuildRig(object):
             if cmds.objExists(leg_fk_ctrl):
                 spaceSwitching_module.SpaceModule(
                     target_control=leg_fk_ctrl,
-                    space_dict={
+                    space_dict=self._existing_spaces({
                         "MasterWalk": f"{self.RIG_NAME}_global_CTL",
                         "Hip": f"{self.RIG_NAME}_localHip_CTL",
                         "Body": f"{self.RIG_NAME}_body_CTL",
-                    },
+                    }, leg_fk_ctrl),
                     attr_name="Space_Switch",
                     rig_name=self.RIG_NAME,
                 ).build()
+
+        # Los espacios de la cabeza solo tienen sentido si hay cabeza.
+        if not cmds.objExists(f"{self.RIG_NAME}_head_CTRL"):
+            print("[Spaces] No hay cuello en el rig: se saltan los espacios de "
+                  "la cabeza.")
+            return
 
         self.head_spaces = headSpace_module.HeadSpacesModule(
             rig_name=self.RIG_NAME,

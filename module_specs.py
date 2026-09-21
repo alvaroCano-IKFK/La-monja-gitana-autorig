@@ -26,6 +26,13 @@ class Feature(object):
     def __init__(self, key, label, requires=(), default=False, implemented=True):
         self.key = key
         self.label = label
+
+        # requires=("curvature") NO es una tupla: es un string entre parentesis.
+        # tuple("curvature") daria ('c', 'u', 'r', ...) y el resolvedor
+        # activaria nueve features de una letra que no existen. Un string suelto
+        # se trata como una sola dependencia.
+        if isinstance(requires, str):
+            requires = (requires,)
         self.requires = tuple(requires)
         self.default = default
         self.implemented = implemented
@@ -57,9 +64,27 @@ MODULE_SPECS = {
         ],
         "optional": [
             Feature("twist", "Twist"),
-            Feature("ribbon", "Ribbon", implemented=False),
-            Feature("stretch", "Stretch", implemented=False),
+            #Feature("ribbon", "Ribbon", implemented=False),
+            #Feature("stretch", "Stretch", implemented=False),
         ],
+    },
+
+    # El cuello y la cabeza. Antes era un paso fijo del build: se construia
+    # siempre. Ahora es opcional, como cualquier otro modulo.
+    #
+    # order 12: despues del chest (11), porque el control del cuello se
+    # constrinee al chestFix_CTL, y antes de todo lo que usa la cabeza: el
+    # espacio "Head" del IK del brazo y los faciales.
+    "neck": {
+        "label": "Neck",
+        "order": 12,
+        "sides": ["C"],
+        "mirror_roots": [],
+        "always": [
+            Feature("spline_ik", "Spline IK"),
+            Feature("head", "Head Control"),
+        ],
+        "optional": [],
     },
 
     "arm": {
@@ -70,17 +95,15 @@ MODULE_SPECS = {
         # Solo la raiz: mirrorJoint ya se lleva toda la jerarquia de debajo.
         "mirror_roots": ["L_clavicule"],
         "always": [
-            Feature("ik", "IK"),
             Feature("fk", "FK"),
-            Feature("ikfk_switch", "IK/FK Switch"),
-            Feature("pole_vector", "Pole Vector"),
+
         ],
         "optional": [
             Feature("curvature", "Curvature", default=True),
             # Twist NO depende de curvature: twist_module tiene fallback y se
             # crea su propia curva degree-2 si no le pasas source_curve.
             # Si curvature esta, se la pasamos y sale mejor.
-            Feature("twist", "Twist", default=True),
+            Feature("twist", "Twist", requires=("curvature",)),
             # default=True porque el autorig viejo montaba el soft IK en los
             # brazos siempre. Si lo dejas en False, el comportamiento por
             # defecto del rig cambia sin que nadie se entere.
@@ -88,7 +111,10 @@ MODULE_SPECS = {
             # El pin SI depende del soft: necesita softTransform_node y
             # condition_node del diccionario que devuelve apply_soft_ik().
             Feature("pv_pin", "Pole Vector Pin", requires=("soft_ik",)),
-            Feature("stretch", "Stretch", implemented=False),
+            #Feature("stretch", "Stretch", implemented=False),
+            Feature("ik", "IK"),
+            Feature("ikfk_switch", "IK/FK Switch"),
+            Feature("pole_vector", "Pole Vector"),
         ],
     },
 
@@ -131,11 +157,31 @@ MODULE_SPECS = {
         ],
         "optional": [
             Feature("curvature", "Curvature", default=True),
-            Feature("twist", "Twist", default=True),
+            Feature("twist", "Twist", requires=("curvature",)),
             Feature("soft_ik", "Soft IK", default=True),
-            Feature("pv_pin", "Pole Vector Pin", requires=("soft_ik",)),
-            Feature("toes", "Toes", default=True),
-            Feature("stretch", "Stretch", implemented=False),
+            Feature("pv_pin", "Pole Vector Pin", requires=("soft_ik",))
+            #Feature("stretch", "Stretch", implemented=False),
+        ],
+    },
+
+    # Los dedos del pie son su propio modulo, igual que los de la mano. Antes
+    # eran una feature de la pierna; ahora se anaden (o no) desde el arbol y
+    # tienen su lado y sus features.
+    #
+    # order 45: justo despues de la pierna, porque cuelgan de su
+    # {side}_Leg_ball_bind_JNT, y antes del skinning para entrar en el _ENV.
+    "toe": {
+        "label": "Toes",
+        "order": 45,
+        "sides": ["L", "R"],
+        # Vacio a proposito: las guias de los dedos del pie cuelgan de L_ball,
+        # que esta dentro de la jerarquia de L_hip. Se espejan con la pierna.
+        "mirror_roots": [],
+        "always": [
+            Feature("fk", "FK"),
+        ],
+        "optional": [
+            Feature("ik", "IK", default=True),
         ],
     },
 
@@ -149,17 +195,37 @@ MODULE_SPECS = {
     # face=True: los usa mirror_module para poder saltarse la cara entera, y la
     # ventana para agruparlos en su propio panel.
     # -----------------------------------------------------------------------
+    # SimpleMouthModule: joints, controles y parentConstraints con pesos. Sin
+    # curvas de labio ni NURBS.
+    #
+    # Lado "C" y no L/R: una sola instancia construye los dos lados (sides=
+    # ("L", "R")) y su build() empieza borrando C_<rig>_mouth_GRP. Con una
+    # entrada por lado, la del R borraria la del L.
+    #
+    # Va antes que el jaw (50 < 52) pero CUELGA de el: _build_jaw llama a
+    # attach_to_jaw() cuando los controles de la mandibula ya existen.
     "mouth": {
         "label": "Mouth",
         "order": 50,
-        "sides": ["L", "R"],
+        "sides": ["C"],
         "face": True,
-        "mirror_roots": ["L_lip_end"],
+        # Sin jaw la boca se monta pero no sigue a la mandibula.
+        "recommends": ["neck", "jaw"],
+        # Vacio: las guias solo existen en +X y el lado R se saca espejando la
+        # X dentro del modulo. No hace falta ninguna guia R_ de la boca.
+        "mirror_roots": [],
         "always": [
-            Feature("lip_curve", "Lip Curve"),
-            Feature("muscle_surface", "Muscle Surface"),
+            Feature("lip_chain", "Lip Chain"),
+            Feature("corners", "Corners"),
         ],
-        "optional": [],
+        "optional": [
+            # use_cascade del modulo: una curva por labio para que mover un
+            # control empuje un poco a los vecinos.
+            Feature("cascade", "Cascade", default=True),
+            # corner_upper_lower_attr: atributo UpperLower animable en las
+            # comisuras. Apagado por defecto, igual que en el modulo.
+            Feature("corner_attr", "Corner Upper/Lower Attr"),
+        ],
     },
 
     "jaw": {
@@ -167,6 +233,9 @@ MODULE_SPECS = {
         "order": 52,
         "sides": ["C"],
         "face": True,
+        # Sin cuello no hay head_CTRL: el modulo se construye igual, pero sus
+        # controles no seguiran a la cabeza. normalize_recipe lo avisa.
+        "recommends": ["neck"],
         "mirror_roots": [],
         "always": [
             Feature("pinch_lines", "Pinch Lines"),
@@ -180,6 +249,9 @@ MODULE_SPECS = {
         "order": 54,
         "sides": ["L", "R"],
         "face": True,
+        # Sin cuello no hay head_CTRL: el modulo se construye igual, pero sus
+        # controles no seguiran a la cabeza. normalize_recipe lo avisa.
+        "recommends": ["neck"],
         # Las cejas son joints sueltos, no una jerarquia: hay que espejar los
         # diez uno a uno.
         "mirror_roots": ["L_eyebrow_root_{:02d}".format(i) for i in range(1, 11)],
@@ -195,25 +267,39 @@ MODULE_SPECS = {
         "order": 56,
         "sides": ["L", "R"],
         "face": True,
+        # Sin cuello no hay head_CTRL: el modulo se construye igual, pero sus
+        # controles no seguiran a la cabeza. normalize_recipe lo avisa.
+        "recommends": ["neck"],
         # Las tres joints del ojo son independientes (el grupo las separo).
         "mirror_roots": ["L_eye_mid", "L_eye_mid_end", "L_eye_direct"],
         "always": [
             Feature("eyelid_lines", "Eyelid Lines"),
             Feature("aim", "Aim / Eye Direct"),
             Feature("in_between", "In-Between Controls"),
+            # Van siempre: son los eyelid...Loop##AimEnd_JNT, los unicos joints
+            # de parpado que skinea skinning_module. Comentar la feature no la
+            # quita del arbol, la quita del BUILD: eyes_module pregunta
+            # has("loop_joints") y sin ella los parpados se quedan sin skin.
+            #
+            # Se proyectan sobre las curvas Blinked, asi que arrastran el
+            # blink: si lo desmarcas, resolve_features lo vuelve a activar y
+            # te avisa.
+            Feature("loop_joints", "Loop Joints", requires=("blink",)),
         ],
         "optional": [
             Feature("blink", "Blink", default=True),
             Feature("fleshy", "Fleshy Eye", default=True),
-            # Los joints de loop se proyectan sobre las curvas Blinked, que son
-            # el final de la cadena del blink. Sin blink no hay sobre que
-            # proyectarlos.
-            Feature("loop_joints", "Loop Joints", default=True,
-                    requires=("blink",)),
         ],
     },
 }
 
+
+#: Que se pierde cuando falta un modulo recomendado. Lo usa normalize_recipe
+#: para que el aviso diga la consecuencia real y no una generica.
+RECOMMEND_REASONS = {
+    "neck": "sin seguir a la cabeza",
+    "jaw": "sin seguir a la mandibula",
+}
 
 #: Modulos de la cara. mirror_module los usa para poder saltarselos enteros.
 FACE_MODULES = tuple(key for key, spec in MODULE_SPECS.items() if spec.get("face"))
@@ -332,6 +418,47 @@ def resolve_features(module_type, keys):
     return resolved, warnings
 
 
+def _migrate_legacy_entries(recipe):
+    """
+    Adapta recetas guardadas con versiones anteriores del autorig.
+
+    Antes los dedos del pie eran la feature "toes" de la pierna. Ahora son el
+    modulo "toe". Un JSON exportado entonces traeria {"type": "leg",
+    "features": {"toes", ...}}: sin esto, los dedos del pie desaparecerian del
+    rig al importar, con solo un aviso por consola que es facil no ver.
+    """
+    migrated = []
+    existing_toes = {(entry.get("type"), entry.get("side")) for entry in recipe}
+    mouth_done = False
+
+    for entry in recipe:
+        features = set(entry.get("features") or [])
+
+        # Antes la boca iba por lados (Mouth L, Mouth R). La SimpleMouthModule
+        # construye los dos en una instancia: las dos entradas viejas se
+        # convierten en una sola Mouth C con sus features por defecto (las
+        # viejas, lip_curve y muscle_surface, ya no existen).
+        if entry.get("type") == "mouth" and entry.get("side") in ("L", "R"):
+            if not mouth_done:
+                migrated.append({"type": "mouth", "side": "C",
+                                 "features": default_feature_keys("mouth")})
+                mouth_done = True
+            continue
+
+        if entry.get("type") == "leg" and "toes" in features:
+            features.discard("toes")
+            entry = dict(entry, features=features)
+
+            if ("toe", entry.get("side")) not in existing_toes:
+                migrated.append({"type": "toe",
+                                 "side": entry.get("side"),
+                                 "features": default_feature_keys("toe")})
+
+        migrated.append(entry)
+
+    return migrated
+
+
 def normalize_recipe(recipe):
     """
     Deja la receta que viene de la UI lista para el build:
@@ -350,7 +477,9 @@ def normalize_recipe(recipe):
     normalized = []
     seen = set()
 
-    for entry in recipe or []:
+    recipe = _migrate_legacy_entries(list(recipe or []))
+
+    for entry in recipe:
         module_type = entry.get("type")
 
         if module_type not in MODULE_SPECS:
@@ -378,6 +507,19 @@ def normalize_recipe(recipe):
 
     # Modulos obligatorios que el usuario no ha anadido
     present_types = {entry["type"] for entry in normalized}
+
+    # Modulos recomendados: no se anaden solos (el usuario puede querer una
+    # cara suelta para probar), pero se avisa una vez por modulo que falte.
+    missing_recommended = {}
+    for module_type in sorted(present_types):
+        for wanted in MODULE_SPECS[module_type].get("recommends", []):
+            if wanted not in present_types:
+                missing_recommended.setdefault(wanted, []).append(module_label(module_type))
+    for wanted, needers in sorted(missing_recommended.items()):
+        warnings.append(
+            "No hay '{}' en la lista: {} se construira(n) igual, pero {}.".format(
+                module_label(wanted), ", ".join(needers),
+                RECOMMEND_REASONS.get(wanted, "le(s) falta ese modulo")))
     for module_type in REQUIRED_MODULES:
         if module_type not in present_types:
             side = module_sides(module_type)[0]
@@ -398,7 +540,11 @@ def describe_recipe(recipe):
     for entry in recipe:
         optional_keys = sorted(
             entry["features"] - {f.key for f in always_features(entry["type"])})
-        labels = [find_feature(entry["type"], key).label for key in optional_keys]
+        # Si una key no existe (no deberia, resolve_features las filtra), se
+        # imprime tal cual en vez de tumbar el build solo por describirla.
+        labels = [(find_feature(entry["type"], key).label
+                   if find_feature(entry["type"], key) else key)
+                  for key in optional_keys]
         lines.append(" - {} {} [{}]".format(
             module_label(entry["type"]),
             entry["side"],

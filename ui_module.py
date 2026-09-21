@@ -45,9 +45,18 @@ class Window(QtWidgets.QDialog):
     #el mateix fitxer que llegeix el build. Aixi la finestra i la construccio
     #no poden dir coses diferents.
 
-    #Amplada objectiu de la finestra amb el panell d afegir moduls tancat / obert
-    WIDTH_PANEL_CLOSED = 380
-    WIDTH_PANEL_OPEN = 560
+    #Amplades de la finestra. L amplada final es la base mes el que afegeixi
+    #cada panell lateral que estigui obert: els dos panells (afegir moduls i
+    #Tools) son independents i es poden tenir oberts alhora.
+    WIDTH_PANEL_CLOSED = 450          #base: columna principal + pestanya Tools
+    WIDTH_PANEL_OPEN = 630            #base + panell d afegir moduls (compatibilitat)
+    WIDTH_MODULES_PANEL = WIDTH_PANEL_OPEN - WIDTH_PANEL_CLOSED
+    WIDTH_TOOLS_PANEL = 290
+
+    #Alcada amb la que s obre la finestra. Es un minim: si el contingut en
+    #demana mes, mana el contingut. I mai passa del 85% de la pantalla.
+    INITIAL_HEIGHT = 720
+    BUTTON_MIN_HEIGHT = 32
 
     COLOR_BACKGROUND = "rgb(237, 236, 232)"      
     COLOR_PANEL_BG = "rgb(247, 246, 243)"      
@@ -87,10 +96,12 @@ class Window(QtWidgets.QDialog):
             | QtCore.Qt.WindowStaysOnTopHint
         )
 
-        #Mida minima petita perque la finestra es pugui encongir; la mida
-        #real la pot canviar l usuari lliurement arrossegant les vores
-        self.setMinimumSize(300, 360)
-        self.resize(self.WIDTH_PANEL_CLOSED, 500)
+        #Nomes amplada minima. L alcada minima la calcula el layout a partir
+        #del contingut: abans hi havia un setMinimumSize(300, 360) explicit que
+        #anul.lava aquest calcul, i Qt deixava aixafar els botons fins que el
+        #text desapareixia. La mida inicial es posa al final del __init__, quan
+        #el layout ja existeix i es pot saber quant ocupa.
+        self.setMinimumWidth(320)
 
         #Fons general de la finestra
         self.setStyleSheet("QDialog {{ background-color: {bg}; }}".format(bg=self.COLOR_BACKGROUND))
@@ -106,10 +117,16 @@ class Window(QtWidgets.QDialog):
         self.create_layouts()
         self.create_connections()
 
+        self._set_initial_size()
+
     def general_style(self, button):
         """
         Aplica un StyleSheet general, discret i professional, a tots els botons
         """
+        #Alcada minima fixa: encara que la finestra es faci petita, el boto no
+        #es pot aixafar per sota d aixo i el text sempre es llegeix.
+        button.setMinimumHeight(self.BUTTON_MIN_HEIGHT)
+
         button.setStyleSheet("""
             QPushButton {{
                 background-color: {panel_bg};
@@ -140,6 +157,68 @@ class Window(QtWidgets.QDialog):
             border=self.COLOR_BORDER,
             pressed_bg=self.COLOR_PRESSED_BG,
         ))
+
+    def tab_style(self, button):
+        """
+        Estil de les pestanyetes laterals que despleguen panells. El comparteixen
+        la d afegir moduls i la de Tools, perque es vegin com la mateixa peca.
+        """
+        button.setStyleSheet("""
+            QPushButton {{
+                background-color: {header_bg};
+                color: {accent};
+                font-family: 'Palatino Linotype', serif;
+                font-size: 13px;
+                font-weight: 600;
+                border: 1px solid {border};
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                background-color: {header_bg_hover};
+                border: 1px solid {accent};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
+        """.format(
+            header_bg=self.COLOR_HEADER_BG,
+            header_bg_hover=self.COLOR_HEADER_BG_HOVER,
+            accent=self.COLOR_ACCENT,
+            border=self.COLOR_BORDER,
+            pressed_bg=self.COLOR_PRESSED_BG,
+        ))
+
+    def scrollbar_css(self):
+        """
+        Barra de desplacament fina i del color de la finestra. La de Maya per
+        defecte es gris fosc i queda com un pegat enmig del paper beix.
+        """
+        return """
+            QScrollBar:vertical {{
+                background: {panel_bg};
+                width: 8px;
+                margin: 0px;
+                border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {header_bg};
+                border: 1px solid {border};
+                border-radius: 3px;
+                min-height: 24px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {accent};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """.format(panel_bg=self.COLOR_PANEL_BG,
+                   header_bg=self.COLOR_HEADER_BG,
+                   border=self.COLOR_BORDER,
+                   accent=self.COLOR_ACCENT)
 
     def field_style(self, widget):
         """Mateix aire que els botons, per als camps de text i els combos."""
@@ -284,11 +363,13 @@ class Window(QtWidgets.QDialog):
         #-------------------------------------------------
         self.data_title = self.collapsible("1. Data management")
 
-        self.guides_btn = QtWidgets.QPushButton("BIPED TEMPLATE")
-        self.general_style(self.guides_btn)
-
-        self.guides_btn02 = QtWidgets.QPushButton("QUADRUPED TEMPLATE")
-        self.general_style(self.guides_btn02)
+        #El boto de guies ja no viu aqui: s ha mogut a "2. Modules", perque ara
+        #crea nomes les guies dels moduls de l arbre.
+        #
+        #QUADRUPED TEMPLATE es queda comentat, no esborrat: no estava connectat
+        #a res, i es el lloc on anira la plantilla del quadrupede.
+        # self.guides_btn02 = QtWidgets.QPushButton("QUADRUPED TEMPLATE")
+        # self.general_style(self.guides_btn02)
 
         self.export_btn = QtWidgets.QPushButton("EXPORT GUIDES")
         self.general_style(self.export_btn)
@@ -310,7 +391,7 @@ class Window(QtWidgets.QDialog):
         self.modules_tree.setHeaderHidden(True)
         self.modules_tree.setColumnCount(1)
         self.modules_tree.setIndentation(14)
-        self.modules_tree.setMinimumHeight(90)
+        self.modules_tree.setMinimumHeight(150)
         self.modules_tree.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.modules_tree.setStyleSheet("""
             QTreeWidget {{
@@ -334,36 +415,26 @@ class Window(QtWidgets.QDialog):
             accent=self.COLOR_ACCENT,
             border=self.COLOR_BORDER,
             selected_bg=self.COLOR_SELECTED_BG,
-        ))
+        ) + self.scrollbar_css())
+
+        #Boto de guies, petit, sota l arbre. Crea nomes les guies dels moduls
+        #que hi ha a l arbre (mira create_guides).
+        self.guides_btn = QtWidgets.QPushButton("GUIDES")
+        self.general_style(self.guides_btn)
+        self.guides_btn.setMinimumHeight(24)
+        self.guides_btn.setFixedWidth(90)
+        self.guides_btn.setToolTip("Crea les guies dels moduls de l arbre. "
+                                   "Les que ja existeixen no es toquen.")
+        self.guides_btn.setStyleSheet(self.guides_btn.styleSheet().replace(
+            "font-size: 13px;", "font-size: 11px;").replace(
+            "padding-top: 7px;", "padding-top: 3px;").replace(
+            "padding-bottom: 7px;", "padding-bottom: 3px;"))
 
         #Petita pestanyeta lateral per desplegar/plegar el panell d afegir moduls
         self.add_panel_tab_btn = QtWidgets.QPushButton("▸")
         self.add_panel_tab_btn.setFixedWidth(22)
         self.add_panel_tab_btn.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
-        self.add_panel_tab_btn.setStyleSheet("""
-            QPushButton {{
-                background-color: {header_bg};
-                color: {accent};
-                font-family: 'Palatino Linotype', serif;
-                font-size: 13px;
-                font-weight: 600;
-                border: 1px solid {border};
-                border-radius: 3px;
-            }}
-            QPushButton:hover {{
-                background-color: {header_bg_hover};
-                border: 1px solid {accent};
-            }}
-            QPushButton:pressed {{
-                background-color: {pressed_bg};
-            }}
-        """.format(
-            header_bg=self.COLOR_HEADER_BG,
-            header_bg_hover=self.COLOR_HEADER_BG_HOVER,
-            accent=self.COLOR_ACCENT,
-            border=self.COLOR_BORDER,
-            pressed_bg=self.COLOR_PRESSED_BG,
-        ))
+        self.tab_style(self.add_panel_tab_btn)
 
         #Panell lateral amb els moduls que es poden afegir, amagat per defecte
         self.add_module_panel = QtWidgets.QWidget()
@@ -384,15 +455,39 @@ class Window(QtWidgets.QDialog):
         """.format(accent=self.COLOR_ACCENT))
         panel_layout.addWidget(panel_title)
 
+        #Els botons van dins d un scroll vertical. Amb deu moduls (i els que
+        #vinguin), deu botons de 32 px empenyien la finestra cap avall: el
+        #panell forcava l alcada de tota la seccio de moduls. Ara el panell fa
+        #l alcada de l arbre i la resta es desplaca.
+        buttons_widget = QtWidgets.QWidget()
+        buttons_widget.setObjectName("moduleButtons")
+        buttons_layout = QtWidgets.QVBoxLayout(buttons_widget)
+        buttons_layout.setContentsMargins(0, 0, 4, 0)   #lloc per la barra
+        buttons_layout.setSpacing(5)
+
         #Crea un boto per cada tipus de modul declarat als specs
         self.module_type_buttons = []
         for module_type in module_specs.module_types():
             btn = QtWidgets.QPushButton(module_specs.module_label(module_type).upper())
             self.general_style(btn)
-            panel_layout.addWidget(btn)
+            buttons_layout.addWidget(btn)
             self.module_type_buttons.append((btn, module_type))
 
-        panel_layout.addStretch()
+        buttons_layout.addStretch()
+
+        self.module_buttons_scroll = QtWidgets.QScrollArea()
+        self.module_buttons_scroll.setWidget(buttons_widget)
+        self.module_buttons_scroll.setWidgetResizable(True)
+        self.module_buttons_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.module_buttons_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.module_buttons_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        #Alcada minima petita: si no, el scroll demanaria l alcada de tots els
+        #botons i tornariem a tenir el mateix problema.
+        self.module_buttons_scroll.setMinimumHeight(60)
+        self.module_buttons_scroll.setStyleSheet(
+            "QScrollArea, #moduleButtons { background: transparent; }"
+            + self.scrollbar_css())
+        panel_layout.addWidget(self.module_buttons_scroll, 1)
 
         #-------------------------------------------------
         # 3. Eye loop curves
@@ -402,7 +497,41 @@ class Window(QtWidgets.QDialog):
         # corba surt tant la linia de la parpella com els joints de loop, aixi
         # que sense ella el modul d ulls no te d on partir.
         #-------------------------------------------------
-        self.eyes_title = self.collapsible("3. Eye loop curves")
+        #-------------------------------------------------
+        # TOOLS (panell lateral dret)
+        #
+        # Eines que no son passos del flux principal: es fan servir un cop, a
+        # ma, abans del build. Van en un panell lateral que ocupa tota
+        # l alcada de la finestra, amagat per defecte, amb la mateixa
+        # mecanica que el panell d afegir moduls.
+        #-------------------------------------------------
+        self.tools_tab_btn = QtWidgets.QPushButton()
+        self.tools_tab_btn.setFixedWidth(22)
+        self.tools_tab_btn.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Expanding)
+        self.tools_tab_btn.setToolTip("Tools")
+        self.tab_style(self.tools_tab_btn)
+        self._set_tools_tab_text(opened=False)
+
+        self.tools_panel = QtWidgets.QWidget()
+        self.tools_panel.setFixedWidth(self.WIDTH_TOOLS_PANEL - 30)
+        self.tools_panel.setVisible(False)
+
+        self.tools_title = QtWidgets.QLabel("Tools")
+        self.tools_title.setAlignment(QtCore.Qt.AlignCenter)
+        self.tools_title.setStyleSheet("""
+            QLabel {{
+                font-family: 'Palatino Linotype', 'Georgia', serif;
+                font-size: 15px;
+                font-weight: 600;
+                color: {accent};
+                padding: 4px;
+            }}
+        """.format(accent=self.COLOR_ACCENT))
+
+        #Cada eina es un desplegable dins del panell, com les seccions de la
+        #columna principal. Aixi afegir-ne una de nova es crear un altre
+        #collapsible i posar-lo a sota.
+        self.eyes_title = self.collapsible("Eye loop curves")
 
         self.eye_rig_name_field = QtWidgets.QLineEdit("Character")
         self.field_style(self.eye_rig_name_field)
@@ -411,10 +540,10 @@ class Window(QtWidgets.QDialog):
         self.eye_side_combo.addItems(["L", "R"])
         self.field_style(self.eye_side_combo)
 
-        self.eye_upper_btn = QtWidgets.QPushButton("CREATE UPPER LOOP CURVE")
+        self.eye_upper_btn = QtWidgets.QPushButton("UPPER LOOP CURVE")
         self.general_style(self.eye_upper_btn)
 
-        self.eye_lower_btn = QtWidgets.QPushButton("CREATE LOWER LOOP CURVE")
+        self.eye_lower_btn = QtWidgets.QPushButton("LOWER LOOP CURVE")
         self.general_style(self.eye_lower_btn)
 
         # ---- DESACTIVAT DE MOMENT ------------------------------------
@@ -449,17 +578,28 @@ class Window(QtWidgets.QDialog):
         # --------------------------------------------------------------
 
         #-------------------------------------------------
-        # 4. Build rig
+        # 3. Build rig
         #-------------------------------------------------
-        self.build_title = self.collapsible("4. Build rig")
+        self.build_title = self.collapsible("3. Build rig")
 
         self.build_btn = QtWidgets.QPushButton("BUILD")
         self.general_style(self.build_btn)
 
     def create_layouts(self):
-        main_layout = QtWidgets.QVBoxLayout(self)
+        #Arrel horitzontal: a l esquerra la columna de sempre, a la dreta la
+        #pestanya de Tools i el seu panell, tots dos d alcada completa.
+        root_layout = QtWidgets.QHBoxLayout(self)
+        root_layout.setSpacing(6)
+        root_layout.setContentsMargins(10, 10, 10, 10)
+
+        main_column = QtWidgets.QWidget()
+        main_layout = QtWidgets.QVBoxLayout(main_column)
         main_layout.setSpacing(8)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        root_layout.addWidget(main_column, 1)
+        root_layout.addWidget(self.tools_tab_btn)
+        root_layout.addWidget(self.tools_panel)
 
         #El titol va centrat a la finestra sencera, aixi que el boto de
         #minimitzar es posa en una fila propia a sobre, alineat a la dreta.
@@ -476,13 +616,11 @@ class Window(QtWidgets.QDialog):
 
         main_layout.addWidget(self.data_title[0])
         main_layout.addWidget(self.modules_title[0])
-        main_layout.addWidget(self.eyes_title[0])
         main_layout.addWidget(self.build_title[0])
 
         main_layout.addStretch()
 
-        self.data_title[1].addWidget(self.guides_btn)
-        self.data_title[1].addWidget(self.guides_btn02)
+        # self.data_title[1].addWidget(self.guides_btn02)
 
         imp_exp_layout = QtWidgets.QHBoxLayout()
         imp_exp_layout.addWidget(self.export_btn)
@@ -497,7 +635,21 @@ class Window(QtWidgets.QDialog):
         modules_row_layout.addWidget(self.add_module_panel)
         self.modules_title[1].addLayout(modules_row_layout)
 
-        # ---- 3. Eye loop curves ----
+        guides_row_layout = QtWidgets.QHBoxLayout()
+        guides_row_layout.setContentsMargins(0, 0, 0, 0)
+        guides_row_layout.addWidget(self.guides_btn)
+        guides_row_layout.addStretch()
+        self.modules_title[1].addLayout(guides_row_layout)
+
+        # ---- TOOLS ----
+        tools_layout = QtWidgets.QVBoxLayout(self.tools_panel)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(8)
+        tools_layout.addWidget(self.tools_title)
+        tools_layout.addWidget(self.eyes_title[0])
+        tools_layout.addStretch()
+
+        # ---- Tools > Eye loop curves ----
         eye_naming_layout = QtWidgets.QHBoxLayout()
         eye_naming_layout.addWidget(self.hint_label("Rig name"))
         eye_naming_layout.addWidget(self.eye_rig_name_field)
@@ -525,27 +677,79 @@ class Window(QtWidgets.QDialog):
         # self.eyes_title[1].addLayout(eye_diag_layout)
         # --------------------------------------------------------------
 
-        # ---- 4. Build rig ----
+        # ---- 3. Build rig ----
         self.build_title[1].addWidget(self.build_btn)
 
     def create_joints(self, joint_name):
         cmds.select(clear=True)
         cmds.joint(name=joint_name)
 
-    def toggle_add_panel(self):
+    def _set_initial_size(self):
         """
-        Desplega o plega el panell lateral d afegir moduls, i ajusta l amplada
-        de la finestra per fer-hi lloc (sense forçar una mida fixa).
-        """
-        panell_obert = self.add_module_panel.isVisible()
-        self.add_module_panel.setVisible(not panell_obert)
+        Mida amb la que s obre la finestra.
 
-        if not panell_obert:
-            self.add_panel_tab_btn.setText("◂")
-            self.resize(self.WIDTH_PANEL_OPEN, self.height())
-        else:
-            self.add_panel_tab_btn.setText("▸")
-            self.resize(self.WIDTH_PANEL_CLOSED, self.height())
+        Parteix de INITIAL_HEIGHT, pero si el contingut necessita mes (fonts
+        grans, escalat de pantalla de Windows al 125 o 150%) mana el sizeHint
+        del layout. I es limita al 85% de l alcada util de la pantalla, perque
+        en un portatil no quedi la meitat de la finestra fora.
+        """
+        hint = self.sizeHint()
+
+        width = max(self.WIDTH_PANEL_CLOSED, hint.width())
+        height = max(self.INITIAL_HEIGHT, hint.height())
+
+        screen = QtGui.QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry().height()
+            height = min(height, int(available * 0.85))
+
+        self.resize(width, height)
+
+    def _update_width(self):
+        """
+        Recalcula l amplada de la finestra segons quins panells estan oberts.
+
+        Abans cada panell posava una amplada fixa. Amb dos panells independents
+        aixo ja no val: obrir Tools amb el panell de moduls obert el faria
+        encongir. Ara es suma el que ocupi cada un.
+
+        Es fa servir isHidden() i no isVisible(): isVisible() tambe torna False
+        si la finestra sencera esta minimitzada, i llavors l amplada calculada
+        seria erronia.
+        """
+        width = self.WIDTH_PANEL_CLOSED
+
+        if not self.add_module_panel.isHidden():
+            width += self.WIDTH_MODULES_PANEL
+
+        if not self.tools_panel.isHidden():
+            width += self.WIDTH_TOOLS_PANEL
+
+        self.resize(width, self.height())
+
+    def toggle_add_panel(self):
+        """Desplega o plega el panell lateral d afegir moduls."""
+        panell_obert = not self.add_module_panel.isHidden()
+        self.add_module_panel.setVisible(not panell_obert)
+        self.add_panel_tab_btn.setText("▸" if panell_obert else "◂")
+
+        self._update_width()
+
+    def _set_tools_tab_text(self, opened):
+        """
+        Text de la pestanya de Tools: fletxa i la paraula en vertical, perque
+        la pestanya fa 22 px d ample i s ha de saber que es sense obrir-la.
+        """
+        arrow = "◂" if opened else "▸"
+        self.tools_tab_btn.setText(arrow + "\n\n" + "\n".join("TOOLS"))
+
+    def toggle_tools_panel(self):
+        """Desplega o plega el panell lateral de Tools."""
+        panell_obert = not self.tools_panel.isHidden()
+        self.tools_panel.setVisible(not panell_obert)
+        self._set_tools_tab_text(opened=not panell_obert)
+
+        self._update_width()
 
     def create_module_item_widget(self, module_type):
         """
@@ -936,6 +1140,30 @@ class Window(QtWidgets.QDialog):
     #     return eyes_module.EyesModule.diagnose_loop_curve(side, rig_name, upper=upper)
     # ------------------------------------------------------------------
 
+    def create_guides(self):
+        """
+        Crea les guies NOMES dels moduls que hi ha a l arbre.
+
+        Es pot cridar mes d un cop: si afegeixes un modul nou a l arbre i
+        tornes a donar a GUIDES, nomes apareixen les guies d aquest modul. Les
+        que ja hi eren no es toquen, aixi que no perds el que ja havies col.locat.
+        """
+        raw_recipe = self.collect_recipe()
+
+        if not raw_recipe:
+            cmds.warning("[Guides] L arbre de moduls esta buit. Afegeix algun "
+                         "modul abans de crear les guies.")
+            return None
+
+        #Es normalitza per dos motius: afegeix el spine obligatori (el chest, el
+        #hip i el coll en llegeixen les guies) i resol les features, que es
+        #d on surt si la cama porta dits del peu o no.
+        recipe, warnings = module_specs.normalize_recipe(raw_recipe)
+        for text in warnings:
+            cmds.warning("[Recepta] {}".format(text))
+
+        return self.character.create_guides(recipe)
+
     def mirror_rig(self):
         """
         Espeja las guias del lado L al R.
@@ -964,7 +1192,7 @@ class Window(QtWidgets.QDialog):
         self.builder.build(recipe)
 
     def create_connections(self):
-        self.guides_btn.clicked.connect(lambda: self.character.create_guides())
+        self.guides_btn.clicked.connect(self.create_guides)
         #self.guides_btn02.clicked.connect(lambda: self.character.create_guides())
 
         self.export_btn.clicked.connect(self.export_guides)
@@ -973,6 +1201,7 @@ class Window(QtWidgets.QDialog):
 
         #Connecta la pestanyeta lateral per desplegar/plegar el panell d afegir moduls
         self.add_panel_tab_btn.clicked.connect(self.toggle_add_panel)
+        self.tools_tab_btn.clicked.connect(self.toggle_tools_panel)
 
         #Connecta cada boto del panell amb el tipus de modul que afegeix
         for btn, module_type in self.module_type_buttons:

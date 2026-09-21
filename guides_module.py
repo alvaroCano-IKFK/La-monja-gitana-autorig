@@ -771,127 +771,304 @@ class EyebrowSkullGuides(object):
 ##### INSTANCIAS #####
 
 class CharacterGuides(object):
-    """Esta clase se encarga de crear todas las guías del personaje y agruparlas bajo un grupo principal llamado "guides_GRP"."""
-    
+    """
+    Crea les guies del personatge i les agrupa sota "guides_GRP".
+
+    Ja no les crea totes sempre: create_guides() rep la recepta de la finestra
+    i nomes crea les guies dels moduls que hi ha a l arbre. I es pot cridar mes
+    d un cop: si guides_GRP ja existeix, les guies que ja hi son no es tornen a
+    crear, i les noves s afegeixen al grup existent.
+    """
+
+    GUIDES_ROOT = "guides_GRP"
+    GUIDES_OFFSET_Y = 32.5
+
+    #: Guia que demostra que un bloc de guies ja existeix a l escena. Si hi es,
+    #: aquell bloc no es torna a crear: aixi es pot afegir un modul a l arbre,
+    #: tornar a donar a GUIDES, i nomes apareixen les guies noves.
+    PRESENCE = {
+        "spine":   "root",
+        "neck":    "neck_root",
+        "arm":     "L_clavicule",
+        "finger":  "L_index_01",
+        "leg":     "L_hip",
+        "toes":    "L_bigToe_01",
+        #Ja no "boca_surface": la boca nova no la fa servir. C_lip_mid es la
+        #guia que sempre necessita.
+        "mouth":   "C_lip_mid",
+        "jaw":     "jaw_root",
+        "eye":     "L_eye_mid",
+        "eyebrow": "L_eyebrow_root_01",
+        "skull":   "eyebrow_skull_NRB",
+    }
+
     def __init__(self):
         # Añadimos una variable para guardar la instancia del spine
         self.spine_rig = None
         self.all_guides_grp = None
-        
-    def create_guides(self):
+
+        #Resultat de l ultima crida, per poder-lo consultar
+        self.created = []
+        self.skipped = []
+
+    # ------------------------------------------------------------------
+    # QUE CAL CREAR
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _blocks_from_recipe(recipe):
         """
-        Aquesta funcio crea totes les guies del personatge i les agrupa sota un grup principal anomenat "guides_GRP".
+        Tradueix la recepta a blocs de guies.
 
+        Un modul no sempre es un bloc: la cama porta el peu (el reverse foot va
+        sempre), els dits del peu (modul "toe") pengen del ball de la cama, el
+        spine va sempre (el chest i el hip en depenen) i les celles
+        porten la NURBS del crani per on llisquen.
+
+        recipe=None vol dir "totes", que es com funcionava abans.
         """
-        #Crea les guies de la spine
-        spine_instance = SpineGuides("root", "chest", (0, 10, 0))
-        spine_instance.spine_guides()
+        if recipe is None:
+            return ["spine", "neck", "arm", "finger", "leg", "toes",
+                    "mouth", "jaw", "eye", "eyebrow", "skull"]
 
-        #Crea les guies del coll
-        neck_instance = NeckGuides("neck_root","neck_end",(0, 20, 0), (0, 23, 0.5))
-        neck_instance.neck_guides()
+        types = {entry["type"] for entry in recipe}
 
-        #Crea les guies del brac
-        arm_instance = ArmGuides(
-            "L_shoulder", "L_elbow", "L_wrist","L_clavicule",
-            (3, 12, 0),
-            (13, 12, -0.1),
-            (23, 12, 0),
-            (0,12,0)
-        )
-        arm_instance.create_chain()
+        blocks = []
 
-        #Crea les guies de la cama
-        leg_instance = LegGuides(
-            "L_hip", "L_knee", "L_ankle",
-            (3, -10, 0),
-            (3, -20, 0.2),
-            (3, -30, 0)
-        )
-        leg_instance.create_chain()
+        #El spine va sempre: el chest i el hip del build son passos fixos que
+        #en llegeixen les guies. El coll ja no: ara es un modul opcional.
+        blocks.append("spine")
+        if "neck" in types:
+            blocks.append("neck")
 
-        #Crea les guies de la ma a partir del brac
-        hand_instance = HandGuides(arm_instance)
-        hand_instance.hand_guides()
+        #Els dits pengen del canell: sense les guies del brac no tenen d on
+        #penjar. Si l usuari ha posat dits sense brac, es crea el brac igual.
+        if "arm" in types or "finger" in types:
+            blocks.append("arm")
+        if "finger" in types:
+            blocks.append("finger")
 
-        #Crea les guies del peu a partir de la cama
-        foot_instance = FootGuides(
-            leg_instance,
-            "L_ball",
-            "L_toe_tip",
-            "L_heel",
-            (0, -2, 3),
-            (0, -2, 6),
-            (0,-2,-3)
-        )
-        foot_instance.foot_guides()
+        #Igual que els dits de la ma amb el brac: els dits del peu pengen del
+        #ball, que surt de les guies de la cama i el peu.
+        if "leg" in types or "toe" in types:
+            blocks.append("leg")
+        if "toe" in types:
+            blocks.append("toes")
 
-        #Crea les guies dels dits del peu a partir del ball
-        toes_instance = ToesGuides(foot_instance, side="L")
-        toes_instance.toes_guides()
-       
-       
-        #Crea les guies de la boca
-        boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end",
-                                   lip_in01="L_lip_in01", lip_in02="L_lip_in02")
-        boca_instance.create_boca()
-        
-        #Crea les guies de la jaw
-        jaw_instance = JawGuides("jaw_root", "jaw_end", (0, 21, 5),(0, 19, 9))
-        jaw_instance.jaw_guides()
+        if "mouth" in types:
+            blocks.append("mouth")
+        if "jaw" in types:
+            blocks.append("jaw")
+        if "eye" in types:
+            blocks.append("eye")
+        if "eyebrow" in types:
+            blocks += ["eyebrow", "skull"]
 
-        #Crea les guies de l'ull
-        eye_instance = EyeGuides(
-            "L_eye_mid",
-            "L_eye_mid_end",
-            "L_eye_direct",
-            (2, 26, 9),
-            (2, 26, 10),
-            (2, 26, 20)
-         
-        )
-        
-        #cmds.parent(eye_instance.eye_mid, eye_instance.eye_mid_end)
-        eye_instance.eye_guides()
+        return blocks
 
-        #Crea les guies de les celles
-        eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
-        eyebrows_instance.eyebrows_guides()
+    # ------------------------------------------------------------------
+    # CREACIO
+    # ------------------------------------------------------------------
+    def create_guides(self, recipe=None):
+        """
+        Crea les guies dels moduls de la recepta i les agrupa sota guides_GRP.
 
-        #Crea la NURBS del crani per la que llisquen les celles.
-        #El centre va a l'altura de les guies de les celles (Y = 34) perque
-        #despres tot el guides_GRP es mou junt.
-        skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
-        skull_instance.create_skull()
-        
-        #Llista amb tots els grups de guies creats       
-        guide_groups = [
-            spine_instance.guides_group,
-            neck_instance.guides_group,
-            arm_instance.guides_group,
-            leg_instance.guides_group,
-            hand_instance.group,
-            boca_instance.guides_group,
-            jaw_instance.guides_group,
-            eye_instance.guides_group,
-            eyebrows_instance.guides_group,
-            skull_instance.guides_group
-        ]
+        Args:
+            recipe (list): la recepta de la finestra. None = totes les guies.
 
-        # Filtra nomes els grups que existeixen
-        new_list = []
-        
-        for g in guide_groups:
-            if g and cmds.objExists(g):
-                new_list.append(g)
-        guide_groups = new_list
+        Returns:
+            list: els blocs de guies que s han creat en aquesta crida
+        """
+        self.created = []
+        self.skipped = []
 
-        #Si no hi ha grups valids, mostra un warining
-        if not guide_groups:
-            cmds.warning("No se encontraron grupos de guías para agrupar.")
-            return
+        blocks = self._blocks_from_recipe(recipe)
 
-        #Agrupa totes les guies sota un únic grup principal
-        self.all_guides_grp = cmds.group(guide_groups, n="guides_GRP")
-        cmds.setAttr(f"{self.all_guides_grp}.translateY", 32.5)
-        cmds.xform(self.all_guides_grp, ws=True, piv=(0, 0, 0))
+        if recipe is not None:
+            types = {entry["type"] for entry in recipe}
+            if "finger" in types and "arm" not in types:
+                cmds.warning("[Guides] Hi ha dits pero no brac: es creen igualment "
+                             "les guies del brac, que es d on pengen els dits.")
+            if "toe" in types and "leg" not in types:
+                cmds.warning("[Guides] Hi ha dits del peu pero no cama: es creen "
+                             "igualment les guies de la cama, que es d on pengen.")
+
+        new_groups = []
+
+        #Instancies que necessiten els blocs que depenen d un altre. Si el pare
+        #ja existia a l escena, es fa servir un substitut amb nomes el nom del
+        #joint, que es l unic que en llegeixen HandGuides i ToesGuides.
+        arm_instance = None
+        foot_instance = None
+
+        for block in blocks:
+            if cmds.objExists(self.PRESENCE[block]):
+                self.skipped.append(block)
+                continue
+
+            if block == "spine":
+                #Crea les guies de la spine
+                spine_instance = SpineGuides("root", "chest", (0, 10, 0))
+                spine_instance.spine_guides()
+                new_groups.append(spine_instance.guides_group)
+
+            elif block == "neck":
+                #Crea les guies del coll
+                neck_instance = NeckGuides("neck_root", "neck_end", (0, 20, 0), (0, 23, 0.5))
+                neck_instance.neck_guides()
+                new_groups.append(neck_instance.guides_group)
+
+            elif block == "arm":
+                #Crea les guies del brac
+                arm_instance = ArmGuides(
+                    "L_shoulder", "L_elbow", "L_wrist", "L_clavicule",
+                    (3, 12, 0),
+                    (13, 12, -0.1),
+                    (23, 12, 0),
+                    (0, 12, 0)
+                )
+                arm_instance.create_chain()
+                new_groups.append(arm_instance.guides_group)
+
+            elif block == "finger":
+                #Crea les guies de la ma a partir del brac
+                if arm_instance is None:
+                    arm_instance = _ExistingJoints(wrist_joint="L_wrist")
+                hand_instance = HandGuides(arm_instance)
+                hand_instance.hand_guides()
+                #Els dits pengen del canell: no tenen grup propi que agrupar.
+
+            elif block == "leg":
+                #Crea les guies de la cama
+                leg_instance = LegGuides(
+                    "L_hip", "L_knee", "L_ankle",
+                    (3, -10, 0),
+                    (3, -20, 0.2),
+                    (3, -30, 0)
+                )
+                leg_instance.create_chain()
+                new_groups.append(leg_instance.guides_group)
+
+                #El peu va sempre amb la cama: el reverse foot no es opcional
+                foot_instance = FootGuides(
+                    leg_instance,
+                    "L_ball",
+                    "L_toe_tip",
+                    "L_heel",
+                    (0, -2, 3),
+                    (0, -2, 6),
+                    (0, -2, -3)
+                )
+                foot_instance.foot_guides()
+
+            elif block == "toes":
+                #Crea les guies dels dits del peu a partir del ball
+                if foot_instance is None:
+                    foot_instance = _ExistingJoints(ball_name="L_ball")
+                toes_instance = ToesGuides(foot_instance, side="L")
+                toes_instance.toes_guides()
+
+            elif block == "mouth":
+                #Crea les guies de la boca
+                boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end",
+                                           lip_in01="L_lip_in01", lip_in02="L_lip_in02")
+                boca_instance.create_boca()
+                new_groups.append(boca_instance.guides_group)
+
+            elif block == "jaw":
+                #Crea les guies de la jaw
+                jaw_instance = JawGuides("jaw_root", "jaw_end", (0, 21, 5), (0, 19, 9))
+                jaw_instance.jaw_guides()
+                new_groups.append(jaw_instance.guides_group)
+
+            elif block == "eye":
+                #Crea les guies de l'ull
+                eye_instance = EyeGuides(
+                    "L_eye_mid",
+                    "L_eye_mid_end",
+                    "L_eye_direct",
+                    (2, 26, 9),
+                    (2, 26, 10),
+                    (2, 26, 20)
+                )
+                eye_instance.eye_guides()
+                new_groups.append(eye_instance.guides_group)
+
+            elif block == "eyebrow":
+                #Crea les guies de les celles
+                eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end",
+                                                   root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
+                eyebrows_instance.eyebrows_guides()
+                new_groups.append(eyebrows_instance.guides_group)
+
+            elif block == "skull":
+                #Crea la NURBS del crani per la que llisquen les celles.
+                #El centre va a l'altura de les guies de les celles (Y = 34) perque
+                #despres tot el guides_GRP es mou junt.
+                skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
+                skull_instance.create_skull()
+                new_groups.append(skull_instance.guides_group)
+
+            self.created.append(block)
+
+        self._group_new_guides(new_groups)
+        self._report()
+
+        cmds.select(clear=True)
+
+        return list(self.created)
+
+    # ------------------------------------------------------------------
+    # AGRUPAR
+    # ------------------------------------------------------------------
+    def _group_new_guides(self, groups):
+        """
+        Posa els grups nous sota guides_GRP.
+
+        Totes les guies es creen a les seves posicions "crues", pensades per
+        quedar al seu lloc quan guides_GRP puja GUIDES_OFFSET_Y.
+
+        - Si guides_GRP no existeix, es crea amb els grups nous i es puja,
+          exactament com abans.
+        - Si ja existeix, els grups nous hi entren en RELATIU: conserven la
+          posicio local i per tant reben el mateix desplacament (i escala, si
+          l has escalat) que la resta de guies. En absolut quedarien
+          GUIDES_OFFSET_Y per sota de les altres.
+        """
+        groups = [g for g in groups if g and cmds.objExists(g)]
+
+        if not groups:
+            if not self.created:
+                return None
+            #Nomes s han creat blocs sense grup propi (dits, dits del peu), que
+            #ja pengen d una guia existent: no hi ha res a agrupar.
+            return self.all_guides_grp
+
+        if cmds.objExists(self.GUIDES_ROOT):
+            cmds.parent(groups, self.GUIDES_ROOT, relative=True)
+            self.all_guides_grp = self.GUIDES_ROOT
+        else:
+            self.all_guides_grp = cmds.group(groups, n=self.GUIDES_ROOT)
+            cmds.setAttr(f"{self.all_guides_grp}.translateY", self.GUIDES_OFFSET_Y)
+
+        return self.all_guides_grp
+
+    def _report(self):
+        if self.created:
+            print("[Guides] Creades: {}".format(", ".join(self.created)))
+        if self.skipped:
+            print("[Guides] Ja existien, no es toquen: {}".format(", ".join(self.skipped)))
+        if not self.created and not self.skipped:
+            cmds.warning("[Guides] No hi havia cap guia a crear.")
+
+
+class _ExistingJoints(object):
+    """
+    Substitut minim d ArmGuides / FootGuides per quan les guies del pare ja
+    existien a l escena d una crida anterior. HandGuides nomes llegeix
+    wrist_joint i ToesGuides nomes llegeix ball_name, aixi que amb el nom n hi
+    ha prou.
+    """
+
+    def __init__(self, **names):
+        for key, value in names.items():
+            setattr(self, key, value)

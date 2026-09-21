@@ -460,35 +460,109 @@ class BocaGuides(object):
     """
     Genera los jointsa de la boca y la surface
     """
-    def __init__(self, lips_NRB,lip_mid, lip_end):
+    def __init__(self, lips_NRB, lip_mid, lip_end,
+                 lip_in01="L_lip_in01", lip_in02="L_lip_in02",
+                 make_surface=True):
         self.boca_surface = lips_NRB
         self.lip_mid = lip_mid
         self.lip_end = lip_end
+
+        # Dos guias intermedias entre el mid y la comisura. La de dentro
+        # conduce el depresor/levator y la de fuera los pinch.
+        self.lip_in01 = lip_in01
+        self.lip_in02 = lip_in02
+
+        # La NURBS solo la necesita el sistema viejo (closestPointOnSurface,
+        # uvPin). En el sistema simple no se usa; se deja a True por si hay que
+        # volver atras, pero se puede apagar sin romper nada.
+        self.make_surface = make_surface
+
+        # True: lip_in01 / lip_in02 cuelgan de lip_end, para que el mirror las
+        # arrastre sin tocar module_specs. Ver la nota en create_boca().
+        self.parent_in_between_to_end = True
         
-    def create_boca(self):
-        #Crea la surface de la boca
-        surface = cmds.nurbsPlane(n=self.boca_surface, ax=(0, 1, 0), w=10, lr=1, d=1, u=4, v=4)[0]
+    # Posiciones base de las guias. Si mueves el mid o la comisura, las dos
+    # intermedias se recolocan solas.
+    MID_POSITION = (0, 24, 10)
+    END_POSITION = (2.5, 24, 9)
+    END_ROTATE_Y = 45
+
+    def _create_surface(self):
+        """
+        La NURBS de la boca. Solo la usa el sistema viejo (closestPointOnSurface
+        y uvPin); el simple no la toca. Se sigue creando por defecto para poder
+        volver atras, y se apaga con make_surface=False.
+        """
+        surface = cmds.nurbsPlane(n=self.boca_surface, ax=(0, 1, 0),
+                                  w=10, lr=1, d=1, u=4, v=4)[0]
         cmds.setAttr(f"{surface}.translateY", 24)
         cmds.setAttr(f"{surface}.translateZ", 10)
         cmds.setAttr(f"{surface}.rotateX", 90)
-        
-        #Dar una posición base a la forma de la nurbs
+
+        #Dar una posicion base a la forma de la nurbs
         cmds.select(surface + ".cv[4][0:4]", r=True)
         cmds.select(surface + ".cv[0][0:4]", add=True)
         cmds.move(0, 0, -4, r=True)
-        
+
         cmds.select(surface + ".cv[1][0:4]", r=True)
         cmds.select(surface + ".cv[3][0:4]", add=True)
         cmds.move(0, 0, -1, r=True)
-        
+
+        return surface
+
+    def create_boca(self):
+        surface = None
+
+        #Crea la surface de la boca
+        if self.make_surface:
+            surface = self._create_surface()
+
         #Crea els joints de la boca
         cmds.select(clear=True)
-        lip_mid_joint = cmds.joint(n=self.lip_mid, p=(0, 24, 10))
+        lip_mid_joint = cmds.joint(n=self.lip_mid, p=self.MID_POSITION)
         cmds.select(clear=True)
-        lip_end_joint = cmds.joint(n=self.lip_end, p=(2.5, 24, 9))
-        cmds.setAttr(f"{lip_end_joint}.rotateY", 45)
-        
-        self.guides_group = cmds.group(surface, lip_mid_joint, lip_end_joint, n="boca_guides_GRP")
+        lip_end_joint = cmds.joint(n=self.lip_end, p=self.END_POSITION)
+        cmds.setAttr(f"{lip_end_joint}.rotateY", self.END_ROTATE_Y)
+
+        # Las dos intermedias: repartidas a 1/3 y 2/3 entre el mid y la
+        # comisura, con la rotateY interpolada igual, para que la cadena salga
+        # abriendose de forma progresiva y no de golpe en la comisura.
+        in_between = []
+        for name, fraction in ((self.lip_in01, 1.0 / 3.0),
+                               (self.lip_in02, 2.0 / 3.0)):
+            position = [start + (end - start) * fraction
+                        for start, end in zip(self.MID_POSITION, self.END_POSITION)]
+
+            cmds.select(clear=True)
+            joint = cmds.joint(n=name, p=position)
+            cmds.setAttr(f"{joint}.rotateY", self.END_ROTATE_Y * fraction)
+            in_between.append(joint)
+
+        # Las intermedias cuelgan de la comisura a proposito.
+        #
+        # mirror_module no espeja joints sueltos: espeja las RAICES que le
+        # dice module_specs, y mirrorJoint se lleva la jerarquia entera de cada
+        # una. Colgandolas de L_lip_end quedan cubiertas por la raiz que la
+        # boca ya tenia declarada, sin tocar module_specs.
+        #
+        # Efecto secundario que hay que conocer: al mover la comisura, las dos
+        # intermedias la acompañan. Para colocar guias suele ser comodo, pero
+        # si prefieres moverlas sueltas, desengancha aqui y añade
+        # "L_lip_in01" y "L_lip_in02" a los mirror_roots de la boca.
+        if self.parent_in_between_to_end:
+            for joint in in_between:
+                cmds.parent(joint, lip_end_joint)
+
+        members = [lip_mid_joint, lip_end_joint]
+        if not self.parent_in_between_to_end:
+            members += in_between
+        if surface:
+            members.insert(0, surface)
+
+        self.guides_group = cmds.group(members, n="boca_guides_GRP")
+
+        cmds.select(clear=True)
+
         return self.guides_group
         
 class JawGuides(object):
@@ -758,7 +832,8 @@ class CharacterGuides(object):
        
        
         #Crea les guies de la boca
-        boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end")
+        boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end",
+                                   lip_in01="L_lip_in01", lip_in02="L_lip_in02")
         boca_instance.create_boca()
         
         #Crea les guies de la jaw

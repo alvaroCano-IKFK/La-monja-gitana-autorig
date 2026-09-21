@@ -35,6 +35,28 @@ class EyebrowsModule(object):
     # La M desaparece. Por eso hay que corregir el signo DESPUES del
     # decomposeMatrix, que es lo que hace el modulo de los ojos.
     MIRROR_R_TRANSLATION = True
+
+    # ==================================================================
+    # ARREGLO DE LA DOBLE TRANSFORMACION AL ROTAR
+    # ------------------------------------------------------------------
+    # El multMatrix de generate_relative_control_transform metia las matrices
+    # en el orden contrario al de Maya (el top_grp primero). Con traslaciones
+    # no se nota; con rotaciones el control giraba alrededor del origen del
+    # mundo en vez de alrededor de si mismo, y el joint local giraba Y
+    # orbitaba.
+    #
+    # Con el orden bien puesto, el delta es EXACTAMENTE el movimiento del
+    # control respecto a su reposo, y el _Local_OFF esta matcheado a ese mismo
+    # reposo. Asi que el _Local_TRN acaba donde esta el control, siempre, en
+    # los dos lados, sin signos que corregir.
+    #
+    # Por eso con True el espejo de traslacion (MIRROR_R_TRANSLATION y sus dos
+    # signos) se SALTA: esos signos existian para compensar el orden al reves.
+    # Dejarlos puestos con el orden bueno es lo que rompia el espejo.
+    #
+    # False = comportamiento de antes, exacto: orden al reves + signos.
+    # Para comprobarlo en tu escena: check_local_follow().
+    FIX_DELTA_ORDER = True
     # Medido, no supuesto: moviendo cada control un paso y comparando el
     # desplazamiento en MUNDO del control con el de su _Local_TRN, la X ya salia
     # acompanando y la Y y la Z al reves. De ahi este triple.
@@ -202,7 +224,12 @@ class EyebrowsModule(object):
                 node_name, parent=True, type="transform"
             )
 
-        matrix_inputs = list(reversed(hierarchy_transforms))
+        # Maya: mundo = hijo x padre x abuelo..., o sea el control primero.
+        # Ver FIX_DELTA_ORDER arriba de la clase.
+        if self.FIX_DELTA_ORDER:
+            matrix_inputs = list(hierarchy_transforms)
+        else:
+            matrix_inputs = list(reversed(hierarchy_transforms))
 
         for i, elem in enumerate(matrix_inputs):
             cmds.connectAttr(
@@ -232,7 +259,8 @@ class EyebrowsModule(object):
         cmds.parent(relative_trn, grp, relative=True)
 
         translate_source = f"{dcm}.outputTranslate"
-        if self.side == "R" and self.MIRROR_R_TRANSLATION:
+        if (self.side == "R" and self.MIRROR_R_TRANSLATION
+                and not self.FIX_DELTA_ORDER):
             translate_source = self._build_translation_mirror(
                 base_name, dcm, mirror_sign)
 
@@ -307,6 +335,65 @@ class EyebrowsModule(object):
             cmds.setAttr(plug, self.MIRROR_R_CONTROL_SCALE[index])
 
         return main_ctl_gen
+
+    def _reflect_inherited(self, group):
+        """
+        Hace que un sub o una tangente del lado R hereden DE VERDAD el volteo
+        del Main.
+
+        La idea de _mirror_control_axes era esa: voltear solo el Main y que los
+        sub y las tangentes lo heredasen. Pero cmds.parent es absoluto por
+        defecto: al meter el grupo bajo un padre con escala negativa, Maya le
+        escribe la compensacion contraria (rotate Z 180 + scale Z -1) para que
+        no se mueva en mundo. Y esa compensacion DESHACE el volteo. Los sub y
+        las tangentes R acababan con los ejes del mirror behaviour de su guia:
+        X igual que el lado L, Y y Z al reves. Que es exactamente lo que se ve
+        al moverlos.
+
+        Antes no se notaba en la ceja porque MIRROR_R_TRANSLATION giraba el
+        delta con signos a mano. Pero eso solo arreglaba la DEFORMACION: el
+        control R seguia moviendose con los ejes cambiados, asi que arrastrarlo
+        en el viewport movia la ceja al contrario de la mano.
+
+        Aqui se voltean los tres ejes del grupo en mundo conservando su
+        posicion: la matriz de mundo con las tres filas de ejes negadas. Eso es
+        el reflejo exacto del grupo equivalente del lado L. Todo lo que cuelga
+        (SPC, OFF, SDK, ANIM y el control) lo hereda, porque esta en identidad.
+        """
+        if self.side != "R" or not self.MIRROR_R_CONTROL_AXES:
+            return None
+        if not self.FIX_DELTA_ORDER:
+            return None
+
+        m = cmds.xform(group, q=True, ws=True, matrix=True)
+        reflected = [-v for v in m[0:12]] + m[12:16]
+        for index in (3, 7, 11):          # la columna de ceros se queda a 0
+            reflected[index] = 0.0
+        cmds.xform(group, ws=True, matrix=reflected)
+
+        return group
+
+    def _match_local_off(self, local_off, control, group):
+        """
+        Coloca un _Local_OFF en el reposo de su control.
+
+        Con FIX_DELTA_ORDER se copia la matriz de mundo ENTERA del control, no
+        solo su rotacion. El delta se calcula respecto al reposo del control,
+        asi que el _Local_OFF tiene que ser exactamente ese marco.
+
+        matchTransform solo copia posicion y rotacion. En los sub del lado R el
+        _GRP lleva la compensacion que escribe Maya al emparentarlo bajo un
+        Main con escala negativa (rotate Z 180 + scale Z -1), y el marco que
+        copiaba matchTransform salia girado 180 grados en Z: la X y la Y del
+        _Local_TRN iban al reves. check_local_follow lo detectaba como 2.000 en
+        translateX y translateY. Las tangentes pasaban porque su _GRP esta
+        limpio.
+        """
+        if self.FIX_DELTA_ORDER:
+            matrix = cmds.xform(control, q=True, ws=True, matrix=True)
+            cmds.xform(local_off, ws=True, matrix=matrix)
+        else:
+            cmds.matchTransform(local_off, group, pos=True, rot=True)
 
     def _connect_transform_channels(self, driver_node, driven_node):
         """Connecta Translate, Rotate i Scale d'un nodo/transform a un altre."""
@@ -979,6 +1066,78 @@ class EyebrowsModule(object):
             self.forehead_joints.append(joint_name)
         return joint_name
 
+    def check_local_follow(self, tolerance=0.01):
+        """
+        Mide si cada _Local_TRN acaba donde esta su control, moviendo y
+        rotando cada control un poco y devolviendolo a su sitio. No deja nada
+        tocado.
+
+        Es la prueba que importa: el _Local_TRN mueve el joint local, que mueve
+        la curva, que mueve la ceja. Si coincide con el control en traslacion
+        Y en rotacion, no hay doble transformacion ni espejo roto.
+
+        Hazlo con la cabeza en reposo: el sistema local no sigue a la cabeza a
+        proposito, asi que con la cabeza movida todo saldria descuadrado.
+        """
+        # Si la instancia es nueva (no viene del build), los _Local_TRN se
+        # buscan por nombre. Asi se puede lanzar desde el script editor.
+        for label in ("In", "Mid", "Out", "InTan", "OutTan"):
+            name = f"{self.prefix}{label}Local_TRN"
+            if label not in self.local_transforms and cmds.objExists(name):
+                self.local_transforms[label] = name
+
+        labels = [label for label in ("In", "Mid", "Out", "InTan", "OutTan")
+                  if label in self.local_transforms]
+        moves = [("translateX", 1.0), ("translateY", 1.0), ("translateZ", 1.0),
+                 ("rotateX", 20.0), ("rotateY", 20.0), ("rotateZ", 20.0)]
+
+        worst = 0.0
+        report = []
+
+        for label in labels:
+            ctrl = f"{self.prefix}_{label}_CTRL"
+            local = self.local_transforms[label]
+            if not (cmds.objExists(ctrl) and cmds.objExists(local)):
+                continue
+
+            # Se mueve el propio control y tambien su padre: la doble
+            # transformacion salia sobre todo al rotar un control y arrastrar
+            # a sus hijos (Main -> sub, sub -> tangente).
+            parent = (f"{self.prefix}_{label[:-3]}_CTRL" if label.endswith("Tan")
+                      else f"{self.prefix}_Main_CTRL")
+            drivers = [(ctrl, "")]
+            if cmds.objExists(parent):
+                drivers.append((parent, f"{parent.split('_')[-2]}."))
+
+            errors = []
+            for driver, tag in drivers:
+                for attr, amount in moves:
+                    plug = f"{driver}.{attr}"
+                    if cmds.getAttr(plug, lock=True):
+                        continue
+                    start_value = cmds.getAttr(plug)
+
+                    cmds.setAttr(plug, start_value + amount)
+                    a = cmds.xform(ctrl, q=True, ws=True, t=True)
+                    b = cmds.xform(local, q=True, ws=True, t=True)
+                    cmds.setAttr(plug, start_value)
+
+                    error = sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+                    errors.append((f"{tag}{attr}", error))
+                    worst = max(worst, error)
+
+            bad = [f"{attr} {error:.3f}" for attr, error in errors
+                   if error > tolerance]
+            state = "OK" if not bad else "FALLA  " + ", ".join(bad)
+            report.append(f"  {self.side} {label:<7} {state}")
+
+        print(f"[EyebrowsModule] check_local_follow {self.side} "
+              f"(FIX_DELTA_ORDER={self.FIX_DELTA_ORDER}):")
+        print("\n".join(report))
+        print(f"  peor error: {worst:.4f}")
+
+        return worst <= tolerance
+
     @staticmethod
     def _ensure_node(node_type, node_name):
         """Crea el nodo si no existe, y si existe lo reutiliza."""
@@ -1081,6 +1240,10 @@ class EyebrowsModule(object):
             )
             cmds.parent(sub_ctl_gen, main_ctl)
 
+            # Tiene que ir ANTES de la red de matrices: el bind se hornea con
+            # el control ya volteado.
+            self._reflect_inherited(sub_ctl_gen)
+
             # Generacio del grup REL i la xarxa de matrius
             rel_grp, _ = self.generate_relative_control_transform(
                 control_name=sub_ctrl,
@@ -1095,7 +1258,7 @@ class EyebrowsModule(object):
             local_off = cmds.group(
                 em=True, n=f"{self.prefix}{label}Local_OFF", p=main_local_trn
             )
-            cmds.matchTransform(local_off, sub_ctl_gen, pos=True, rot=True)
+            self._match_local_off(local_off, sub_ctrl, sub_ctl_gen)
 
             local_trn = cmds.group(
                 em=True, n=f"{self.prefix}{label}Local_TRN", p=local_off
@@ -1144,6 +1307,10 @@ class EyebrowsModule(object):
                 cmds.xform(tangent_ctl_gen, ws=True, t=tangent_pos)
                 cmds.parent(tangent_ctl_gen, sub_ctrl)
 
+                # Mismo arreglo: bajo un sub ya volteado, Maya vuelve a
+                # compensar y deshace el volteo otra vez.
+                self._reflect_inherited(tangent_ctl_gen)
+
                 # Creador de matriu i grup REL per a la tangent
                 # Aplanem la jerarquia mirant a main_ctl_grp per evitar doble transformació
                 tan_rel_grp, _ = self.generate_relative_control_transform(
@@ -1164,9 +1331,8 @@ class EyebrowsModule(object):
                     n=f"{self.prefix}{tan_label}Local_OFF",
                     p=main_local_trn,
                 )
-                cmds.matchTransform(
-                    tan_local_off, tangent_ctl_gen, pos=True, rot=True
-                )
+                self._match_local_off(tan_local_off, tangent_ctl,
+                                      tangent_ctl_gen)
 
                 tan_local_trn = cmds.group(
                     em=True, n=f"{self.prefix}{tan_label}Local_TRN", p=tan_local_off

@@ -3,7 +3,7 @@ from functools import partial
 import os
 import math
 import json
-import spine_module
+import horse_spine
 import limbs_module
 import fingers_module
 import neck_module
@@ -202,11 +202,14 @@ class LegGuides(LimbGuides):
         
     def create_chain(self):
         """
-        Orden final: clavicule_start -> clavicule -> hip -> knee -> ankle
+        Per defecte (biped):   clavicule_start -> clavicule -> hip -> knee -> ankle
+        Amb clavicle_root=True (pota de davant del caball):
+                               clavicule -> clavicule_start
+                                         -> hip -> knee -> ankle
         """
         cmds.select(clear=True)
 
-        # 1. Crea la cadena principal: hip -> knee -> ankle
+        # 1. Cadena principal: hip -> knee -> ankle
         hip   = cmds.joint(n=self.limb_root, p=self.limb_root_pos)
         knee  = cmds.joint(n=self.limb_mid,  p=self.limb_mid_pos)
         ankle = cmds.joint(n=self.limb_end,  p=self.limb_end_pos)
@@ -214,20 +217,31 @@ class LegGuides(LimbGuides):
         cmds.joint(hip, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
         cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
 
-        # 2. Crea clavicule y clavicule_start por encima
+        if getattr(self, "clavicle_root", False):
+            # 2. clavicule es l arrel; clavicule_start (escapula) i hip en pengen
+            cmds.select(clear=True)
+            clav       = cmds.joint(n=self.clavicule,       p=self.clavicule_pos)
+            clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)  #fill de clav
+            cmds.parent(hip, clav)
+
+            # 3. clavicule apunta al primer fill (clavicule_start); els fills no es reorienten
+            cmds.joint(clav, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=False, zso=True)
+            cmds.setAttr(f"{clav_start}.jointOrient", 0, 0, 0)
+            root = clav
+        else:
+            # 2. clavicule_start -> clavicule per sobre
+            cmds.select(clear=True)
+            clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)
+            clav       = cmds.joint(n=self.clavicule,       p=self.clavicule_pos)
+            cmds.parent(hip, clav)
+
+            cmds.joint(clav_start, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
+            cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
+            root = clav_start
+
+        # 4. Grup amb l arrel
+        self.guides_group = cmds.group(root, n=self.group_name)
         cmds.select(clear=True)
-        clav_start = cmds.joint(n=self.clavicule_start, p=self.clavicule_start_pos)
-        clav       = cmds.joint(n=self.clavicule,       p=self.clavicule_pos)
-
-        # 3. Emparenta hip bajo clavicule
-        cmds.parent(hip, clav)
-
-        # 4. Orienta toda la cadena desde la raíz
-        cmds.joint(clav_start, edit=True, oj=self.joint_orient, sao=self.up_axis, ch=True, zso=True)
-        cmds.setAttr(f"{ankle}.jointOrient", 0, 0, 0)
-
-        # 5. Grupo con clavicule_start como raíz
-        self.guides_group = cmds.group(clav_start, n=self.group_name)
 
         return self.guides_group
     
@@ -416,6 +430,7 @@ class CharacterGuides(object):
             (3.6, -18, 12.5),
             (3.6, -27, 12)
         )
+        leg_instance.clavicle_root = True   #L_clavicule es l arrel de la pota de davant
         leg_instance.create_chain()
         
         #Pota del darrere: 3 segments i sense clavicula (la pelvis es la de l espina)

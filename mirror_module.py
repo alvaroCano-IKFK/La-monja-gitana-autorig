@@ -5,7 +5,8 @@ class Mirror(object):
     """
     Mirror de les guies de les potes L -> R.
 
-    Davant:  L_clavicule_start -> L_clavicule -> L_hip -> L_knee -> L_ankle
+    Davant:  L_clavicule -> L_clavicule_start
+                         -> L_hip -> L_knee -> L_ankle
     Darrere: L_hip_back -> L_knee_back -> L_hock_back -> L_ankle_back
              (sense clavicula: la pelvis es la de l espina)
 
@@ -16,7 +17,7 @@ class Mirror(object):
 
     FOOT_NAMES = ["ball", "toe_tip", "heel", "hoof_in", "hoof_out"]
 
-    def __init__(self, clavicule_guide="L_clavicule_start",
+    def __init__(self, clavicule_guide="L_clavicule",
                  clavicule_guide_back="L_hip_back",
                  foot_joints=None,
                  foot_joints_back=None,
@@ -62,10 +63,21 @@ class Mirror(object):
     # ------------------------------------------------------------------ #
     # MIRROR D UNA CADENA
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _chain_root(guide):
+        """Puja fins al joint arrel (per si arriba un joint que no es l arrel)."""
+        node = guide
+        while True:
+            parent = cmds.listRelatives(node, parent=True, type="joint")
+            if not parent:
+                return node
+            node = parent[0]
+
     def _mirror_chain(self, guide, foot_joints, ankle_name):
         if not cmds.objExists(guide):
             cmds.warning(f"No existe: {guide}")
             return None
+        guide = self._chain_root(guide)
         if not cmds.objExists(ankle_name):
             cmds.warning(f"No existe: {ankle_name}")
             return None

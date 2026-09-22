@@ -35,8 +35,7 @@ class LegModule(object):
                  scapula=False,
                  clavicle=True,
                  three_bone=False,
-                 hock_guide=None,
-                 scapula_pivot_ratio=1.0 / 3.0):
+                 hock_guide=None):
         
         self.clavicule_start_guide = clavicule_start_guide
         self.clavicule_guide = clavicule_guide             
@@ -105,11 +104,13 @@ class LegModule(object):
             cmds.error(f"[{self.prefix}] hoof=True necessita bank_in_guide i bank_out_guide")
 
         #ESCAPULA (pota de davant del quadrupede). Amb scapula=True:
-        #  clavicule_start = vora superior de l escapula, clavicule = punta de l espatlla
-        #  l escapula gira sobre un pivot al terc superior i apunta al shoulder_CTRL
-        #  AutoScapula fa que l espatlla segueixi el legIk_CTRL
+        #  L_clavicule es l arrel; clavicule_start (escapula) i hip en pengen
+        #  clavicule_CTRL (general)
+        #   |- claviculeScapula_CTRL  pivot a la clavicula, orientat a clavicule_start
+        #   |                         -> parentConstraint al bind de clavicule_start
+        #   |- claviculeHip_CTRL      pivot a la clavicula, orientat al hip
+        #                             -> legRoot_CTRL emparentat a sota + arrel del FK
         self.scapula = scapula
-        self.scapula_pivot_ratio = scapula_pivot_ratio
 
         self.bind_chain = []
         self.ik_chain = []
@@ -212,112 +213,17 @@ class LegModule(object):
         except RuntimeError as err:
             cmds.warning(f"[{self.prefix}] No s ha pogut connectar SpringBias: {err}")
 
-    def build_scapula_aim(self, scapula_ctrl, shoulder_ctrl, pos_top, pos_shoulder):
+    def orient_towards(self, node, target):
         """
-        Escapula amb pivot real.
-
-        scapula_CTRL
-         |- scapulaUp_GRP     orientat al mon a la posa de repos (up de l aim)
-         |- scapulaAim_GRP    al terc superior, aimConstraint -> shoulder_CTRL
-             |- scapulaTop_DRV     vora superior  -> bind claviculeStart
-             |- shoulderPoint_DRV  punta espatlla -> bind clavicule, FK, IK root
-
-        L escapula no s estira: nomes gira. Si l espatlla va endavant,
-        la vora superior va enrere tota sola.
-        Tot es a posicions reals (els controls de clavicula no passen pel mirror).
+        Orienta node (grup d offset) amb la X apuntant a target i la Y al lateral
+        del mon. Al costat R la X apunta enrere (mirror behavior), com els joints
+        fets amb mirrorJoint.
         """
-        p = self.prefix
-        identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-
-        r = self.scapula_pivot_ratio
-        pivot = [pos_top[i] + (pos_shoulder[i] - pos_top[i]) * r for i in range(3)]
-
-        aim_dir = [pos_shoulder[i] - pivot[i] for i in range(3)]
-        length = math.sqrt(sum(v * v for v in aim_dir))
-        if length < 0.0001:
-            cmds.error(f"[{p}] Les guies de l escapula estan al mateix punt")
-        aim_dir = [v / length for v in aim_dir]
-
-        def world_aligned(name, parent, pos):
-            node = cmds.createNode("transform", n=name, parent=parent)
-            cmds.xform(node, ws=True, m=identity)
-            cmds.xform(node, ws=True, t=pos)
-            return node
-
-        up_grp = world_aligned(f"{p}_scapulaUp_GRP", scapula_ctrl, pivot)
-        aim_grp = world_aligned(f"{p}_scapulaAim_GRP", scapula_ctrl, pivot)
-        top_drv = world_aligned(f"{p}_scapulaTop_DRV", aim_grp, pos_top)
-        shoulder_drv = world_aligned(f"{p}_shoulderPoint_DRV", aim_grp, pos_shoulder)
-
-        # Les guies de l escapula estan al pla sagital: l eix X del mon
-        # (lateral) es perpendicular a la direccio i fa d up sense flips
-        cmds.aimConstraint(
-            shoulder_ctrl, aim_grp, mo=True,
-            aimVector=aim_dir, upVector=(1, 0, 0),
-            worldUpType="objectrotation", worldUpVector=(1, 0, 0),
-            worldUpObject=up_grp,
-            n=f"{p}_scapulaAim_AIM"
-        )
-        return {"aim": aim_grp, "top": top_drv, "shoulder": shoulder_drv}
-
-    def build_auto_scapula(self, scapula_ctrl, shoulder_gen, ik_ctrl, ik_mode_plug,
-                           pos_top, pos_shoulder):
-        """
-        AutoScapula: l SDK del shoulder_CTRL rep una part del desplacament del
-        legIk_CTRL, en espai de l escapula.
-
-          offset = clamp( delta_legIk * Factor * AutoScapula * modeIK , +-Limit )
-
-        L animador pot seguir corregint movent el shoulder_CTRL.
-        """
-        p = self.prefix
-        length = math.sqrt(sum((pos_shoulder[i] - pos_top[i]) ** 2 for i in range(3)))
-
-        cmds.addAttr(scapula_ctrl, ln="scapulaAttrSep", nn="SCAPULA", at="enum", en="------", k=False)
-        cmds.setAttr(f"{scapula_ctrl}.scapulaAttrSep", cb=True)
-        cmds.setAttr(f"{scapula_ctrl}.scapulaAttrSep", l=True)
-        cmds.addAttr(scapula_ctrl, ln="AutoScapula", at="float", min=0, max=1, dv=1, k=True)
-        cmds.addAttr(scapula_ctrl, ln="AutoScapulaFactor", at="float", min=0, dv=0.25, k=True)
-        cmds.addAttr(scapula_ctrl, ln="AutoScapulaLimit", at="float", min=0, dv=round(length * 0.4, 3), k=True)
-
-        sdk = shoulder_gen.replace("_GRP", "_SDK")
-        if not cmds.objExists(sdk):
-            cmds.warning(f"[{p}] No existeix {sdk}, AutoScapula no connectat.")
-            return
-
-        # Delta del legIk en els eixos de l SDK de l espatlla
-        rest = cmds.createNode("transform", n=f"{p}_autoScapulaRest_GRP", parent=scapula_ctrl)
-        cmds.matchTransform(rest, sdk, pos=False, rot=True)
-        cmds.xform(rest, ws=True, t=cmds.xform(ik_ctrl, q=True, ws=True, rp=True))
-        follow = cmds.createNode("transform", n=f"{p}_autoScapula_DRV", parent=rest)
-        cmds.pointConstraint(ik_ctrl, follow, mo=True, n=f"{p}_autoScapula_PNC")
-
-        # Pes = AutoScapula * modeIK
-        weight = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaWeight_MDL")
-        cmds.connectAttr(f"{scapula_ctrl}.AutoScapula", f"{weight}.input1")
-        cmds.connectAttr(ik_mode_plug, f"{weight}.input2")
-
-        factor = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaFactor_MDL")
-        cmds.connectAttr(f"{weight}.output", f"{factor}.input1")
-        cmds.connectAttr(f"{scapula_ctrl}.AutoScapulaFactor", f"{factor}.input2")
-
-        scale = cmds.createNode("multiplyDivide", n=f"{p}_autoScapula_MDV")
-        cmds.connectAttr(f"{follow}.translate", f"{scale}.input1")
-        for ax in "XYZ":
-            cmds.connectAttr(f"{factor}.output", f"{scale}.input2{ax}")
-
-        # Limit simetric
-        neg = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaLimitNeg_MDL")
-        cmds.setAttr(f"{neg}.input2", -1)
-        cmds.connectAttr(f"{scapula_ctrl}.AutoScapulaLimit", f"{neg}.input1")
-
-        clp = cmds.createNode("clamp", n=f"{p}_autoScapula_CLP")
-        cmds.connectAttr(f"{scale}.output", f"{clp}.input")
-        for ch in "RGB":
-            cmds.connectAttr(f"{neg}.output", f"{clp}.min{ch}")
-            cmds.connectAttr(f"{scapula_ctrl}.AutoScapulaLimit", f"{clp}.max{ch}")
-
-        cmds.connectAttr(f"{clp}.output", f"{sdk}.translate", force=True)
+        aim = (1, 0, 0) if self.side == "L" else (-1, 0, 0)
+        tmp = cmds.aimConstraint(target, node, mo=False,
+                                 aimVector=aim, upVector=(0, 1, 0),
+                                 worldUpType="vector", worldUpVector=(1, 0, 0))
+        cmds.delete(tmp)
 
     def build_hoof_attrs(self, ik_ctrl, roll_ball_plug, ball_sdk, tip_sdk,
                          bank_in_sdk, bank_out_sdk, curl_sdk):
@@ -436,14 +342,21 @@ class LegModule(object):
         cmds.select(clear=True)
 
         b_th = self.bind_chain[0]
-        if self.clavicle:
+        if self.clavicle and self.scapula:
+            # clavicule arrel: escapula i hip en pengen
+            cmds.parent(b_th, c_cl)
+            cmds.parent(b_cl_start, c_cl)
+        elif self.clavicle:
             cmds.parent(b_th, c_cl)
             cmds.parent(c_cl, b_cl_start)
 
         cmds.makeIdentity(b_th, apply=True, t=0, r=1, s=0, n=0, pn=1)
 
         # Arrel de l esquelet de la cama (el que va al leg_GRP)
-        bind_root = b_cl_start if self.clavicle else b_th
+        if self.clavicle:
+            bind_root = c_cl if self.scapula else b_cl_start
+        else:
+            bind_root = b_th
 
         # Duplicate chains
         def duplicate_chain(suffix):
@@ -496,18 +409,43 @@ class LegModule(object):
         clav_ctls = []
         clavicule_start_ctrl = clavicule_start_gen = None
         clavicule_ctrl = clavicule_gen = None
-        if self.clavicle:
-        
+        clav_hip_ctrl = clav_hip_gen = None
+        if self.clavicle and self.scapula:
+            # Control general a la clavicula (arrel)
+            clavicule_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["mainIk"],
+                final_name=f"{self.prefix}_clavicule_CTRL"
+            )
+            clavicule_gen = self.create_offset_group(clavicule_ctrl, clavicule_ctrl_target, 
+                                                     orient=False, world_space=True)
+
+            # Dos controls amb el pivot a la clavicula, orientats a cada fill
+            clavicule_start_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["clavicule"],
+                final_name=f"{self.prefix}_claviculeScapula_CTRL"
+            )
+            clavicule_start_gen = self.create_offset_group(clavicule_start_ctrl, clavicule_ctrl_target)
+            self.orient_towards(clavicule_start_gen, self.clavicule_start_guide)
+
+            clav_hip_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name=self.styles["clavicule"],
+                final_name=f"{self.prefix}_claviculeHip_CTRL"
+            )
+            clav_hip_gen = self.create_offset_group(clav_hip_ctrl, clavicule_ctrl_target)
+            self.orient_towards(clav_hip_gen, self.thigh_guide)
+
+            clav_ctls += [clavicule_ctrl, clavicule_start_ctrl, clav_hip_ctrl]
+
+        elif self.clavicle:
             clavicule_start_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["clavicule"], 
-                final_name=f"{self.prefix}_scapula_CTRL" if self.scapula else f"{self.prefix}_claviculeStart_CTRL"
+                final_name=f"{self.prefix}_claviculeStart_CTRL"
             )
-        
             clavicule_start_gen = self.create_offset_group(clavicule_start_ctrl, clavicule_start_ctrl_target, orient=True)
         
             clavicule_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.styles["clavicule"], 
-                final_name=f"{self.prefix}_shoulder_CTRL" if self.scapula else f"{self.prefix}_clavicule_CTRL"
+                final_name=f"{self.prefix}_clavicule_CTRL"
             )
             clavicule_gen = self.create_offset_group(clavicule_ctrl, clavicule_ctrl_target, orient=True)
         
@@ -518,7 +456,10 @@ class LegModule(object):
             lib_name=self.styles["footRoot"], 
             final_name=f"{self.prefix}_legRoot_CTRL"
         )
-        ik_root_gen = self.create_offset_group(ik_root_ctrl, th_ctrl_target, orient=True)
+        # Amb escapula el legRoot penja del claviculeHip_CTRL (posicions reals),
+        # aixi que no passa pel grup de mirror
+        ik_root_target = self.thigh_guide if self.scapula else th_ctrl_target
+        ik_root_gen = self.create_offset_group(ik_root_ctrl, ik_root_target, orient=True)
                 
         ik_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["mainIk"], 
@@ -604,7 +545,11 @@ class LegModule(object):
 
         # Sense clavicula el legRoot es l unic control de dalt: va al CONTROLS_GRP
         # perque es vegi tambe en mode FK (en fa de raiz)
-        cmds.parent(ik_root_gen, self.ik_grp if self.clavicle else self.controls_grp)
+        if self.scapula:
+            # legRoot emparentat sota el control de clavicula que apunta al hip
+            cmds.parent(ik_root_gen, clav_hip_ctrl)
+        else:
+            cmds.parent(ik_root_gen, self.ik_grp if self.clavicle else self.controls_grp)
         cmds.parent(
             ik_gen,
             foot_heel_gen, foot_ball_gen, foot_tip_gen,
@@ -674,7 +619,9 @@ class LegModule(object):
                         #cmds.rotate(0, 110, 0, cvs, r=True, p=pivot, os=True)
         # ---- JERARQUIA DEL PIE ----
         
-        if self.clavicle:
+        if self.clavicle and self.scapula:
+            cmds.parent(clavicule_start_gen, clav_hip_gen, clavicule_ctrl)
+        elif self.clavicle:
             cmds.parent(clavicule_gen, clavicule_start_ctrl)
         cmds.parent(foot_heel_gen,    ik_ctrl)
         cmds.parent(foot_bankIn_gen,  foot_heel_ctrl)
@@ -684,17 +631,16 @@ class LegModule(object):
         if hoof_curl_gen:
             cmds.parent(hoof_curl_gen, foot_tip_ctrl)
 
-        # ---- ESCAPULA ----
-        # Sense escapula la clavicula funciona com sempre (FK directe).
-        # Amb escapula, bind, FK i IK root segueixen els drivers de l aim.
-        scapula_top_driver = clavicule_start_ctrl
-        # sense clavicula, l arrel del FK segueix el legRoot
-        shoulder_driver = clavicule_ctrl if self.clavicle else ik_root_ctrl
+        # ---- DRIVER DE L ARREL DEL FK ----
+        #   escapula:        claviculeHip_CTRL
+        #   clavicula biped: clavicule_CTRL
+        #   sense clavicula: legRoot_CTRL
         if self.scapula:
-            scap = self.build_scapula_aim(clavicule_start_ctrl, clavicule_ctrl,
-                                          pos_cl_start, pos_cl)
-            scapula_top_driver = scap["top"]
-            shoulder_driver = scap["shoulder"]
+            upper_driver = clav_hip_ctrl
+        elif self.clavicle:
+            upper_driver = clavicule_ctrl
+        else:
+            upper_driver = ik_root_ctrl
 
         # ---- FK CONSTRAINTS ----
         for i in range(n_fk):
@@ -702,13 +648,16 @@ class LegModule(object):
         # El OFF del thigh FK recibe el constraint de la clavicula.
         # GRP/SPC son para posicionamiento, OFF es el nivel de constraint, SDK/ANIM para animacion.
         thigh_fk_off = fk_gens[0].replace("_GRP", "_OFF")
-        cmds.parentConstraint(shoulder_driver, thigh_fk_off, mo=True)
+        cmds.parentConstraint(upper_driver, thigh_fk_off, mo=True)
 
         # ---- CONSTRAINTS IK ----
         # ---- CONSTRAINTS CLAVICULE ----
-        if self.clavicle:
-            cmds.parentConstraint(scapula_top_driver, b_cl_start, mo=True)
-            cmds.parentConstraint(shoulder_driver,    c_cl,       mo=True)
+        if self.clavicle and self.scapula:
+            cmds.parentConstraint(clavicule_ctrl,       c_cl,       mo=True)   # arrel
+            cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)   # escapula
+        elif self.clavicle:
+            cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)
+            cmds.parentConstraint(clavicule_ctrl,       c_cl,       mo=True)
         cmds.pointConstraint(ik_root_ctrl,   self.ik_chain[0], mo=True)
         if self.hoof:
             # Reverse hoof:
@@ -724,8 +673,9 @@ class LegModule(object):
             cmds.parentConstraint(foot_tip_ctrl,  ik_footTip,      mo=True)  # tip IK
         cmds.poleVectorConstraint(pv_ctrl, ik_h)
         #cmds.parentConstraint(clavicule_start_gen, clavicule_ctrl, mo=True)
-        if self.clavicle:
-            cmds.parentConstraint(shoulder_driver, ik_root_gen, mo=True)
+        if self.clavicle and not self.scapula:
+            cmds.parentConstraint(clavicule_ctrl, ik_root_gen, mo=True)
+        # (amb escapula el legRoot ja penja del claviculeHip_CTRL)
         # (sense clavicula l ik_root_gen es constreny a la pelvis al final)
 
         if self.three_bone:
@@ -741,10 +691,6 @@ class LegModule(object):
         cmds.connectAttr(f"{switch_ctrl}.IK_FK", f"{self.fk_grp}.visibility")
         cmds.connectAttr(f"{vis_rev}.outputX",   f"{self.ik_grp}.visibility")
 
-        if self.scapula:
-            # vis_rev.outputX = 1 en mode IK: l auto nomes actua en IK
-            self.build_auto_scapula(clavicule_start_ctrl, clavicule_gen, ik_ctrl,
-                                    f"{vis_rev}.outputX", pos_cl_start, pos_cl)
 
         # ---- PAIR BLENDS ----
         for i in range(len(self.names)):
@@ -855,7 +801,7 @@ class LegModule(object):
             cmds.parent(self.leg_grp, rig_grp)
             cmds.parent(ik_h, ik_footBall, ik_footTip, self.leg_grp)
             if self.clavicle:
-                cmds.parent(b_cl_start, self.leg_grp)
+                cmds.parent(bind_root, self.leg_grp)
             else:
                 # sense clavicula les tres cadenes eren al mon: totes al leg_GRP
                 cmds.parent(bind_root, self.ik_chain[0], self.fk_chain[0], self.leg_grp)
@@ -889,7 +835,12 @@ class LegModule(object):
         if cmds.objExists(chestControl):
             # Es mejor restringir el grupo de la clavícula manteniendo el offset
             #cmds.parentConstraint(chestControl, ik_root_gen, mo=True)
-            top_gen = clavicule_start_gen if self.clavicle else ik_root_gen
+            if self.clavicle and self.scapula:
+                top_gen = clavicule_gen          # control general
+            elif self.clavicle:
+                top_gen = clavicule_start_gen
+            else:
+                top_gen = ik_root_gen
             cmds.parentConstraint(chestControl, top_gen, mo=True)
             print(f"Conectat {top_gen} a {chestControl}.")
         else:

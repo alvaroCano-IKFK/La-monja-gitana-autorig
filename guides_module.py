@@ -782,7 +782,7 @@ class NoseGuides(object):
 
     def __init__(self, nose_root, nose_tip, root_pos=(0, 24, 10), tip_pos=(0, 24, 12),
                  nostril_base="L_nose_nostrilBase", nostril="L_nose_nostril",
-                 nostril_base_pos=(0.3, 24, 11), nostril_pos=(0.6, 24, 11)):
+                 nostril_base_pos=(0, 24, 11), nostril_pos=(0.6, 24, 11)):
         self.nose_root = nose_root
         self.nose_tip = nose_tip
         self.root_pos = root_pos

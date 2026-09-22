@@ -729,6 +729,8 @@ class EyebrowSkullGuides(object):
 
         self.guides_group = None
 
+        
+
     def create_skull(self):
         if cmds.objExists(self.surface_name):
             cmds.warning(f"[Guides] '{self.surface_name}' ya existe, no se "

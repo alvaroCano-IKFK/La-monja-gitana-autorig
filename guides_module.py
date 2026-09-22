@@ -716,14 +716,14 @@ class NoseGuides(object):
             return
 
         # Crea el joint final de les guies del nas
-        tip_joint = cmds.joint(p=self.tip_pos, name=self.nose_tip)
+        tip_joint = cmds.joint(p=self.tip_pos, name=self.nose_tip)  
         if not tip_joint:
             print(f"Error creando la joint: {self.nose_tip}")
             return
         
-        base_nostril_joint = cmds.joint(p=(0, 156, 11), name="base_nostril_JNT")
+        base_nostril_joint = cmds.joint(p=(0, 24, 11), name="base_nostril_JNT")
 
-        nostril_joint = cmds.joint(p=(0.5, 156, 8), name="nostril_JNT")
+        nostril_joint = cmds.joint(p=(0.5, 24, 11), name="nostril_JNT")
 
         # Crea el grup de les guies del nas
         self.guides_group = cmds.group(root_joint, base_nostril_joint, nostril_joint, tip_joint, n="nose_guides_GRP")
@@ -821,6 +821,10 @@ class CharacterGuides(object):
         eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end", root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
         eyebrows_instance.eyebrows_guides()
 
+        #Crea les guies de la nose
+        nose_instance = NoseGuides("nose_root", "nose_tip", root_pos=(0, 27, 10), tip_pos=(0, 25, 12))
+        nose_instance.nose_guides()
+
         #Crea la NURBS del crani per la que llisquen les celles.
         #El centre va a l'altura de les guies de les celles (Y = 34) perque
         #despres tot el guides_GRP es mou junt.
@@ -838,7 +842,8 @@ class CharacterGuides(object):
             jaw_instance.guides_group,
             eye_instance.guides_group,
             eyebrows_instance.guides_group,
-            skull_instance.guides_group
+            skull_instance.guides_group,
+            nose_instance.guides_group
         ]
 
         # Filtra nomes els grups que existeixen

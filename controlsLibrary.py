@@ -2,10 +2,10 @@ import maya.cmds as cmds
 import maya.api.OpenMaya as om
 from functools import partial
 import os
-import json
+import json 
 
 # --- CONFIGURACION DE PATHS ---
-BASE_PATH = r"C:\Users\a.cano\Documents\GitHub\La-monja-gitana-autorig"
+BASE_PATH = r"C:\Users\laia.vila\Documents\GitHub\La-monja-gitana-autorig"
 CONTROLS_DIR = os.path.join(BASE_PATH, "control_library")
 
 # Asegurar que la carpeta existe

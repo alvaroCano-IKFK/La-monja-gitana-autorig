@@ -212,6 +212,16 @@ MODULE_SPECS = {
                     requires=("blink",)),
         ],
     },
+
+    "nose": {
+        "label": "Nose",
+        "order": 58,
+        "sides": ["C"],
+        "face": True,
+        "mirror_roots": [],
+        "always": [],
+        "optional": [],
+    },
 }
 
 
@@ -242,7 +252,7 @@ def module_sides(module_type):
 
 
 def is_face(module_type):
-    """True si el modulo es de cara (boca, mandibula, cejas, ojos)."""
+    """True si el modulo es de cara (boca, mandibula, cejas, ojos, nas)."""
     return bool(MODULE_SPECS[module_type].get("face"))
 
 

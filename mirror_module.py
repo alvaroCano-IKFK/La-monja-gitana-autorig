@@ -76,6 +76,44 @@ class Mirror(object):
 
         return list(self.mirrored)
 
+    def mirror_missing(self, recipe):
+        """
+        Espeja SOLO las guias R que faltan para los modulos R de la receta.
+
+        Lo llama build_module antes de construir. A diferencia de mirror(), no
+        borra ni rehace nada que ya exista: si has retocado a mano una guia del
+        lado R (una asimetria a proposito), se respeta. Solo rellena huecos.
+
+        Existe porque las guias R solo aparecen al darle a MIRROR. Si creas
+        las guias con GUIDES o las importas de un JSON y construyes sin pasar
+        por MIRROR, un modulo con lado R no tendria guias y el build petaba en
+        cmds.xform con un "No object matches name: R_...".
+
+        Returns:
+            list: guias R creadas
+        """
+        self.mirrored = []
+        self.skipped = []
+        self.replaced = []
+
+        types_with_right = sorted({entry["type"] for entry in recipe or []
+                                   if entry.get("side") == "R"})
+
+        for module_type in types_with_right:
+            if not self.mirror_face and module_specs.is_face(module_type):
+                continue
+
+            for left_root in module_specs.mirror_roots(module_type):
+                if cmds.objExists(self.right_name(left_root)):
+                    continue
+                self._mirror_one(left_root)
+
+        if self.mirrored:
+            print("[Mirror] Faltaban guias del lado R; espejadas antes del "
+                  "build: {}".format(", ".join(self.mirrored)))
+
+        return list(self.mirrored)
+
     # ------------------------------------------------------------------
     # QUE HAY QUE ESPEJAR
     # ------------------------------------------------------------------

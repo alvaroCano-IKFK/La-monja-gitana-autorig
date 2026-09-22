@@ -28,6 +28,7 @@ import mouthModule
 import jaw_module
 import eyebrowsModule
 import eyes_module
+import nose_module
 import progress_module
 import controlsLibrary
 import module_specs
@@ -103,6 +104,10 @@ class BuildRig(object):
             recipe = self.default_recipe()
 
         recipe, warnings = module_specs.normalize_recipe(recipe)
+
+        # Guias R que falten (no se le dio a MIRROR, o las guias vienen de
+        # GUIDES / un import). Solo rellena huecos: lo que ya existe no se toca.
+        mirror_module.Mirror().mirror_missing(recipe)
         for text in warnings:
             cmds.warning("[Build] {}".format(text))
 
@@ -178,8 +183,38 @@ class BuildRig(object):
             prog.step(label)
             function()
 
+    #: Guia de la que depende cada modulo de extremidad, por lado. Si no esta,
+    #: el modulo se salta con un aviso en vez de tumbar el build entero en un
+    #: cmds.xform. Los modulos de cara ya comprueban sus guias por su cuenta.
+    REQUIRED_GUIDES = {
+        "arm":    "{side}_clavicule",
+        "finger": "{side}_wrist",
+        "leg":    "{side}_hip",
+        "toe":    "{side}_ball",
+    }
+
+    def _missing_guide(self, entry):
+        """Nombre de la guia que falta para esta entrada, o None si esta todo."""
+        pattern = self.REQUIRED_GUIDES.get(entry["type"])
+        if not pattern:
+            return None
+
+        guide = pattern.format(side=entry["side"])
+
+        return None if cmds.objExists(guide) else guide
+
     def _build_module(self, entry):
         """Construye un modulo de la receta con su set de features."""
+        missing = self._missing_guide(entry)
+        if missing:
+            hint = (" Dale a MIRROR, o comprueba que existe la guia del lado L."
+                    if entry["side"] == "R" else "")
+            cmds.warning("[Build] {} {}: no existe la guia '{}'. Se salta este "
+                         "modulo.{}".format(module_specs.module_label(entry["type"]),
+                                            entry["side"], missing, hint))
+            self.modules[(entry["type"], entry["side"])] = None
+            return
+
         builders = {
             "spine":  self._build_spine,
             "neck":   self._build_neck,
@@ -191,6 +226,7 @@ class BuildRig(object):
             "jaw":     self._build_jaw,
             "eyebrow": self._build_eyebrow,
             "eye":     self._build_eye,
+            "nose":    self._build_nose,
         }
 
         builder = builders.get(entry["type"])
@@ -504,6 +540,20 @@ class BuildRig(object):
         eyes.build()
 
         return eyes
+
+    def _build_nose(self, side, features):
+        """Nariz. Una instancia para los dos lados, como la boca."""
+        nose = nose_module.NoseModule(
+            rig_name=self.RIG_NAME,
+            root_instance=self.root_rig,
+            features=features,
+        )
+
+        # build() comprueba sus guias y avisa si falta alguna.
+        if nose.build() is None:
+            return None
+
+        return nose
 
     def _core_skinning(self):
         skn = skinning_module.SkinningModule(

@@ -773,38 +773,42 @@ class NoseGuides(object):
     """
     Crea les guies del nas.
 
+    Noms SENSE sufix _JNT: skinning_module duplica qualsevol joint de l escena
+    que acabi en JNT, i les guies acabarien com a joints de skin.
+
+    Les aletes nomes existeixen a +X (prefix L_). El costat R el treu
+    nose_module mirallant la X, igual que la boca: no cal MIRROR.
     """
 
-    def __init__(self, nose_root, nose_tip, root_pos=(0, 24, 10), tip_pos=(0, 24, 12)):
+    def __init__(self, nose_root, nose_tip, root_pos=(0, 24, 10), tip_pos=(0, 24, 12),
+                 nostril_base="L_nose_nostrilBase", nostril="L_nose_nostril",
+                 nostril_base_pos=(0.3, 24, 11), nostril_pos=(0.6, 24, 11)):
         self.nose_root = nose_root
         self.nose_tip = nose_tip
         self.root_pos = root_pos
         self.tip_pos = tip_pos
+        self.nostril_base = nostril_base
+        self.nostril = nostril
+        self.nostril_base_pos = nostril_base_pos
+        self.nostril_pos = nostril_pos
         self.guides_group = None
 
-    def nose_guides(self):
+    def _guide(self, name, position):
+        #select(clear) abans de cada joint: si no, cmds.joint penja el nou del
+        #que estigui seleccionat i les quatre guies acaben encadenades.
         cmds.select(clear=True)
+        return cmds.joint(p=position, name=name)
 
-        # Crea el joint root de les guies del nas
-        root_joint = cmds.joint(p=self.root_pos, name=self.nose_root)
-        if not root_joint:
-            print(f"Error creando la joint: {self.nose_root}")
-            return
-
-        # Crea el joint final de les guies del nas
-        tip_joint = cmds.joint(p=self.tip_pos, name=self.nose_tip)  
-        if not tip_joint:
-            print(f"Error creando la joint: {self.nose_tip}")
-            return
-        
-        base_nostril_joint = cmds.joint(p=(0, 24, 11), name="base_nostril_JNT")
-
-        nostril_joint = cmds.joint(p=(0.5, 24, 11), name="nostril_JNT")
+    def nose_guides(self):
+        guides = [
+            self._guide(self.nose_root, self.root_pos),
+            self._guide(self.nose_tip, self.tip_pos),
+            self._guide(self.nostril_base, self.nostril_base_pos),
+            self._guide(self.nostril, self.nostril_pos),
+        ]
 
         # Crea el grup de les guies del nas
-        self.guides_group = cmds.group(root_joint, base_nostril_joint, nostril_joint, tip_joint, n="nose_guides_GRP")
-        if self.guides_group is None:
-            print("Error al crear el grupo de guías del nas.")
+        self.guides_group = cmds.group(guides, n="nose_guides_GRP")
 
         cmds.select(clear=True)
 
@@ -840,6 +844,7 @@ class CharacterGuides(object):
         "eye":     "L_eye_mid",
         "eyebrow": "L_eyebrow_root_01",
         "skull":   "eyebrow_skull_NRB",
+        "nose":    "nose_root",
     }
 
     def __init__(self):
@@ -902,6 +907,8 @@ class CharacterGuides(object):
             blocks.append("eye")
         if "eyebrow" in types:
             blocks += ["eyebrow", "skull"]
+        if "nose" in types:
+            blocks.append("nose")
 
         return blocks
 
@@ -912,30 +919,6 @@ class CharacterGuides(object):
         """
         Crea les guies dels moduls de la recepta i les agrupa sota guides_GRP.
 
-        #Crea les guies de la nose
-        nose_instance = NoseGuides("nose_root", "nose_tip", root_pos=(0, 27, 10), tip_pos=(0, 25, 12))
-        nose_instance.nose_guides()
-
-        #Crea la NURBS del crani per la que llisquen les celles.
-        #El centre va a l'altura de les guies de les celles (Y = 34) perque
-        #despres tot el guides_GRP es mou junt.
-        skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
-        skull_instance.create_skull()
-        
-        #Llista amb tots els grups de guies creats       
-        guide_groups = [
-            spine_instance.guides_group,
-            neck_instance.guides_group,
-            arm_instance.guides_group,
-            leg_instance.guides_group,
-            hand_instance.group,
-            boca_instance.guides_group,
-            jaw_instance.guides_group,
-            eye_instance.guides_group,
-            eyebrows_instance.guides_group,
-            skull_instance.guides_group,
-            nose_instance.guides_group
-        ]
         Args:
             recipe (list): la recepta de la finestra. None = totes les guies.
 
@@ -1063,6 +1046,13 @@ class CharacterGuides(object):
                                                    root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
                 eyebrows_instance.eyebrows_guides()
                 new_groups.append(eyebrows_instance.guides_group)
+
+            elif block == "nose":
+                #Crea les guies del nas
+                nose_instance = NoseGuides("nose_root", "nose_tip",
+                                           root_pos=(0, 27, 10), tip_pos=(0, 25, 12))
+                nose_instance.nose_guides()
+                new_groups.append(nose_instance.guides_group)
 
             elif block == "skull":
                 #Crea la NURBS del crani per la que llisquen les celles.

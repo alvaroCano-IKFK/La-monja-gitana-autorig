@@ -292,14 +292,26 @@ MODULE_SPECS = {
         ],
     },
 
+    # Modulo de centro, como la boca: una instancia construye los dos lados y
+    # las guias de las aletas solo existen en +X. mirror_roots vacio por eso.
     "nose": {
         "label": "Nose",
         "order": 58,
         "sides": ["C"],
         "face": True,
+        "recommends": ["neck"],
         "mirror_roots": [],
-        "always": [],
-        "optional": [],
+        "always": [
+            Feature("nose_root", "Nose Root"),
+            Feature("tip", "Tip"),
+        ],
+        "optional": [
+            Feature("nostrils", "Nostrils", default=True),
+            # Joint duplicado de la aleta, conducido por el mismo control. Lo
+            # tenia tu version original; se deja por defecto.
+            Feature("nostril_dup", "Nostril Dup Joint", default=True,
+                    requires=("nostrils",)),
+        ],
     },
 }
 

@@ -1,2029 +1,768 @@
-import maya.cmds as cmds    
-import maya.mel as mel
-import guides_module
-import controlsLibrary
+import maya.cmds as cmds
+
 from groups_module import ControlsGroups
-from nodeCreator_module import NodeCreator
-import rigRoot_module
 
-class MouthModule(object):
+try:
+    import controlsLibrary
+except ImportError:
+    controlsLibrary = None
 
-    # Índices fijos de coordinate[] / outputMatrix[] en el uvPin compartido
-    RAW_INDEX = {"L": 0, "R": 1, "C": 2}
-    BLEND01_INDEX = {"L": 3, "R": 5}
-    BLEND02_INDEX = {"L": 4, "R": 6}
 
-    # Desplazamiento en Y de las shapes de los controles de labio: los de upper
-    # suben +Y y los de lower bajan -Y. Solo mueve los CV de la curva, ni el
-    # transform ni el pivote. Ponlo a 0 para desactivarlo.
-    # Matriz de espejo en X. Se anade como ultima entrada del multMatrix de los
-    # controles del lado R para devolver el delta a espacio no espejado, porque
-    # su _GRP lleva un scaleX = -1 que la cadena de matrices no recoge (el _GRP
-    # se queda fuera a proposito, ver _get_ctrl_matrix_chain).
-    #
-    # En el Attribute Editor no la veras como scaleX = -1: Maya descompone esta
-    # matriz como rotateY = 180 y scaleZ = -1, que es la misma transformacion.
-    MIRROR_X_MATRIX = [-1.0, 0.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0, 0.0,
-                        0.0, 0.0, 1.0, 0.0,
-                        0.0, 0.0, 0.0, 1.0]
+class SimpleMouthModule(object):
+    """
+    Boca sin curvas, sin NURBS y sin nodos de geometria.
 
-    SHAPE_OFFSET_Y = 1.0
+    Todo el sistema son joints, controles y parentConstraints con pesos. No hay
+    motionPath, ni uvPin, ni closestPointOnSurface, ni composeMatrix, ni
+    aimMatrix. Es a proposito: esta pensado como base minima sobre la que ir
+    anadiendo capas y poder aislar que hace cada una.
 
-    def __init__(self, boca_surface="boca_surface", 
-                 lip_mid="lip_mid", 
-                 lip_end="lip_end", 
-                 root_instance=None, 
-                 rig_name="Character",
-                 side="L"):
-        
-        self.boca_surface = boca_surface
-        self.lip_mid = lip_mid
-        self.lip_end = lip_end
-        self.group_maker = ControlsGroups()
+    LA CADENA
+    ---------
+    Por cada mitad (upper y lower) y por cada lado hay cuatro posiciones, que
+    salen de las guias:
+
+        mid ---- in01 ---- in02 ---- comisura
+                (levator   (pinch
+                 depresor)
+
+    Y se cuelgan asi:
+
+        mid           parentConstraint 100% al control del jaw de su mitad
+        in01          parentConstraint  mid 75% / comisura 25%
+        in02          parentConstraint  mid 25% / comisura 75%
+        comisura      parentConstraint  jawUpper / jawLower segun UpperLower
+
+    Por que no puede flipar: ningun control saca su orientacion de la forma de
+    una curva ni de una superficie. Un parentConstraint mezcla dos transforms
+    que ya existen, y con interpType Shortest esa mezcla es un slerp, que es
+    continuo por construccion.
+    """
+
+    # base_name -> peso del MID (la comisura se lleva 1 - peso)
+    CHAIN_WEIGHTS = {
+        "01": 0.75,
+        "02": 0.25,
+    }
+
+    # Como se llama cada eslabon en cada mitad
+    CHAIN_NAMES = {
+        "Upper": {"01": "levator", "02": "upperPinch"},
+        "Lower": {"01": "depresor", "02": "lowerPinch"},
+    }
+
+    def __init__(self, rig_name="Character", root_instance=None,
+                 lip_mid="C_lip_mid", lip_end="L_lip_end",
+                 lip_in01="L_lip_in01", lip_in02="L_lip_in02",
+                 jaw_upper_ctrl=None, jaw_lower_ctrl=None,
+                 sides=("L", "R"), control_size=0.6):
+
         self.rig_name = rig_name
         self.root_instance = root_instance
-        self.styles = {"mainFk": "circleControl",
-                       "mouthUpper":"mouthUpper",
-                       "mouthLower": "mouthLower",
-                       "mouthSquare":"mouthSquare"}
-        
-        self.side = side
-        self.prefix = f"{self.side}_{rig_name}"
-        
-        # Nodos que expone el modulo para que el jaw pueda engancharse.
-        self.mid_lip_ctrl = None
-        self.end_lip_ctrl = None
-        self.end_lip_grp = None
+        self.groups = ControlsGroups()
+
+        # Guias. Solo existen en +X; el lado R se saca espejando la X.
+        self.lip_mid = lip_mid
+        self.lip_end = lip_end
+        self.lip_in01 = lip_in01
+        self.lip_in02 = lip_in02
+
+        # Controles del jaw. Si no se pasan, se buscan por convencion.
+        self.jaw_upper_ctrl = jaw_upper_ctrl or f"C_{rig_name}_jawUpper_CTRL"
+        self.jaw_lower_ctrl = jaw_lower_ctrl or f"C_{rig_name}_jawLower_CTRL"
+
+        self.sides = sides
+        self.control_size = control_size
+
+        # Reparto de la comisura entre las dos mitades de la mandibula.
+        # 0.5 = parentConstraint al 50% entre jawUpper y jawLower, que es lo
+        # que hace que al abrir la boca la comisura se quede a medio camino en
+        # vez de irse entera con el labio de abajo.
+        self.corner_upper_lower = 0.5
+
+        # A True añade un atributo 'UpperLower' animable en el control de la
+        # comisura, conectado a los dos pesos con un reverse. Es una capa mas,
+        # asi que por defecto va apagado: los pesos se quedan fijos al 50%.
+        self.corner_upper_lower_attr = False
+
+        self.controls = {}
+        self.joints = {}
+        self.module_group = None
+
+        # Grupos que hay que enganchar al jaw. Se guardan porque el jaw puede
+        # construirse DESPUES que la boca, y entonces attach_to_jaw() se llama
+        # mas tarde (lo hace build_module desde _build_jaw).
+        self.mid_groups = {}
+        self.corner_groups = {}
+        self.attached_to_jaw = False
+
+        # ==========================================================
+        # CASCADA
+        # ----------------------------------------------------------
+        # Una curva por labio, con un CV por control:
+        #   comisuraR - pinchR - levatorR - mid - levatorL - pinchL - comisuraL
+        # Cada control mueve SU CV, y los eslabones intermedios (levator,
+        # depresor, pinch) siguen a la curva en posicion. Como la curva es de
+        # grado 3, el punto de cada eslabon depende de los CVs vecinos: mover
+        # un control empuja un poco a los de al lado.
+        #
+        # La ROTACION no cambia: sigue saliendo del parentConstraint entre el
+        # mid y la comisura, que es lo que evita los flips. La curva solo
+        # aporta DONDE, nunca COMO.
+        #
+        # use_cascade = False  -> exactamente el sistema anterior, solo
+        #                         constraints.
+        # cascade_amount       -> 0 = posicion solo de los constraints,
+        #                         1 = posicion solo de la curva.
+        # ==========================================================
+        self.use_cascade = True
+        self.cascade_amount = 1.0
+        self.cascade_links = {}
+        self.cascade_group = None
+
+        # control -> nodo por el que se lee desde fuera (el propio control en
+        # L, su _out_TRN en R). Ver _insert_mirror.
+        self.output_nodes = {}
+
 
     # ------------------------------------------------------------------
-    # HELPERS DE IDEMPOTENCIA (crear una vez, reutilizar siempre)
+    # UTILIDADES
     # ------------------------------------------------------------------
-    def _get_or_create_shared_uvpin(self):
-        uvpin_name = f"C_{self.rig_name}_mouth_uvPin"
-        if cmds.objExists(uvpin_name):
-            return uvpin_name
+    def _guide_transform(self, guide, side):
+        """
+        Posicion y orientacion mundiales de una guia. Para el lado R, el
+        espejo se construye a mano, eje por eje.
 
-        uvpin_node = NodeCreator(
-            side=f"C_{self.rig_name}", node_type="uvPin", base_name="mouth",
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        uvpin_node = cmds.rename(uvpin_node, uvpin_name)
+        POR QUE A MANO
+        --------------
+        Un espejo puro en X da un marco de ejes zurdo, y un zurdo no se puede
+        escribir con una rotacion: una rotacion siempre deja el marco diestro.
+        La version anterior metia la matriz bajo un grupo con scaleX = -1 y le
+        preguntaba a Maya la rotacion en mundo. Maya tiene que partir esa
+        matriz en rotacion + escala negativa, y decide el solo en que eje pone
+        el -1. La rotacion que salia no era un espejo de nada: por eso los
+        controles R no se movian en espejo.
 
-        cmds.connectAttr(f"{self.boca_surface}.worldSpace[0]", f"{uvpin_node}.deformedGeometry")
-        cmds.setAttr(f"{uvpin_node}.normalAxis", 2)
-        cmds.setAttr(f"{uvpin_node}.tangentAxis", 0)
-        return uvpin_node
+        LO QUE SE HACE AHORA
+        --------------------
+        Con m(v) = (-vx, vy, vz) el reflejo de un vector en el plano YZ, el
+        grupo del control R se orienta con
 
-    def _get_or_create_shared_settings_grp(self):
-        grp_name = f"C_{self.rig_name}_lipsSettings_GRP"
-        if cmds.objExists(grp_name):
-            return grp_name
+            x_R = -m(x_L)      y_R = m(y_L)      z_R = m(z_L)
 
-        settings_grp = cmds.group(em=True, n=grp_name)
-        cmds.addAttr(settings_grp, ln="HorizontalFollow01", nn="Horizontal Follow 01", at="float", min=0, max=1, dv=0.5, k=True)
-        cmds.addAttr(settings_grp, ln="HorizontalFollow02", nn="Horizontal Follow 02", at="float", min=0, max=1, dv=0.25, k=True)
-        cmds.addAttr(settings_grp, ln="VerticalFollow01", nn="Vertical Follow 01", at="float", min=0, max=1, dv=0.77, k=True)
-        cmds.addAttr(settings_grp, ln="VerticalFollow02", nn="Vertical Follow 02", at="float", min=0, max=1, dv=0.58, k=True)
-        return settings_grp
+        que SI es diestro (reflejar invierte la mano, negar un eje la vuelve a
+        invertir), o sea una rotacion normal que Maya escribe sin trampas. El
+        eje X que falta por reflejar lo pone el grupo _mirror_GRP con
+        scaleX = -1 que _make_control mete debajo del grupo raiz. Resultado: el
+        control R es el reflejo exacto del L, y los mismos valores en los dos
+        lados dan movimientos en espejo en los tres ejes.
 
-    def _is_coordinate_connected(self, uvpin_node, coordinate_index):
-        conns = cmds.listConnections(
-            f"{uvpin_node}.coordinate[{coordinate_index}].coordinateU",
-            source=True, destination=False
+        Devuelve (posicion, rotacion) o (None, None).
+        """
+        if not cmds.objExists(guide):
+            cmds.warning(f"[SimpleMouth] No existe la guia '{guide}'.")
+            return None, None
+
+        position = cmds.xform(guide, q=True, ws=True, t=True)
+        rotation = cmds.xform(guide, q=True, ws=True, ro=True)
+
+        if side != "R":
+            return position, rotation
+
+        m = cmds.xform(guide, q=True, ws=True, matrix=True)
+        x_axis, y_axis, z_axis = m[0:3], m[4:7], m[8:11]
+
+        x_r = [x_axis[0], -x_axis[1], -x_axis[2]]     # -m(x)
+        y_r = [-y_axis[0], y_axis[1], y_axis[2]]      #  m(y)
+        z_r = [-z_axis[0], z_axis[1], z_axis[2]]      #  m(z)
+        t_r = [-position[0], position[1], position[2]]
+
+        mirrored = (x_r + [0.0] + y_r + [0.0] + z_r + [0.0] + t_r + [1.0])
+
+        # Un transform temporal SIN escalas negativas: la matriz ya es una
+        # rotacion propia, asi que Maya la descompone sin ambiguedad.
+        temp = cmds.group(em=True, n="tempMirrorTRN")
+        cmds.xform(temp, ws=True, matrix=mirrored)
+        position = cmds.xform(temp, q=True, ws=True, t=True)
+        rotation = cmds.xform(temp, q=True, ws=True, ro=True)
+        cmds.delete(temp)
+
+        return position, rotation
+
+    def _make_control(self, name, position, rotation=None, normal=(0, 0, 1),
+                      mirrored=False):
+        """
+        Un control en una posicion, con su jerarquia GRP/SPC/OFF/SDK/ANIM.
+
+        Devuelve (control, grupo_raiz). Se usa controlsLibrary si esta; si no,
+        un circulo, para que el modulo se pueda probar suelto.
+        """
+        if cmds.objExists(name):
+            cmds.delete(name)
+
+        control = None
+        if controlsLibrary is not None:
+            try:
+                control = controlsLibrary.create_control_from_lib(
+                    lib_name="circle", final_name=name
+                )
+            except Exception:
+                control = None
+
+        if control is None:
+            control = cmds.circle(n=name, nr=normal, r=self.control_size,
+                                  ch=False)[0]
+
+        # Un locator temporal como destino del match: create_rig_hierarchy
+        # espera un nodo, no una posicion.
+        target = cmds.spaceLocator(n=f"{name}_tempTarget")[0]
+        cmds.xform(target, ws=True, t=position)
+        if rotation is not None:
+            cmds.xform(target, ws=True, ro=rotation)
+
+        # match_rotation a True: los controles (y con ellos sus joints) heredan
+        # la orientacion de la guia. Antes salian alineados al mundo y no
+        # coincidian con las guias, que es lo que se veia.
+        group = self.groups.create_rig_hierarchy(
+            control, target, match_rotation=rotation is not None,
+            world_space=True
         )
-        return bool(conns)
 
-    def _get_ctrl_root_grp(self, ctrl):
+        cmds.delete(target)
+
+        self.output_nodes[control] = control
+
+        if mirrored:
+            self._insert_mirror(control, group)
+
+        return control, group
+
+    def _insert_mirror(self, control, group):
         """
-        Devuelve el _GRP raiz de la jerarquia de un control.
+        Mete el reflejo en X dentro de la jerarquia del control R.
 
-        NO vale con listRelatives(ctrl, parent=True): el padre directo del CTRL
-        es el _ANIM, no el _GRP. Si se coge el ANIM por error, los guardas del
-        tipo "este grupo ya tiene parentConstraint" no ven el constraint que
-        esta en el _GRP y acaban creando otro en mitad de la jerarquia. Antes
-        eso solo movia el control en pantalla, pero ahora que el multMatrix lee
-        ANIM/SDK/OFF/SPC ese movimiento se cuela dentro del sistema local.
+            GRP              <- constraints (marco diestro, sin tocar)
+              _mirror_GRP    <- scaleX = -1   (NUEVO)
+                SPC > OFF > SDK > ANIM > CTRL
+                                          _out_TRN  <- scaleX = -1 (NUEVO)
 
-        create_rig_hierarchy nombra el grupo raiz como "<ctrl sin _CTRL>_GRP",
-        asi que se reconstruye el nombre y solo se sube a mano si no aparece.
+        El reflejo va DEBAJO del GRP y no encima: un parentConstraint no sabe
+        escribir un reflejo, asi que si el nodo constreñido estuviera dentro de
+        un espacio negativo, el constraint devolveria orientaciones raras.
+        Asi el GRP sigue siendo un transform normal y los constraints trabajan
+        como siempre.
+
+        El _out_TRN deshace el reflejo para todo lo que tenga que LEER este
+        control desde fuera: el joint (un joint con escala negativa invierte
+        las normales del skin) y los constraints de otros controles que usan
+        este como padre. Nadie fuera del control ve nunca la escala -1.
         """
-        expected = f"{ctrl.replace('_CTRL', '')}_GRP"
-        if cmds.objExists(expected):
-            return expected
+        base = control[:-len("_CTRL")] if control.endswith("_CTRL") else control
+        spc = f"{base}_SPC"
 
-        node = ctrl
-        for _ in range(5):   # ANIM > SDK > OFF > SPC > GRP
-            parent = cmds.listRelatives(node, parent=True)
-            if not parent:
-                break
-            node = parent[0]
-        return node
+        if not cmds.objExists(spc):
+            cmds.warning(f"[SimpleMouth] No encuentro '{spc}', "
+                         f"'{control}' se queda sin espejo.")
+            return None
 
-    def _get_ctrl_matrix_chain(self, source_ctrl, source_ctrl_grp):
+        mirror = cmds.group(em=True, n=f"{base}_mirror_GRP", parent=group)
+        cmds.setAttr(f"{mirror}.scaleX", -1)
+
+        # relative=True: el SPC conserva sus valores locales (identidad). Sin
+        # esto, cmds.parent compensaria la escala del nuevo padre y el reflejo
+        # se anularia en el propio SPC.
+        cmds.parent(spc, mirror, relative=True)
+
+        out = cmds.group(em=True, n=f"{base}_out_TRN", parent=control)
+        cmds.setAttr(f"{out}.scaleX", -1)
+        self.output_nodes[control] = out
+
+        return mirror
+
+    def _out(self, control):
         """
-        Devuelve [CTRL, ANIM, SDK, OFF, SPC]: el control y todos los grupos que
-        tiene por encima SIN incluir el _GRP.
+        Nodo que hay que usar para LEER un control desde fuera.
 
-        El _GRP se queda fuera a proposito: el local_off ya esta matcheado a el
-        (create_space_tracking_hierarchy con target_joint=source_ctrl_grp), asi
-        que si tambien entrase aqui su transformacion se aplicaria dos veces.
+        En el lado L es el propio control. En el R es su _out_TRN, que tiene la
+        misma posicion y un marco diestro. Ningun joint ni constraint debe
+        apuntar al control R directamente.
         """
-        chain = [source_ctrl]
-        node = source_ctrl
+        return self.output_nodes.get(control, control)
 
-        while True:
-            parent = cmds.listRelatives(node, parent=True)
-            if not parent:
-                break
-
-            parent = parent[0]
-            if parent == source_ctrl_grp:
-                break
-
-            chain.append(parent)
-            node = parent
-
-        return chain
-
-    def _build_cps_network(self, prefix, cps_name, base_name, source_ctrl, source_ctrl_grp):
+    def _make_joint(self, name, control):
         """
-        Crea el space-tracking + closestPointOnSurface (CPS) crudo de un control.
-        Devuelve (local_off, local_trn, closest_point_node).
+        Joint en la posicion del control y constreñido a el.
+
+        parentConstraint y scaleConstraint: el joint es un pasajero del control
+        y no tiene vida propia.
         """
-        local_off, local_trn = self.group_maker.create_space_tracking_hierarchy(
-            space_base_name=f"{prefix}_{base_name}Local",
-            target_joint=source_ctrl_grp,
-            parent_group=None
-        )
+        if cmds.objExists(name):
+            cmds.delete(name)
 
-        mult_node = NodeCreator(
-            side=prefix, node_type="multMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        decompose_node = NodeCreator(
-            side=prefix, node_type="decomposeMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        decompose_trn_node = NodeCreator(
-            side=prefix, node_type="decomposeMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
+        driver = self._out(control)
 
-        # Antes solo entraba source_ctrl.matrix, que es la matriz del control
-        # DENTRO de su ANIM. Todo lo que pasara por encima (los constraints en
-        # el SPC, los grupos con scale negativo en el OFF/SDK) se perdia.
-        matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
-        for index, node in enumerate(matrix_chain):
-            cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
-        cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
-        cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
-        cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
-        cmds.connectAttr(f"{decompose_node}.outputScale", f"{local_trn}.scale")
-        cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
+        cmds.select(clear=True)
+        joint = cmds.joint(n=name)
+        cmds.matchTransform(joint, driver, pos=True, rot=True)
 
-        closest_point_node = NodeCreator(
-            side=prefix, node_type="closestPointOnSurface", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        closest_point_node = cmds.rename(closest_point_node, cps_name)
+        cmds.parentConstraint(driver, joint, mo=False)
+        cmds.scaleConstraint(driver, joint, mo=False)
 
-        cmds.connectAttr(f"{self.boca_surface}.worldSpace[0]", f"{closest_point_node}.inputSurface")
-        cmds.connectAttr(f"{decompose_trn_node}.outputTranslate", f"{closest_point_node}.inPosition")
+        cmds.select(clear=True)
 
-        return local_off, local_trn, closest_point_node
+        return joint
+
+    def _blend_constraint(self, driver_a, driver_b, target, weight_a,
+                          skip_translate=False):
+        """
+        parentConstraint de dos targets con pesos, en Shortest.
+
+        interpType 2 (Shortest) no es opcional: el valor por defecto (Average)
+        promedia angulos de Euler, y promediar 179 con -179 da 0 en vez de 180.
+        Ahi es donde salen los saltos.
+        """
+        kwargs = {"mo": True}
+        if skip_translate:
+            kwargs["skipTranslate"] = ["x", "y", "z"]
+
+        constraint = cmds.parentConstraint(driver_a, driver_b, target, **kwargs)[0]
+
+        aliases = cmds.parentConstraint(constraint, q=True, weightAliasList=True)
+        cmds.setAttr(f"{constraint}.{aliases[0]}", weight_a)
+        cmds.setAttr(f"{constraint}.{aliases[1]}", 1.0 - weight_a)
+        cmds.setAttr(f"{constraint}.interpType", 2)
+
+        return constraint
 
     # ------------------------------------------------------------------
-    # MAYA MUSCLE / KEEP OUT
+    # CONSTRUCCION
     # ------------------------------------------------------------------
-    def _get_or_create_muscle_surface(self):
+    def _build_mid(self, half):
         """
-        Convierte la nurbs de la boca en Muscle Object (una sola vez, aunque
-        build() se llame varias veces) y devuelve:
-            (transform_de_la_nurbs, shape_cMuscleObject)
-        """
-        # --- plugin + scripts MEL (en Maya 2025 todo vive en cMuscle.mel) ---
-        if not cmds.pluginInfo("MayaMuscle", query=True, loaded=True):
-            cmds.loadPlugin("MayaMuscle", quiet=True)
-        mel.eval('source "cMuscle.mel";')
+        El control del centro de un labio.
 
-        # self.boca_surface se usa como shape (worldSpace[0]); las herramientas
-        # de Muscle necesitan el transform.
-        surface_node = self.boca_surface
-        if cmds.objectType(surface_node, isAType="shape"):
-            surface_trn = cmds.listRelatives(surface_node, parent=True)[0]
+        Un solo control: lo conduce el jaw al 100% (el constraint se pone en
+        attach_to_jaw, sobre su grupo raiz) y el animador anima el propio
+        control, porque el constraint escribe en el grupo y no en los canales
+        del control. No se pisan.
+        """
+        position, rotation = self._guide_transform(self.lip_mid, "L")
+        if position is None:
+            return None, None
+
+        name = f"C_{self.rig_name}_lip{half}Mid_CTRL"
+        control, group = self._make_control(name, position, rotation)
+
+        self.mid_groups[half] = group
+        self.controls[f"{half}Mid"] = control
+
+        self._make_joint(f"C_{self.rig_name}_lip{half}Mid_JNT", control)
+
+        return control, None
+
+    def _build_corner(self, side):
+        """
+        La comisura. Es el segundo padre de toda la cadena, asi que se
+        construye antes que los eslabones.
+
+        Se cuelga entre los dos controles del jaw con un atributo UpperLower,
+        que es lo que hace que al abrir la boca la comisura se quede a medio
+        camino en vez de irse entera con la mandibula.
+        """
+        position, rotation = self._guide_transform(self.lip_end, side)
+        if position is None:
+            return None
+
+        name = f"{side}_{self.rig_name}_lipCorner_CTRL"
+        control, group = self._make_control(name, position, rotation,
+                                            mirrored=(side == "R"))
+
+        self.corner_groups[side] = group
+
+        self.controls[f"{side}Corner"] = control
+        self._make_joint(f"{side}_{self.rig_name}_lipCorner_JNT", control)
+
+        return control
+
+    def _build_chain_link(self, half, side, key, mid_ctrl, corner_ctrl):
+        """
+        Un eslabon intermedio: control, joint y el constraint de dos padres.
+        """
+        guide = self.lip_in01 if key == "01" else self.lip_in02
+        position, rotation = self._guide_transform(guide, side)
+        if position is None:
+            return None
+
+        base_name = self.CHAIN_NAMES[half][key]
+        name = f"{side}_{self.rig_name}_{base_name}_CTRL"
+
+        control, group = self._make_control(name, position, rotation,
+                                            mirrored=(side == "R"))
+
+        # Los padres se leen por su nodo de salida: el de la comisura R tiene
+        # escala negativa y no puede ser target de un constraint a pelo.
+        mid_ctrl = self._out(mid_ctrl)
+        corner_ctrl = self._out(corner_ctrl)
+
+        weight = self.CHAIN_WEIGHTS[key]
+
+        if self.use_cascade:
+            # Rotacion: igual que siempre, del blend de los dos padres.
+            # La traslacion la pone _build_cascade_curve mas tarde.
+            self._blend_constraint(mid_ctrl, corner_ctrl, group, weight,
+                                   skip_translate=True)
+
+            # BASE: el mismo blend, completo, en un transform aparte. Es donde
+            # estaria el grupo sin cascada. Hace dos cosas: sirve de target
+            # para dosificar la cascada con cascade_amount, y es el espacio
+            # donde se suma lo que mueve el animador para colocar el CV.
+            prefix = f"{side}_{self.rig_name}_{base_name}"
+            base = cmds.group(em=True, n=f"{prefix}CascadeBase_TRN",
+                              parent=self._get_cascade_group())
+            cmds.matchTransform(base, group, pos=True, rot=True)
+            self._blend_constraint(mid_ctrl, corner_ctrl, base, weight)
+
+            # LOCAL: hijo de la base que copia el translate del control. Su
+            # mundo es "base + lo que ha movido el animador", que es donde
+            # tiene que ir el CV de este control. Lee el canal translate, no
+            # el worldMatrix del control, asi que no depende del grupo que la
+            # curva va a mover: no hay ciclo.
+            # En el lado R el control se mueve dentro de un espacio reflejado
+            # (su _mirror_GRP). El Local tiene que moverse en el MISMO espacio,
+            # o el CV iria hacia un lado en X y el control hacia el otro, y el
+            # NEG ya no cancelaria. Por eso lleva su propio reflejo delante.
+            local_parent = base
+            if side == "R":
+                local_parent = cmds.group(em=True, parent=base,
+                                          n=f"{prefix}CascadeMirror_GRP")
+                cmds.setAttr(f"{local_parent}.scaleX", -1)
+
+            local = cmds.group(em=True, n=f"{prefix}CascadeLocal_TRN",
+                               parent=local_parent)
+            cmds.connectAttr(f"{control}.translate", f"{local}.translate")
+
+            self.cascade_links[(half, side, key)] = {
+                "control": control,
+                "group": group,
+                "spc": f"{prefix}_SPC",
+                "base": base,
+                "local": local,
+            }
         else:
-            surface_trn = surface_node
+            self._blend_constraint(mid_ctrl, corner_ctrl, group, weight)
 
-        muscle_shapes = cmds.listRelatives(
-            surface_trn, shapes=True, type="cMuscleObject"
-        ) or []
+        print(f"[SimpleMouth] {group}: {mid_ctrl} {weight:.2f} / "
+              f"{corner_ctrl} {1.0 - weight:.2f}")
 
-        # --- Muscles/Bones > Convert Surface to Muscle/Bone ---
-        #     cMuscle_makeMuscle(int $keepBase) ; 0 = sin copia base
-        if not muscle_shapes:
-            sel_backup = cmds.ls(selection=True) or []
+        self.controls[f"{side}{base_name}"] = control
+        self._make_joint(f"{side}_{self.rig_name}_{base_name}_JNT", control)
 
-            cmds.select(surface_trn, replace=True)
-            mel.eval("cMuscle_makeMuscle(0);")
+        return control
 
-            # IMPORTANTE: hay que volver a preguntar. La lista de arriba se
-            # calculo ANTES de la conversion y sigue vacia; si usas
-            # muscle_shapes[0] sin refrescar te salta un IndexError.
-            muscle_shapes = cmds.listRelatives(
-                surface_trn, shapes=True, type="cMuscleObject"
-            ) or []
+    def _get_cascade_group(self):
+        """Grupo donde viven las bases, las curvas y los followers."""
+        name = f"C_{self.rig_name}_mouthCascade_GRP"
+        if not cmds.objExists(name):
+            cmds.group(em=True, n=name)
 
-            if sel_backup:
-                cmds.select(sel_backup, replace=True)
+            # inheritsTransform a 0: este grupo NO hereda nada de sus padres.
+            #
+            # Aqui dentro viven nodos que reciben posiciones en MUNDO por
+            # conexion directa: las curvas (decomposeMatrix -> controlPoints) y
+            # los followers (pointOnCurveInfo.position -> translate). Una
+            # conexion directa no compensa al padre. Si este grupo acaba dentro
+            # de algo que se mueve (el mouth_GRP bajo la cabeza, o el global
+            # del personaje), esas posiciones se aplicarian DOS veces: la que
+            # ya traen en mundo, mas la del padre. Al mover el personaje, toda
+            # la cascada se iria el doble de lejos.
+            #
+            # Con inheritsTransform a 0 el grupo se queda siempre en el origen
+            # del mundo, este donde este en la jerarquia, y espacio de objeto
+            # = mundo se cumple siempre.
+            cmds.setAttr(f"{name}.inheritsTransform", 0)
+
+        self.cascade_group = name
+        return name
+
+    @staticmethod
+    def _nearest_parameter(curve, position):
+        """Parametro del punto de la curva mas cercano a una posicion."""
+        shape = cmds.listRelatives(curve, shapes=True)[0]
+        node = cmds.createNode("nearestPointOnCurve")
+        cmds.connectAttr(f"{shape}.worldSpace[0]", f"{node}.inputCurve")
+        cmds.setAttr(f"{node}.inPosition", *position)
+        parameter = cmds.getAttr(f"{node}.parameter")
+        cmds.delete(node)
+        return parameter
+
+    @staticmethod
+    def _cv_influence(curve, index, parameter):
+        """
+        Cuanto se mueve el punto de la curva en 'parameter' si el CV 'index'
+        se mueve una unidad.
+
+        En una curva no racional, punto(u) = suma de N_j(u) * CV_j, asi que la
+        respuesta es exactamente N_index(u): un numero fijo entre 0 y 1, el
+        mismo para X, Y y Z. Se mide empujando el CV y mirando cuanto se mueve
+        el punto, que es mas facil que evaluar la base a mano.
+        """
+        before = cmds.pointOnCurve(curve, pr=parameter, p=True)
+        cmds.move(1, 0, 0, f"{curve}.cv[{index}]", r=True, ws=True)
+        after = cmds.pointOnCurve(curve, pr=parameter, p=True)
+        cmds.move(-1, 0, 0, f"{curve}.cv[{index}]", r=True, ws=True)
+        return after[0] - before[0]
+
+    def _build_cascade_curve(self, half, mid_ctrl, corner_controls):
+        """
+        La curva de un labio y todo lo que cuelga de ella.
+
+        EL PROBLEMA DEL DOBLE MOVIMIENTO
+        --------------------------------
+        Si un eslabon sigue a una curva y ademas mueve un CV de esa misma
+        curva, se mueve dos veces: el animador lo desplaza 1, su CV se desplaza
+        1, la curva en su punto se desplaza k (su propia influencia, entre 0 y
+        1), su grupo le sigue, y el control acaba en 1 + k. Por eso el sistema
+        viejo tenia una curva distinta para cada control: cada uno iba sobre
+        una curva que no conducia el mismo. Y por eso tenia PreBind.
+
+        LA SALIDA: UN NEG
+        -----------------
+        Con una sola curva se compensa restando. Como k es un numero fijo
+        (N_i(u_i), ver _cv_influence), el grupo se mueve exactamente
+        k * cascade_amount * lo que mueve el animador. Asi que el SPC del
+        control, que esta libre, recibe menos esa cantidad con un
+        multiplyDivide. Es el truco del NEG de la infografia de RIVETS.
+
+        El animador mueve 1 -> el control se mueve 1. Los vecinos, lo que les
+        toque segun la curva. Eso es la cascada sin doble transformacion.
+        """
+        order = [("R", "corner"), ("R", "02"), ("R", "01"),
+                 (None, "mid"),
+                 ("L", "01"), ("L", "02"), ("L", "corner")]
+
+        drivers = []
+        for side, key in order:
+            if key == "mid":
+                drivers.append(mid_ctrl)
+            elif key == "corner":
+                drivers.append(corner_controls.get(side))
             else:
-                cmds.select(clear=True)
+                link = self.cascade_links.get((half, side, key))
+                drivers.append(link["local"] if link else None)
 
-        if not muscle_shapes:
-            cmds.warning(
-                f"MouthModule: no se pudo convertir '{surface_trn}' en Muscle Object."
-            )
-            return surface_trn, None
-
-        cmds.setAttr(f"{muscle_shapes[0]}.fat", 0)
-        return surface_trn, muscle_shapes[0]
-
-    # def _build_projection_aim_keepout(self, side_code, nurb_center_locator,
-    #                                   target_node, surface_trn):
-    #     """
-    #     Crea, para UN lado, el aim locator sobre el centro de proyeccion y le
-    #     monta el keepOut contra la nurbs.
-
-    #     side_code           -> "C", "L" o "R"
-    #     nurb_center_locator -> C_<rig>_lipCenterOfProjection_LOC (compartido)
-    #     target_node         -> nodo al que mira el eje Z de este lado
-    #     surface_trn         -> transform de la nurbs ya convertida a muscle
-
-    #     Es idempotente: si el aim locator de ese lado ya existe, no hace nada.
-    #     Devuelve el nombre del aim locator, o None si no se pudo crear.
-    #     """
-    #     prefix = f"{side_code}_{self.rig_name}"
-    #     aim_locator_name = f"{prefix}_lipCenterOfProjectionAim_LOC"
-
-    #     if cmds.objExists(aim_locator_name):
-    #         return aim_locator_name
-
-    #     if not cmds.objExists(target_node):
-    #         cmds.warning(
-    #             f"MouthModule: el target '{target_node}' del aim de '{side_code}' "
-    #             f"no existe todavia, me salto ese lado."
-    #         )
-    #         return None
-
-    #     aim_locator = cmds.spaceLocator(name=aim_locator_name)[0]
-
-    #     aim_matrix = NodeCreator(
-    #         side=prefix, node_type="aimMatrix", base_name="mouthAim",
-    #         name="Local", tag="CTRL", parent=None, custom_suffix=None
-    #     ).create()
-    #     aim_matrix = cmds.rename(
-    #         aim_matrix, f"{prefix}_lipCenterOfProjectionAim_aimMatrix"
-    #     )
-
-    #     cmds.connectAttr(f"{nurb_center_locator}.worldMatrix[0]", f"{aim_matrix}.inputMatrix")
-    #     cmds.connectAttr(f"{target_node}.worldMatrix[0]", f"{aim_matrix}.primaryTargetMatrix")
-
-    #     # --- Primario: el eje Z apunta al target ---
-    #     cmds.setAttr(f"{aim_matrix}.primaryMode", 1)          # 1 = Aim
-    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisX", 0)
-    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisY", 0)
-    #     cmds.setAttr(f"{aim_matrix}.primaryInputAxisZ", 1)
-
-    #     # --- Secundario: Y hacia ARRIBA ---
-    #     # secondaryMode 1 (Aim) haria que la Y apuntase a la posicion del
-    #     # secondaryTargetMatrix, que al no estar conectado es el origen del
-    #     # mundo => Y mirando abajo. Con 2 (Align) la Y se alinea con el
-    #     # vector secondaryTargetVector (0,1,0) en espacio mundo.
-    #     cmds.setAttr(f"{aim_matrix}.secondaryMode", 2)        # 2 = Align
-    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisX", 0)
-    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisY", 1)
-    #     cmds.setAttr(f"{aim_matrix}.secondaryInputAxisZ", 0)
-    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorX", 0)
-    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorY", 1)
-    #     cmds.setAttr(f"{aim_matrix}.secondaryTargetVectorZ", 0)
-
-    #     cmds.connectAttr(f"{aim_matrix}.outputMatrix", f"{aim_locator}.offsetParentMatrix")
-
-    #     # =========================================================
-    #     # KEEP OUT
-    #     # =========================================================
-    #     sel_backup = cmds.ls(selection=True) or []
-
-    #     # --- Self/Multi Collision > Rig selection for KeepOut ---
-    #     #     cMuscle_rigKeepOutSel() trabaja sobre la seleccion.
-    #     #     (cMuscle_rigKeepOut pide un $obj, no es este)
-    #     keepout_before = set(cmds.ls(type="cMuscleKeepOut") or [])
-
-    #     cmds.select(aim_locator, replace=True)
-    #     mel.eval("cMuscle_rigKeepOutSel();")
-
-    #     keepout_after = set(cmds.ls(type="cMuscleKeepOut") or [])
-    #     new_keepout_shapes = sorted(keepout_after - keepout_before)
-
-    #     # De la shape cMuscleKeepOut subimos a su transform.
-    #     keepout_trns = []
-    #     for shp in new_keepout_shapes:
-    #         keepout_trns.extend(cmds.listRelatives(shp, parent=True) or [])
-
-    #     # --- In Direction en Z ---
-    #     # Los tres componentes explicitos: por defecto viene en X, si solo
-    #     # pones la Z te queda una diagonal (1, 0, 1).
-    #     for ko_shape in new_keepout_shapes:
-    #         cmds.setAttr(f"{ko_shape}.inDirectionX", 0)
-    #         cmds.setAttr(f"{ko_shape}.inDirectionY", 0)
-    #         cmds.setAttr(f"{ko_shape}.inDirectionZ", 1)
-
-    #     # --- Self/Multi Collision > Connect Muscles to Keep Out ---
-    #     #     cMuscle_keepOutAddRemMuscle(1) ; keepOut primero, muscle el ULTIMO
-    #     if keepout_trns:
-    #         cmds.select(keepout_trns, replace=True)
-    #         cmds.select(surface_trn, add=True)
-    #         mel.eval("cMuscle_keepOutAddRemMuscle(1);")
-    #     else:
-    #         cmds.warning(
-    #             f"MouthModule: no se creo ningun cMuscleKeepOut sobre "
-    #             f"'{aim_locator}', me salto el Connect Muscles to Keep Out."
-    #         )
-
-    #     if sel_backup:
-    #         cmds.select(sel_backup, replace=True)
-    #     else:
-    #         cmds.select(clear=True)
-
-    #     return aim_locator
-
-    
-    def _build_off_network(self, prefix, base_name, source_ctrl, source_ctrl_grp):
-        """
-        Crea el space-tracking + closestPointOnSurface (CPS) crudo de un control.
-        Devuelve (local_off, local_trn, closest_point_node).
-        """
-        local_off, local_trn = self.group_maker.create_space_tracking_hierarchy(
-            space_base_name=f"{prefix}_{base_name}Local",
-            target_joint=source_ctrl_grp,
-            parent_group=None
-        )
-
-        mult_node = NodeCreator(
-            side=prefix, node_type="multMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        decompose_node = NodeCreator(
-            side=prefix, node_type="decomposeMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        decompose_trn_node = NodeCreator(
-            side=prefix, node_type="decomposeMatrix", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-
-        # El lado R se saca del prefix y no de self.side porque por aqui tambien
-        # pasan el Upper y el Lower con prefix "C_...", que no se tienen que
-        # espejar. La comisura tampoco entra: esa va por _build_cps_network.
-        is_right = prefix.startswith("R_")
-
-        # scaleX = -1 en el PRIMER grupo de la jerarquia de este control (su
-        # _GRP), no en el grupo comun donde cuelgan todos.
-        if is_right:
-            cmds.setAttr(f"{source_ctrl_grp}.scaleX", -1)
-
-        matrix_chain = self._get_ctrl_matrix_chain(source_ctrl, source_ctrl_grp)
-        for index, node in enumerate(matrix_chain):
-            cmds.connectAttr(f"{node}.matrix", f"{mult_node}.matrixIn[{index}]")
-
-        # Y al final de la cadena, el espejo que compensa el scaleX del _GRP.
-        if is_right:
-            cmds.setAttr(f"{mult_node}.matrixIn[{len(matrix_chain)}]",
-                         self.MIRROR_X_MATRIX, type="matrix")
-        cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
-        cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
-        cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
-        cmds.connectAttr(f"{decompose_node}.outputScale", f"{local_trn}.scale")
-        cmds.connectAttr(f"{local_trn}.worldMatrix[0]", f"{decompose_trn_node}.inputMatrix")
-
-
-        return local_off, local_trn
-
-    # ------------------------------------------------------------------
-    # SISTEMA DE PREBIND (genérico) — mismo patrón que upperPrebind_joint /
-    # lowerPrebind_joint, pero reutilizable para depresor / upperPinch / lowerPinch.
-    # ------------------------------------------------------------------
-    def _get_skincluster_from_joint(self, joint_name):
-        """
-        Busca un skinCluster que use 'joint_name' como influencia.
-        Devuelve (skinCluster, indice_de_influencia) o (None, None) si todavía
-        no existe (por ejemplo si el skinning de la malla se hace en otro módulo
-        y aún no se ha corrido).
-        """
-        if not cmds.objExists(joint_name):
-            return None, None
-
-        skin_clusters = list(set(cmds.listConnections(joint_name, type="skinCluster") or []))
-        if not skin_clusters:
-            return None, None
-
-        skin_cluster = skin_clusters[0]
-        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
-        if joint_name not in influences:
-            return None, None
-
-        influence_index = influences.index(joint_name)
-        return skin_cluster, influence_index
-
-    def _connect_prebind_to_skincluster(self, skin_cluster, joint_name, prebind_joint):
-        """
-        Busca el índice de influencia de 'joint_name' dentro de 'skin_cluster'
-        (el mismo índice en el que joint_name está conectado a .matrix[i])
-        y conecta prebind_joint.worldInverseMatrix[0] -> skin_cluster.bindPreMatrix[i]
-        en ese mismo índice. Idempotente.
-        """
-        if not skin_cluster or not cmds.objExists(skin_cluster):
-            return
-        if not cmds.objExists(joint_name) or not cmds.objExists(prebind_joint):
-            return
-
-        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
-        if joint_name not in influences:
-            return
-        index = influences.index(joint_name)
-
-        dest = f"{skin_cluster}.bindPreMatrix[{index}]"
-        if not cmds.isConnected(f"{prebind_joint}.worldInverseMatrix[0]", dest):
-            cmds.connectAttr(f"{prebind_joint}.worldInverseMatrix[0]", dest, force=True)
-
-    def _connect_freeze_lock_weights(self, freeze_joint, skin_cluster):
-        """
-        Conecta freeze_joint.lockInfluenceWeights -> skin_cluster.lockWeights[0]
-        (freeze_joint siempre se pasa primero al crear cada skinCluster, así que
-        su índice de influencia es 0). Idempotente.
-        """
-        if not freeze_joint or not skin_cluster:
-            return
-        if not cmds.objExists(freeze_joint) or not cmds.objExists(skin_cluster):
-            return
-
-        src = f"{freeze_joint}.lockInfluenceWeights"
-        dst = f"{skin_cluster}.lockWeights[0]"
-        if not cmds.isConnected(src, dst):
-            cmds.connectAttr(src, dst, force=True)
-
-    def _connect_joint_lock_weights(self, joint_name, skin_cluster):
-        """
-        Conecta joint_name.lockInfluenceWeights -> skin_cluster.lockWeights[i],
-        donde i es el índice de influencia real de joint_name dentro de
-        skin_cluster (a diferencia de _connect_freeze_lock_weights, que asume
-        siempre índice 0 para freeze_joint). Idempotente.
-        """
-        if not joint_name or not skin_cluster:
-            return
-        if not cmds.objExists(joint_name) or not cmds.objExists(skin_cluster):
-            return
-
-        influences = cmds.skinCluster(skin_cluster, q=True, inf=True) or []
-        if joint_name not in influences:
-            return
-        index = influences.index(joint_name)
-
-        src = f"{joint_name}.lockInfluenceWeights"
-        dst = f"{skin_cluster}.lockWeights[{index}]"
-        if not cmds.isConnected(src, dst):
-            cmds.connectAttr(src, dst, force=True)
-
-    def _chain_curve_into_skincluster(self, previous_curve_name, next_skin_cluster):
-        """
-        Encadena dos curvas: redirige TANTO el input geometry COMO el original
-        geometry del siguiente skinCluster (p.ej. Levator) para que lean
-        directamente el worldSpace de la curva anterior de la cadena (p.ej.
-        Upper), en vez de la copia estática (Orig) creada al hacer bind.
-
-        Así el siguiente skinCluster siempre parte de la posición actual (ya
-        deformada) de la curva anterior, y aplica su propia deformación de
-        joints encima. Idempotente.
-        """
-        if not previous_curve_name or not next_skin_cluster:
-            return
-        if not cmds.objExists(previous_curve_name) or not cmds.objExists(next_skin_cluster):
-            return
-
-        src = f"{previous_curve_name}.worldSpace[0]"
-        input_dst = f"{next_skin_cluster}.input[0].inputGeometry"
-        original_dst = f"{next_skin_cluster}.originalGeometry[0]"
-
-        if not cmds.isConnected(src, input_dst):
-            cmds.connectAttr(src, input_dst, force=True)
-        if not cmds.isConnected(src, original_dst):
-            cmds.connectAttr(src, original_dst, force=True)
-
-    def _setup_prebind_joint(self, prebind_name, source_joint, driver_target):
-        """
-        Crea (si no existe) el joint de PreBind para 'source_joint', lo
-        parentConstrainea a 'driver_target' (el mismo driver que ya mueve el
-        grupo/off del control, igual que center_locator_name en upper/lower) y,
-        si 'source_joint' ya es influencia de algún skinCluster, conecta
-        prebind.inverseMatrix -> skinCluster.bindPreMatrix[indice].
-
-        Idempotente: se puede llamar en cada build() sin duplicar nada.
-        """
-        if not cmds.objExists(source_joint) or not cmds.objExists(driver_target):
+        if not all(drivers):
+            cmds.warning(f"[SimpleMouth] Cascada {half}: hacen falta los dos "
+                         f"lados completos. Se queda solo con constraints.")
             return None
 
-        if not cmds.objExists(prebind_name):
-            cmds.select(clear=True)
-            prebind_joint = cmds.joint(n=prebind_name)
-            cmds.matchTransform(prebind_joint, source_joint, pos=True, rot=True)
-            cmds.select(clear=True)
-        else:
-            prebind_joint = prebind_name
+        positions = [cmds.xform(d, q=True, ws=True, t=True) for d in drivers]
 
-        if not cmds.listRelatives(prebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(driver_target, prebind_joint, mo=True)
-
-        skin_cluster, _ = self._get_skincluster_from_joint(source_joint)
-        if skin_cluster:
-            self._connect_prebind_to_skincluster(skin_cluster, source_joint, prebind_joint)
-
-        return prebind_joint
-
-    def _create_blend_pair(self, side_label, axis, own_cps, center_cps, suffix, blender_attr):
-        """
-        Crea un blendTwoAttr que blendea own_cps.Parameter{U/V} (input0, raw propio)
-        vs center_cps.Parameter{U/V} (input1, centro), controlado por blender_attr.
-        axis: "U" o "V". suffix: "01" o "02".
-        """
-        bta_name = f"{side_label}_lip{axis}{suffix}_BTA"
-
-        bta_node = NodeCreator(
-            side=side_label, node_type="blendTwoAttr", base_name=f"lip{axis}{suffix}",
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        bta_node = cmds.rename(bta_node, bta_name)
-
-        param_attr = "parameterU" if axis == "U" else "parameterV"
-        cmds.connectAttr(f"{own_cps}.result.{param_attr}", f"{bta_node}.input[0]")
-        cmds.connectAttr(f"{center_cps}.result.{param_attr}", f"{bta_node}.input[1]")
-        cmds.connectAttr(blender_attr, f"{bta_node}.attributesBlender")
-
-        return bta_node
-
-    def _get_ordered_lip_locator_info(self):
-        """
-        Igual que _get_ordered_lip_locator_names, pero además devuelve el
-        prefix (L_/R_/C_ + rig_name) y el base_name de cada locator, para
-        poder nombrar los decomposeMatrix con el mismo criterio que el resto
-        del módulo (NodeCreator side=prefix, base_name=base).
-        Orden de comisura a comisura: L_raw -> L_02 -> L_01 -> C -> R_01 -> R_02 -> R_raw.
-        Coincide 1 a 1 con los 7 coordinate[]/outputMatrix[] del uvPin compartido.
-        """
-        L = f"L_{self.rig_name}"
-        R = f"R_{self.rig_name}"
-        C = f"C_{self.rig_name}"
-        return [
-            (L, "lipProjected", f"{L}_lipProjected_LOC"),
-            (L, "lipProjected02", f"{L}_lipProjected02_LOC"),
-            (L, "lipProjected01", f"{L}_lipProjected01_LOC"),
-            (C, "lipProjected", f"{C}_lipProjected_LOC"),
-            (R, "lipProjected01", f"{R}_lipProjected01_LOC"),
-            (R, "lipProjected02", f"{R}_lipProjected02_LOC"),
-            (R, "lipProjected", f"{R}_lipProjected_LOC"),
-        ]
-
-    def _get_ordered_lip_locator_names(self):
-        """
-        Orden de comisura a comisura: L_raw -> L_02 -> L_01 -> C -> R_01 -> R_02 -> R_raw.
-        Coincide 1 a 1 con los 7 coordinate[]/outputMatrix[] del uvPin compartido.
-        """
-        return [locator_name for _, _, locator_name in self._get_ordered_lip_locator_info()]
-
-    def _build_lip_curve(self):
-        """
-        Crea (una única vez) la curva de curvatura de los labios:
-        1. Curva de grado 1 con un CV en la posición de cada locator (7 CVs).
-        2. rebuildCurve a grado 3, 4 spans (4+3 = 7 CVs -> mismo conteo, misma correspondencia 1 a 1).
-        3. Cada locator queda conectado a (gestiona en vivo) el CV que ocupa su posición.
-
-        Solo se construye cuando existen los 7 locators (L, R y centro), es decir,
-        cuando ya se ha llamado a build() en ambos lados. Si aún faltan, no hace nada.
-        """
-        curve_name = f"C_{self.rig_name}_lipProjected_CRV"
+        curve_name = f"C_{self.rig_name}_lip{half}Cascade_CRV"
         if cmds.objExists(curve_name):
-            return curve_name
+            cmds.delete(curve_name)
+        curve = cmds.curve(d=3, p=positions, n=curve_name)
+        cmds.parent(curve, self._get_cascade_group())
+        shape = cmds.listRelatives(curve, shapes=True)[0]
 
-        locator_info = self._get_ordered_lip_locator_info()
-        ordered_locators = [locator_name for _, _, locator_name in locator_info]
-        if not all(cmds.objExists(loc) for loc in ordered_locators):
-            # Todavía no existen los locators de los dos lados; se construirá
-            # cuando se llame a build() en el lado que falta.
-            return None
+        # 1. Parametro e influencia propia de cada eslabon. Tiene que ir ANTES
+        #    de conectar los CVs, porque _cv_influence los empuja a mano.
+        for index, (side, key) in enumerate(order):
+            if key in ("mid", "corner"):
+                continue
+            link = self.cascade_links[(half, side, key)]
+            link["parameter"] = self._nearest_parameter(curve, positions[index])
+            link["k"] = self._cv_influence(curve, index, link["parameter"])
 
-        positions = [cmds.xform(loc, q=True, ws=True, t=True) for loc in ordered_locators]
+        # 2. Cada CV sigue a su control. El grupo de la curva esta en el
+        #    origen, asi que espacio de objeto = mundo.
+        for index, driver in enumerate(drivers):
+            decompose = cmds.createNode(
+                "decomposeMatrix", n=f"{curve}_cv{index:02d}_DCM")
+            cmds.connectAttr(f"{driver}.worldMatrix[0]",
+                             f"{decompose}.inputMatrix")
+            cmds.connectAttr(f"{decompose}.outputTranslate",
+                             f"{shape}.controlPoints[{index}]")
 
-        self.curve_transform = cmds.curve(d=1, p=positions, n=curve_name)
-        cmds.rebuildCurve(
-            self.curve_transform, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kep=1, kt=0,
-            s=4, d=3, tol=0.01
-        )
-        cmds.setAttr(f"{self.curve_transform}.lineWidth", 3)
+        # 3. Cada eslabon sigue a la curva, y su NEG le quita su propio empuje.
+        for (h, side, key), link in self.cascade_links.items():
+            if h != half:
+                continue
 
-        curve_shape = cmds.listRelatives(self.curve_transform, shapes=True)[0]
+            prefix = link["base"].replace("CascadeBase_TRN", "")
 
-        for cv_index, (prefix, base_name, locator_name) in enumerate(locator_info):
-            decompose_node = NodeCreator(
-                side=prefix, node_type="decomposeMatrix", base_name=base_name,
-                name="Local", tag="CTRL", parent=None, custom_suffix=None
-            ).create()
-            cmds.connectAttr(f"{locator_name}.worldMatrix[0]", f"{decompose_node}.inputMatrix")
-            cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{curve_shape}.controlPoints[{cv_index}]")
+            info = cmds.createNode("pointOnCurveInfo",
+                                   n=f"{prefix}Cascade_POCI")
+            cmds.connectAttr(f"{shape}.worldSpace[0]", f"{info}.inputCurve")
+            cmds.setAttr(f"{info}.parameter", link["parameter"])
 
-        if cmds.objExists(self.curve_transform):
-            upperCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipUpperLine_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+            follower = cmds.group(em=True, n=f"{prefix}CascadeFollow_TRN",
+                                  parent=self._get_cascade_group())
+            cmds.connectAttr(f"{info}.position", f"{follower}.translate")
 
-        if cmds.objExists(self.curve_transform):
-            lowerCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipLowerLine_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+            # Posicion del grupo: mezcla entre sin cascada (base) y con
+            # cascada (curva). mo=True absorbe que la curva de grado 3 no pasa
+            # exactamente por los CVs de dentro.
+            point = cmds.pointConstraint(link["base"], follower, link["group"],
+                                         mo=True)[0]
+            aliases = cmds.pointConstraint(point, q=True, weightAliasList=True)
+            cmds.setAttr(f"{point}.{aliases[0]}", 1.0 - self.cascade_amount)
+            cmds.setAttr(f"{point}.{aliases[1]}", self.cascade_amount)
 
-        if cmds.objExists(self.curve_transform):
-            levatorCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLevator_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+            # NEG: el SPC resta lo que la curva ha empujado al grupo por culpa
+            # del propio control.
+            compensation = link["k"] * self.cascade_amount
+            if cmds.objExists(link["spc"]) and compensation:
+                neg = cmds.createNode("multiplyDivide", n=f"{prefix}Cascade_NEG")
+                cmds.connectAttr(f"{link['control']}.translate", f"{neg}.input1")
+                cmds.setAttr(f"{neg}.input2", -compensation, -compensation,
+                             -compensation, type="double3")
+                cmds.connectAttr(f"{neg}.output", f"{link['spc']}.translate")
 
-        if cmds.objExists(self.curve_transform):
-            depresorCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureDepresor_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+            print(f"[SimpleMouth] {link['group']}: sigue a {curve} en "
+                  f"u={link['parameter']:.3f}, influencia propia "
+                  f"k={link['k']:.3f} (compensada)")
 
-        if cmds.objExists(self.curve_transform):
-            upperPinchCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureUpperPinch_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
+        return curve
 
-        if cmds.objExists(self.curve_transform):
-            lowerPinchCurve = cmds.duplicate(self.curve_transform, n=f"C_{self.rig_name}_lipCurvatureLowerPinch_CRV")
-        else:
-            print(f"Warning: Curve {self.curve_transform} does not exist, cannot duplicate.")
-            
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperCurve[0]}.create")
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerCurve[0]}.create")
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{levatorCurve[0]}.create")
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{depresorCurve[0]}.create")
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperPinchCurve[0]}.create")
-        #cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerPinchCurve[0]}.create")
-
-        return self.curve_transform, upperCurve, lowerCurve, levatorCurve, depresorCurve, upperPinchCurve, lowerPinchCurve
-
-    def _get_or_create_curve_motion_locator(self, curve_name, base_name, u_value, side=None):
+    def attach_to_jaw(self):
         """
-        Crea (una única vez) un motionPath sobre `curve_name` fijo en `u_value`,
-        con un locator conectado a su salida (posición + rotación).
+        Engancha la boca a la mandibula. Separado de build() a proposito.
 
-        `side` determina el prefijo (L_/R_/C_) del nombre para que cada lado
-        tenga sus propios nodos, aunque lean de la misma curva compartida.
-        Idempotente: si el locator ya existe, lo devuelve sin tocar nada.
+        El orden de la receta puede construir la boca antes que el jaw, y estos
+        constraints necesitan que los controles del jaw ya existan. build() lo
+        intenta igual por si el jaw ya estaba; si no, build_module vuelve a
+        llamar aqui desde _build_jaw.
+
+        Es idempotente: si ya se engancho, no hace nada.
         """
-        prefix = f"{side}_{self.rig_name}" if side else f"C_{self.rig_name}"
-        locator_name = f"{prefix}_{base_name}_tracker_LOC"
-        locatorGlobal_name = f"{prefix}_{base_name}_trackerGlobal_LOC"
+        if self.attached_to_jaw:
+            return True
 
-        motionpath_name = f"{prefix}_{base_name}_MPA"
-
-        if cmds.objExists(locator_name):
-            return motionpath_name, locator_name
-
-        motionpath_node = NodeCreator(
-            side=prefix, node_type="motionPath", base_name=base_name,
-            name="Local", tag="CTRL", parent=None, custom_suffix=None
-        ).create()
-        motionpath_node = cmds.rename(motionpath_node, motionpath_name)
-
-        cmds.connectAttr(f"{curve_name}.worldSpace[0]", f"{motionpath_node}.geometryPath")
-        cmds.setAttr(f"{motionpath_node}.uValue", u_value)
-
-        locatorTracker = cmds.spaceLocator(name=locator_name)[0]
-        cmds.connectAttr(f"{motionpath_node}.allCoordinates", f"{locatorTracker}.translate")
-        cmds.connectAttr(f"{motionpath_node}.rotate", f"{locatorTracker}.rotate")
-        
-        # 3. Crear Tracker Global limpio
-        if not cmds.objExists(locatorGlobal_name):
-            locatorTrackerGlobal = cmds.spaceLocator(name=locatorGlobal_name)[0]
-            # Conectar la matriz mundial del Tracker Local al offsetParentMatrix del Global
-            cmds.connectAttr(f"{locatorTracker}.worldMatrix[0]", f"{locatorTrackerGlobal}.offsetParentMatrix")
-
-        return motionpath_node, locatorTracker
-    
-    # ------------------------------------------------------------------
-    # ORGANIZACION DEL OUTLINER
-    # Solo MUEVE nodos de sitio. No crea, no borra y no reconecta nada del rig:
-    # todos los grupos de organizacion se quedan en identidad (sin translate,
-    # rotate ni scale), asi que colgar cosas de ellos no cambia ni una sola
-    # matriz mundial. Si alguna vez mueves estos grupos a mano, si romperia.
-    # ------------------------------------------------------------------
-    def _ensure_group(self, group_name, parent_group=None):
-        """
-        Devuelve `group_name`, creandolo vacio en la raiz del mundo si no
-        existe. Idempotente: se puede llamar en cada build() sin duplicar.
-        """
-        if cmds.objExists(group_name):
-            group_node = group_name
-        else:
-            group_node = cmds.group(em=True, world=True, n=group_name)
-
-        if parent_group and cmds.objExists(parent_group):
-            current_parent = cmds.listRelatives(group_node, parent=True) or []
-            if not current_parent or current_parent[0] != parent_group:
-                cmds.parent(group_node, parent_group, relative=True)
-
-        return group_node
-
-    def _park_node(self, node_name, destination_group):
-        """
-        Mete `node_name` dentro de `destination_group` SOLO si el nodo esta
-        colgando de la raiz del mundo.
-
-        Si ya tiene padre (mirrorBehaviour_GRP, un _negative_GRP, el
-        lipLowerInverted_GRP, otro modulo...) no se toca: esa jerarquia si es
-        funcional y no es asunto del organizador.
-
-        El parent es RELATIVO a proposito:
-          - el grupo destino esta en identidad, asi que conservar los valores
-            locales conserva la matriz mundial exacta (skinClusters, uvPin,
-            offsetParentMatrix y constraints siguen dando lo mismo);
-          - evita que Maya intente escribir en translate/rotate de los locators
-            que van conectados a un motionPath o a un decomposeMatrix.
-        """
-        if not node_name or not cmds.objExists(node_name):
-            return False
-        if not cmds.objExists(destination_group):
-            return False
-        if cmds.listRelatives(node_name, parent=True):
+        if not (cmds.objExists(self.jaw_upper_ctrl)
+                and cmds.objExists(self.jaw_lower_ctrl)):
             return False
 
-        try:
-            cmds.parent(node_name, destination_group, relative=True)
-        except Exception as error:
-            cmds.warning(
-                f"MouthModule: no se pudo ordenar '{node_name}' dentro de "
-                f"'{destination_group}': {error}"
+        # 1. Cada centro de labio, al 100% a su mitad de la mandibula.
+        for half, group in self.mid_groups.items():
+            if not group or not cmds.objExists(group):
+                continue
+            jaw_ctrl = (self.jaw_upper_ctrl if half == "Upper"
+                        else self.jaw_lower_ctrl)
+            cmds.parentConstraint(jaw_ctrl, group, mo=True)
+            print(f"[SimpleMouth] {group} <- {jaw_ctrl} (100%)")
+
+        # 2. Las comisuras, entre las dos mitades, con su atributo animable.
+        for side, group in self.corner_groups.items():
+            if not group or not cmds.objExists(group):
+                continue
+
+            control = self.controls.get(f"{side}Corner")
+            constraint = self._blend_constraint(
+                self.jaw_upper_ctrl, self.jaw_lower_ctrl, group,
+                1.0 - self.corner_upper_lower
             )
-            return False
+
+            if self.corner_upper_lower_attr:
+                if not cmds.objExists(f"{control}.UpperLower"):
+                    cmds.addAttr(control, ln="UpperLower", at="double",
+                                 min=0, max=1, dv=self.corner_upper_lower,
+                                 k=True)
+
+                aliases = cmds.parentConstraint(constraint, q=True,
+                                                weightAliasList=True)
+                reverse = cmds.createNode(
+                    "reverse",
+                    n=f"{side}_{self.rig_name}_lipCornerUpperLower_REV"
+                )
+                cmds.connectAttr(f"{control}.UpperLower", f"{reverse}.inputX")
+                cmds.connectAttr(f"{reverse}.outputX",
+                                 f"{constraint}.{aliases[0]}")
+                cmds.connectAttr(f"{control}.UpperLower",
+                                 f"{constraint}.{aliases[1]}")
+
+            weight = 1.0 - self.corner_upper_lower
+            print(f"[SimpleMouth] {group} <- {self.jaw_upper_ctrl} "
+                  f"{weight:.2f} / {self.jaw_lower_ctrl} "
+                  f"{self.corner_upper_lower:.2f}")
+
+        self.attached_to_jaw = True
+
         return True
 
-    def _face_controls_root(self):
-        """
-        C_<rig>_faceControls_GRP: la raiz de controles compartida por boca, jaw
-        y ojos, colgada del local_CTL y constreñida al control de la cabeza.
-
-        La crea el primer modulo que corra. La boca la necesita porque suele
-        construirse ANTES que el jaw, asi que no puede darla por existente.
-
-        Mismo grupo y mismo driver (head_CTRL) que el _face_controls_root del
-        jaw, para que haya un unico parentConstraint y no dos peleandose.
-        """
-        local_ctl = f"{self.rig_name}_local_CTL"
-        if self.root_instance is not None:
-            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
-
-        parent = local_ctl if cmds.objExists(local_ctl) else None
-        controls_root = self._ensure_group(f"C_{self.rig_name}_faceControls_GRP",
-                                           parent)
-
-        head_ctrl = f"{self.rig_name}_head_CTRL"
-        if not cmds.objExists(head_ctrl):
-            cmds.warning(f"[Mouth] No existe '{head_ctrl}'. Construye el "
-                         "NeckModule antes que los faciales si quieres que los "
-                         "controles de la cara sigan a la cabeza.")
-            return controls_root
-
-        if not cmds.listRelatives(controls_root, children=True,
-                                  type="parentConstraint"):
-            cmds.parentConstraint(head_ctrl, controls_root, mo=True)
-
-        return controls_root
-
-    def _attach_control_drivers_to_head(self, trackers_grp, projected_grp):
-        """
-        Separa los locators por FUNCION y lleva a la cabeza solo los que
-        conducen controles.
-
-        Hace falta porque los _GRP del levator, depresor y pinches van con
-        parentConstraint desde su *_trackerGlobal_LOC, y los del upper y lower
-        desde lipProjectedGlobal_LOC. Un constraint gana sobre el padre, asi que
-        meter mouthControls_GRP dentro del grupo de la cara no les sirve: siguen
-        clavados donde diga su locator. Por eso solo se movia el mid, que es el
-        unico con el _GRP libre.
-
-        La separacion:
-
-          - LOCALES (lipProjected_LOC, lipProjected01/02_LOC, *_tracker_LOC):
-            conducen el SISTEMA, o sea los *Local_OFF, los joints PreBind y las
-            curvas, y de ahi salen los lipBind##_JNT que skinean. Se quedan
-            quietos, o volveriamos a meter la cabeza en la malla facial y la
-            blendShape la aplicaria dos veces.
-
-          - GLOBALES (lipProjectedGlobal_LOC, *_trackerGlobal_LOC): su unico
-            consumidor son los _GRP de los controles. Pueden seguir a la cabeza
-            sin tocar un solo joint.
-
-        Los globales reciben en su offsetParentMatrix el worldMatrix de su
-        compañero local, que es estatico, asi que aqui SI tienen que heredar la
-        transformacion del grupo: es de donde sacan el movimiento de cabeza. Es
-        lo contrario de lo que hacia falta cuando se constreñia el grupo entero.
-
-        El lipProjectedGlobalJaw*_LOC del jaw no hay que moverlo: lee el
-        worldMatrix del lipProjectedGlobal_LOC, asi que le sigue solo.
-        """
-        drivers_grp = self._ensure_group(f"C_{self.rig_name}_faceControlDrivers_GRP")
-
-        head_ctrl = f"{self.rig_name}_head_CTRL"
-        if cmds.objExists(head_ctrl):
-            if not cmds.listRelatives(drivers_grp, children=True,
-                                      type="parentConstraint"):
-                cmds.parentConstraint(head_ctrl, drivers_grp, mo=True)
-        else:
-            cmds.warning(f"[Mouth] No existe '{head_ctrl}': los controles de la "
-                         "boca no seguiran a la cabeza.")
-
-        for source_grp in (trackers_grp, projected_grp):
-            if not source_grp or not cmds.objExists(source_grp):
-                continue
-
-            for locator in cmds.listRelatives(source_grp, children=True,
-                                              type="transform") or []:
-                if not locator.endswith("Global_LOC"):
-                    continue
-
-                if not cmds.getAttr(f"{locator}.inheritsTransform"):
-                    cmds.setAttr(f"{locator}.inheritsTransform", 1)
-
-                # cmds.parent y NO _park_node: el helper se salta cualquier nodo
-                # que ya tenga padre, y para cuando llegamos aqui el organizador
-                # ya los ha metido en trackers_grp / projected_grp. Justo lo que
-                # hay que hacer es sacarlos de ahi.
-                #
-                # relative = True: los dos grupos estan en identidad al
-                # construir, asi que conservar los valores locales conserva la
-                # matriz mundial, y ademas evita que Maya intente escribir en el
-                # translate de un locator que va conectado a un motionPath.
-                cmds.parent(locator, drivers_grp, relative=True)
-
-        return drivers_grp
-
-    def _attach_mouth_to_head(self, controls_grp, trackers_grp, projected_grp):
-        """
-        Cuelga SOLO los controles de la cabeza. El sistema se queda quieto.
-
-        Antes esto ponia tres parentConstraint del head_JNT: en controls_grp, en
-        projected_grp y en la comisura del lado R. El de projected_grp era el
-        veneno: mueve el lipProjected_LOC, que conduce los *Local_OFF y los
-        joints PreBind, que deforman las curvas, que conducen los lipBind##_JNT.
-        O sea que la cabeza llegaba a los joints que skinean.
-
-        Con el montaje de dos mallas eso no puede pasar: la malla facial tiene
-        que quedarse clavada en bind para que la blendShape solo le pase a la
-        malla de body mechanics el delta de expresion. Si un joint de skin sigue
-        a la cabeza, ese movimiento entra por la blendShape y se suma al que la
-        otra malla ya tiene por su skinCluster. El modulo de jaw es el unico que
-        funcionaba precisamente porque sus joints se quedan quietos.
-
-        Los controles si siguen a la cabeza, por dos vias segun como esten
-        conducidos: los que tienen el _GRP libre (mid y comisuras) por herencia,
-        colgando de la raiz compartida; los que tienen constraint propio, porque
-        se mueve su locator driver.
-        """
-        if not controls_grp or not cmds.objExists(controls_grp):
-            return
-
-        face_controls = self._face_controls_root()
-
-        if face_controls and cmds.objExists(face_controls):
-            # Un constraint viejo de una build anterior seguiria moviendo esto.
-            old = cmds.listRelatives(controls_grp, children=True,
-                                     type="parentConstraint") or []
-            if old:
-                cmds.delete(old)
-
-            current_parent = cmds.listRelatives(controls_grp, parent=True)
-            if not (current_parent and current_parent[0] == face_controls):
-                cmds.parent(controls_grp, face_controls)
-
-            # La comisura del lado R cuelga del mirrorBehaviour_GRP, asi que
-            # _park_node no la metio en controls_grp y se quedaria fuera.
-            for side_code in ("L", "R"):
-                corner_grp = f"{side_code}_{self.rig_name}_end_LIP_GRP"
-                if not cmds.objExists(corner_grp):
-                    continue
-
-                ancestors = cmds.listRelatives(corner_grp, allParents=True,
-                                               fullPath=True) or []
-                if any(controls_grp in path.split("|") for path in ancestors):
-                    continue
-
-                old = cmds.listRelatives(corner_grp, children=True,
-                                         type="parentConstraint") or []
-                if old:
-                    cmds.delete(old)
-                cmds.parent(corner_grp, face_controls)
-
-        # Y los locators que conducen los _GRP con constraint propio, que no se
-        # enteran de quien sea su padre.
-        self._attach_control_drivers_to_head(trackers_grp, projected_grp)
-
-    def _organize_outliner(self, control_groups=None):
-        """
-        Ordena en el outliner todo lo que este modulo deja suelto en la raiz.
-
-        Estructura resultante (compartida entre L y R, por eso va con prefijo C_):
-
-            C_<rig>_mouth_GRP
-                |- C_<rig>_mouthControls_GRP
-                |     |- C_<rig>_mouthCenterControls_GRP   (mid / upper / lower)
-                |     |- L_<rig>_mouthControls_GRP         (controles del lado L)
-                |     |- R_<rig>_mouthControls_GRP         (controles del lado R)
-                |- C_<rig>_mouthJoints_GRP                 (JNT + PreBind + freeze)
-                |- C_<rig>_mouthCurves_GRP                 (las 7 curvas)
-                |- C_<rig>_mouthLocators_GRP
-                |     |- C_<rig>_mouthProjected_GRP        (lipProjected / 01 / 02 / Global)
-                |     |- C_<rig>_mouthTrackers_GRP         (tracker_LOC y trackerGlobal_LOC)
-                |- C_<rig>_mouthSetup_GRP                  (Local_OFF, settings, inverted, mirror)
-
-        Se llama al final de build(), en los dos lados: en la primera pasada
-        ordena lo del centro y lo de ese lado, y en la segunda recoge lo nuevo.
-        Lo ya colocado se ignora por el chequeo de padre de _park_node().
-        """
-        rig = self.rig_name
-        center = f"C_{rig}"
-        sides = ["L", "R"]
-
-        # --- 1. Esqueleto de grupos ---
-        root_grp = self._ensure_group(f"{center}_mouth_GRP")
-        self.mouth_root_grp = root_grp
-
-        controls_grp = self._ensure_group(f"{center}_mouthControls_GRP", root_grp)
-        center_controls_grp = self._ensure_group(f"{center}_mouthCenterControls_GRP", controls_grp)
-        joints_grp = self._ensure_group(f"{center}_mouthJoints_GRP", root_grp)
-        curves_grp = self._ensure_group(f"{center}_mouthCurves_GRP", root_grp)
-        locators_grp = self._ensure_group(f"{center}_mouthLocators_GRP", root_grp)
-        projected_grp = self._ensure_group(f"{center}_mouthProjected_GRP", locators_grp)
-        trackers_grp = self._ensure_group(f"{center}_mouthTrackers_GRP", locators_grp)
-        setup_grp = self._ensure_group(f"{center}_mouthSetup_GRP", root_grp)
-
-        # El <lado>_mouthControls_GRP ya lo crea build(); aqui solo se recoloca.
-        side_controls_grp = self._ensure_group(f"{self.prefix}_mouthControls_GRP", controls_grp)
-        for side_code in sides:
-            other_side_controls = f"{side_code}_{rig}_mouthControls_GRP"
-            if cmds.objExists(other_side_controls):
-                self._park_node(other_side_controls, controls_grp)
-
-        # --- 2. Controles ---
-        # Los grupos raiz que me pasa build() (mid, end, upper, lower, levator,
-        # depresor, upperPinch, lowerPinch). Los que ya cuelgan de un
-        # _negative_GRP o del mirrorBehaviour_GRP se saltan solos.
-        for group_name in (control_groups or []):
-            if not group_name:
-                continue
-            is_center = group_name.startswith(f"{center}_")
-            self._park_node(group_name, center_controls_grp if is_center else side_controls_grp)
-
-        # Grupos de comportamiento negativo: van con los controles de su lado.
-        for side_code in sides:
-            side_prefix = f"{side_code}_{rig}"
-            destination = f"{side_code}_{rig}_mouthControls_GRP"
-            if not cmds.objExists(destination):
-                destination = controls_grp
-            for negative_group in [f"{side_prefix}_depresor_negative_GRP",
-                                   f"{side_prefix}_lowerPinch_negative_GRP"]:
-                self._park_node(negative_group, destination)
-
-        # --- 3. Curvas ---
-        for curve_name in [f"{center}_lipProjected_CRV",
-                           f"{center}_lipUpperLine_CRV",
-                           f"{center}_lipLowerLine_CRV",
-                           f"{center}_lipCurvatureLevator_CRV",
-                           f"{center}_lipCurvatureDepresor_CRV",
-                           f"{center}_lipCurvatureUpperPinch_CRV",
-                           f"{center}_lipCurvatureLowerPinch_CRV"]:
-            self._park_node(curve_name, curves_grp)
-
-        # --- 4. Joints (incluidos los PreBind y el freeze) ---
-        joint_names = [f"{center}_lipUpper_JNT",
-                       f"{center}_lipLower_JNT",
-                       f"{center}_lipUpperPreBind_JNT",
-                       f"{center}_lipLowerPreBind_JNT",
-                       f"{center}_freeze_JNT"]
-        for side_code in sides:
-            side_prefix = f"{side_code}_{rig}"
-            for base_name in ["levator", "depresor", "upperPinch", "lowerPinch"]:
-                joint_names.append(f"{side_prefix}_{base_name}_JNT")
-                joint_names.append(f"{side_prefix}_{base_name}PreBind_JNT")
-        for joint_name in joint_names:
-            self._park_node(joint_name, joints_grp)
-
-        # --- 5. Locators de proyeccion ---
-        projected_names = [f"{center}_lipProjected_LOC"]
-        for side_code in sides:
-            side_prefix = f"{side_code}_{rig}"
-            projected_names.extend([f"{side_prefix}_lipProjected_LOC",
-                                    f"{side_prefix}_lipProjected01_LOC",
-                                    f"{side_prefix}_lipProjected02_LOC",
-                                    f"{side_prefix}_lipProjectedGlobal_LOC"])
-        for locator_name in projected_names:
-            self._park_node(locator_name, projected_grp)
-
-        # --- 6. Trackers de los motionPath ---
-        for side_code in sides:
-            side_prefix = f"{side_code}_{rig}"
-            for base_name in ["levatorFollow", "depresorFollow",
-                              "upperPinchFollow", "lowerPinchFollow"]:
-                self._park_node(f"{side_prefix}_{base_name}_tracker_LOC", trackers_grp)
-                self._park_node(f"{side_prefix}_{base_name}_trackerGlobal_LOC", trackers_grp)
-
-        # --- 7. Setup local (OFF/TRN, settings y grupos de signo) ---
-        setup_names = [f"{center}_lipsSettings_GRP",
-                       f"{center}_lipLowerInverted_GRP",
-                       f"{center}_mouthCenterLocal_OFF",
-                       f"{center}_UpperLocal_OFF",
-                       f"{center}_LowerLocal_OFF"]
-        for side_code in sides:
-            side_prefix = f"{side_code}_{rig}"
-            setup_names.append(f"{side_prefix}_mouthLocalMirror_GRP")
-            setup_names.append(f"{side_prefix}_mouthLocal_OFF")
-            for base_name in ["levator", "depresor", "upperPinch", "lowerPinch"]:
-                setup_names.append(f"{side_prefix}_{base_name}Local_OFF")
-        for setup_node in setup_names:
-            self._park_node(setup_node, setup_grp)
-
-        # --- 8. La boca sigue a la cabeza ---
-        # Al final a proposito: los trackers tienen que estar ya dentro de
-        # trackers_grp para poder quitarles el inheritsTransform a los global.
-        self._attach_mouth_to_head(controls_grp, trackers_grp, projected_grp)
-
-        return root_grp
-
-    # ------------------------------------------------------------------
-    # BUILD
-    # ------------------------------------------------------------------
-    def _offset_lip_shape(self, ctrl, offset_y):
-        """
-        Mueve en Y solo los CV de la shape de 'ctrl'. El transform y su pivote se
-        quedan donde estan, asi que ningun constraint ni el skinning se enteran.
-
-        El movimiento va en world space a proposito: varios de estos controles
-        cuelgan de grupos con scaleY negativo (lipLower_GRP, depresor_negative_GRP,
-        lowerPinch_negative_GRP) y en espacio local el signo saldria invertido.
-
-        Idempotente: marca el control con un atributo para no aplicar el offset
-        dos veces. Hace falta porque los controles sobreviven entre builds y los
-        centrales los comparten los dos lados.
-        """
-        if not ctrl or not cmds.objExists(ctrl):
-            return None
-        if not offset_y:
-            return None
-        if cmds.attributeQuery("shapeOffsetY", node=ctrl, exists=True):
-            return ctrl
-
-        shapes = cmds.listRelatives(ctrl, shapes=True, type="nurbsCurve", fullPath=True) or []
-        if not shapes:
-            cmds.warning(f"[MouthModule] {ctrl} no tiene shapes de curva, no se mueve nada.")
-            return None
-
-        for shape in shapes:
-            cmds.move(0, offset_y, 0, f"{shape}.cv[*]", relative=True, worldSpace=True)
-
-        cmds.addAttr(ctrl, ln="shapeOffsetY", at="double", dv=offset_y, k=False)
-        cmds.setAttr(f"{ctrl}.shapeOffsetY", lock=True)
-
-        return ctrl
-
-    def _offset_lip_shapes(self):
-        """
-        Sube las shapes de los controles de upper y baja las de lower, usando
-        SHAPE_OFFSET_Y. Los centrales son unicos para todo el rig; levator,
-        depresor y los pinch son del lado que este construyendo.
-        """
-        offset = self.SHAPE_OFFSET_Y
-        if not offset:
-            return []
-
-        upper_controls = [
-            f"C_{self.rig_name}_lipUpper_GRP",
-            f"{self.prefix}_levator_CTRL",
-            f"{self.prefix}_upperPinch_CTRL",
-        ]
-        lower_controls = [
-            f"C_{self.rig_name}_lipLower_GRP",
-            f"{self.prefix}_depresor_CTRL",
-            f"{self.prefix}_lowerPinch_CTRL",
-        ]
-
-        moved = []
-        for ctrl in upper_controls:
-            if self._offset_lip_shape(ctrl, offset):
-                moved.append(ctrl)
-        for ctrl in lower_controls:
-            if self._offset_lip_shape(ctrl, -offset):
-                moved.append(ctrl)
-
-        return moved
-
     def build(self):
-        # 1. CONTROL CENTRAL — se construye una única vez y se reutiliza en el lado R
-        center_name = f"C_{self.rig_name}_mid_LIP_CTRL"
-        if not cmds.objExists(center_name):
-            mid_lip = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mouthSquare"],
-                final_name=f"{self.prefix}_mid_LIP_CTRL"
-            )
-            mid_lip = cmds.rename(mid_lip, center_name)
-            mid_lip_grp = self.group_maker.create_rig_hierarchy(
-                mid_lip, self.lip_mid, match_rotation=True, world_space=True
-            )
-        else:
-            mid_lip = center_name
-            mid_lip_grp = self._get_ctrl_root_grp(mid_lip)
-            
-        self.mid_lip_ctrl = mid_lip          
-
-
-        # 2. CONTROL DE LA COMISURA (end_lip) — uno por lado
-        end_lip = controlsLibrary.create_control_from_lib(
-            lib_name=self.styles["mainFk"],
-            final_name=f"{self.prefix}_end_LIP_CTRL"
-        )
-        end_lip_grp = self.group_maker.create_rig_hierarchy(
-            end_lip, self.lip_end, match_rotation=True, world_space=True
-        )
-        self.end_lip_ctrl = end_lip
-        self.end_lip_grp = end_lip_grp
-
-        cmds.rebuildSurface(self.boca_surface, ch=0, rpo=1, rt=0, end=1, kr=0, kcp=0, kc=0,
-                             su=4, du=3, sv=4, dv=3, tol=0.01, fr=0, dir=2)
-
-        self.main_rig_grp = cmds.group(em=True, n=f"{self.prefix}_mouthControls_GRP")
-
-        if self.side == "R":
-            mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            if cmds.objExists(mirror_behavior_grp):
-                cmds.parent(end_lip_grp, mirror_behavior_grp)
-                cmds.setAttr(f"{end_lip_grp}.scaleX", 1)
-                cmds.setAttr(f"{end_lip_grp}.scaleY", 1)
-                cmds.setAttr(f"{end_lip_grp}.scaleZ", 1)
-                cmds.setAttr(f"{end_lip_grp}.rotateX", 0)
-                cmds.setAttr(f"{end_lip_grp}.rotateY", 45)
-                cmds.setAttr(f"{end_lip_grp}.rotateZ", 0)
-                
-        #Duplicar controles de upper y lower lip para usarlos como locators en global, no en local        
-        upper_lip_name = f"C_{self.rig_name}_lipUpper_GRP"
-        if not cmds.objExists(upper_lip_name):
-            mid_lipUpper = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mouthUpper"],
-                    final_name=f"C_{self.rig_name}_mid_lipUpper_CTRL"
-            )
-            mid_lipUpper = cmds.rename(mid_lipUpper, upper_lip_name)
-            upper_lip_grp = self.group_maker.create_rig_hierarchy(
-                    mid_lipUpper, self.lip_mid, match_rotation=True, world_space=True
-            )
-        else:
-            mid_lipUpper = upper_lip_name
-            upper_lip_grp = self._get_ctrl_root_grp(mid_lipUpper)
-            
-        upper_off_name = f"C_{self.rig_name}_UpperLocal_OFF"
-        upper_trn_name = f"C_{self.rig_name}_UpperLocal_TRN"
-        if not cmds.objExists(upper_off_name):
-            upper_local_off, upper_local_trn = self._build_off_network(
-                prefix=f"C_{self.rig_name}",
-                base_name="Upper", source_ctrl=mid_lipUpper, source_ctrl_grp=upper_lip_grp
-            )
-        else:
-            upper_local_off, upper_local_trn = upper_off_name, upper_trn_name
-
-        lower_lip_name = f"C_{self.rig_name}_lipLower_GRP"
-        if not cmds.objExists(lower_lip_name):
-            mid_lipLower = controlsLibrary.create_control_from_lib(
-                    lib_name=self.styles["mouthLower"],
-                    final_name=f"C_{self.rig_name}_mid_lipLower_CTRL"
-            )
-
-            mid_lipLower = cmds.rename(mid_lipLower, lower_lip_name)
-            lower_lip_grp = self.group_maker.create_rig_hierarchy(
-                    mid_lipLower, self.lip_mid, match_rotation=True, world_space=True
-            )
-            cmds.setAttr(f"{lower_lip_grp}.scaleY", -1)
-        else:
-            mid_lipLower = lower_lip_name
-            lower_lip_grp = self._get_ctrl_root_grp(mid_lipLower)
-            
-        lower_off_name = f"C_{self.rig_name}_LowerLocal_OFF"
-        lower_trn_name = f"C_{self.rig_name}_LowerLocal_TRN"
-        inverted_name = f"C_{self.rig_name}_lipLowerInverted_GRP"
-
-        if not cmds.objExists(inverted_name):
-            lower_local_off, lower_local_trn = self._build_off_network(
-                prefix=f"C_{self.rig_name}",
-                base_name="Lower", source_ctrl=mid_lipLower, source_ctrl_grp=lower_lip_grp
-            )
-            inverted_group = cmds.group(em=True, n=inverted_name)
-            cmds.setAttr(f"{inverted_group}.scaleY", -1)
-            cmds.parent(lower_local_off, inverted_group)
-            cmds.setAttr(f"{lower_local_off}.rotateX", 0)
-            cmds.setAttr(f"{lower_local_off}.scaleZ", 1)
-        else:
-            inverted_group = inverted_name
-            lower_local_off = cmds.listRelatives(inverted_group, children=True, type="transform")[0]
-            lower_local_trn = lower_trn_name
-        
-        # 3. UVPIN Y SETTINGS ÚNICOS COMPARTIDOS
-        uvpin_node = self._get_or_create_shared_uvpin()
-        settings_grp = self._get_or_create_shared_settings_grp()
-
-        # =========================================================
-        # 4. CPS RAW DEL CENTRO — se construye una única vez
-        # =========================================================
-        center_raw_index = self.RAW_INDEX["C"]
-        center_locator_name = f"C_{self.rig_name}_lipProjected_LOC"
-        if not self._is_coordinate_connected(uvpin_node, center_raw_index):
-            center_local_off, center_local_trn, center_cps = self._build_cps_network(
-                prefix=f"C_{self.rig_name}", cps_name=f"C_{self.rig_name}_lips_CPS",
-                base_name="mouthCenter", source_ctrl=mid_lip, source_ctrl_grp=mid_lip_grp
-            )
-            cmds.connectAttr(f"{center_cps}.result.parameterU", f"{uvpin_node}.coordinate[{center_raw_index}].coordinateU")
-            cmds.connectAttr(f"{center_cps}.result.parameterV", f"{uvpin_node}.coordinate[{center_raw_index}].coordinateV")
-
-            center_locator = cmds.spaceLocator(name=center_locator_name)[0]
-            cmds.connectAttr(f"{uvpin_node}.outputMatrix[{center_raw_index}]", f"{center_locator}.offsetParentMatrix")
-        else:
-            center_locator = center_locator_name
-
-
-        center_cps = cmds.listConnections(
-            f"{uvpin_node}.coordinate[{center_raw_index}].coordinateU", source=True, destination=False
-        )[0]
-
-        #duplicar el locator del centro para usarlo como locator en global, no en local
-        
-        center_locator_global = cmds.duplicate(center_locator_name, n=f"{self.prefix}_lipProjectedGlobal_LOC")[0]
-        #WIP: este grupo se tiene que constreñir al joint de la cabeza y el grupo de los controles de la boca generales tmb
-        #global_locator_grp = cmds.group(n=f"{self.prefix}_lipGlobal_GRP", em=True)
-        #cmds.parent(center_locator_global, global_locator_grp)
-        
-        cmds.connectAttr(f"{center_locator}.worldMatrix[0]", f"{center_locator_global}.offsetParentMatrix")
-
-        #Conectar los grupos de upper y lower lip al locator global del centro mediante un constraint
-        #(el locator es el driver: upper/lower lip siguen al centro, no al revés)
-        if not cmds.listRelatives(upper_lip_grp, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_global, upper_lip_grp, mo=True)
-        if not cmds.listRelatives(lower_lip_grp, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_global, lower_lip_grp, mo=True)
-            
-        # =========================================================
-        # 4.5 LOS OFFSETS DE UPPER/LOWER SIGUEN AL LOCATOR DEL CENTRO
-        # =========================================================
-        if not cmds.listRelatives(upper_local_off, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, upper_local_off, mo=True)
-        if not cmds.listRelatives(lower_local_off, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, lower_local_off, mo=True)
-            
-            
-        # =========================================================
-        # 5. CPS RAW DE ESTE LADO (L o R)
-        # =========================================================
-        end_local_off, end_local_trn, end_cps = self._build_cps_network(
-            prefix=self.prefix, cps_name=f"{self.prefix}_lips_CPS",
-            base_name="mouth", source_ctrl=end_lip, source_ctrl_grp=end_lip_grp
-        )
-
-        raw_index = self.RAW_INDEX[self.side]
-        cmds.connectAttr(f"{end_cps}.result.parameterU", f"{uvpin_node}.coordinate[{raw_index}].coordinateU")
-        cmds.connectAttr(f"{end_cps}.result.parameterV", f"{uvpin_node}.coordinate[{raw_index}].coordinateV")
-
-        raw_locator = cmds.spaceLocator(name=f"{self.prefix}_lipProjected_LOC")[0]
-        cmds.connectAttr(f"{uvpin_node}.outputMatrix[{raw_index}]", f"{raw_locator}.offsetParentMatrix")
-
-        if self.side == "R":
-            local_mirror_grp = cmds.group(em=True, n=f"{self.prefix}_mouthLocalMirror_GRP")
-            cmds.setAttr(f"{local_mirror_grp}.scaleX", -1)
-            cmds.parent(end_local_off, local_mirror_grp)
-            cmds.matchTransform(end_local_off, end_lip, pos=True, rot=True)
-
-        # =========================================================
-        # 6. BLEND 01 y BLEND 02 (U y V) — este lado
-        # =========================================================
-        bta_u01 = self._create_blend_pair(self.prefix, "U", end_cps, center_cps, "01", f"{settings_grp}.HorizontalFollow01")
-        bta_v01 = self._create_blend_pair(self.prefix, "V", end_cps, center_cps, "01", f"{settings_grp}.VerticalFollow01")
-        bta_u02 = self._create_blend_pair(self.prefix, "U", end_cps, center_cps, "02", f"{settings_grp}.HorizontalFollow02")
-        bta_v02 = self._create_blend_pair(self.prefix, "V", end_cps, center_cps, "02", f"{settings_grp}.VerticalFollow02")
-
-        blend01_index = self.BLEND01_INDEX[self.side]
-        cmds.connectAttr(f"{bta_u01}.output", f"{uvpin_node}.coordinate[{blend01_index}].coordinateU")
-        cmds.connectAttr(f"{bta_v01}.output", f"{uvpin_node}.coordinate[{blend01_index}].coordinateV")
-        locator01 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected01_LOC")[0]
-        cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend01_index}]", f"{locator01}.offsetParentMatrix")
-        
-        
-        levator_name = f"{self.prefix}_levator_CTRL"
-        if not cmds.objExists(levator_name):
-            levator_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mouthUpper"],
-                final_name=levator_name
-            )
-            
-            levator_ctrl_grp = self.group_maker.create_rig_hierarchy(
-                levator_ctrl, locator01, match_rotation=True, world_space=True
-            )
-        else:
-            levator_ctrl = levator_name
-            levator_ctrl_grp = self._get_ctrl_root_grp(levator_ctrl)
-
-        depresor_name = f"{self.prefix}_depresor_CTRL"
-        depresor_neg_name = f"{self.prefix}_depresor_negative_GRP"
-
-        if not cmds.objExists(depresor_name):
-            depresor_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mouthLower"],
-                final_name=depresor_name
-            )
-            
-            depresor_ctrl_grp = self.group_maker.create_rig_hierarchy(
-                depresor_ctrl, locator01, match_rotation=True, world_space=True
-            )
-            depresor_negative = cmds.group(depresor_ctrl_grp, n=f"{self.prefix}_depresor_negative_GRP")
-            cmds.setAttr(f"{self.prefix}_depresor_negative_GRP.scaleY", -1)
-            #cmds.parent(depresor_ctrl_grp, depresor_negative)
-        else:
-            depresor_ctrl = depresor_name
-            depresor_ctrl_grp = self._get_ctrl_root_grp(depresor_ctrl)
-
-        # =========================================================
-        # 6.5 SETUP DE OFF/TRN + JOINTS PARA LEVATOR Y DEPRESOR (ambos sides)
-        # =========================================================
-        levator_off_name = f"{self.prefix}_levatorLocal_OFF"
-        levator_trn_name = f"{self.prefix}_levatorLocal_TRN"
-        if not cmds.objExists(levator_off_name):
-            levator_local_off, levator_local_trn = self._build_off_network(
-                prefix=self.prefix, base_name="levator",
-                source_ctrl=levator_ctrl, source_ctrl_grp=levator_ctrl_grp
-            )
-        else:
-            levator_local_off, levator_local_trn = levator_off_name, levator_trn_name
-
-        levator_joint_name = f"{self.prefix}_levator_JNT"
-        if not cmds.objExists(levator_joint_name):
-            cmds.select(clear=True)
-            levator_joint = cmds.joint(n=levator_joint_name)
-            cmds.matchTransform(levator_joint, levator_ctrl_grp, pos=True, rot=True)
-            cmds.parentConstraint(levator_local_trn, levator_joint, mo=True)
-            cmds.select(clear=True)
-        else:
-            levator_joint = levator_joint_name
-
-        depresor_off_name = f"{self.prefix}_depresorLocal_OFF"
-        depresor_trn_name = f"{self.prefix}_depresorLocal_TRN"
-        if not cmds.objExists(depresor_off_name):
-            depresor_local_off, depresor_local_trn = self._build_off_network(
-                prefix=self.prefix, base_name="depresor",
-                source_ctrl=depresor_ctrl, source_ctrl_grp=depresor_ctrl_grp
-            )
-            cmds.setAttr(f"{depresor_local_off}.scaleY", -1)
-            cmds.setAttr(f"{depresor_local_off}.scaleX", -1)
-            cmds.setAttr(f"{depresor_local_off}.scaleZ", -1)
-
-
-
-        else:
-            depresor_local_off, depresor_local_trn = depresor_off_name, depresor_trn_name
-
-        depresor_joint_name = f"{self.prefix}_depresor_JNT"
-        if not cmds.objExists(depresor_joint_name):
-            cmds.select(clear=True)
-            depresor_joint = cmds.joint(n=depresor_joint_name)
-            cmds.matchTransform(depresor_joint, depresor_ctrl_grp, pos=True, rot=True)
-            cmds.parentConstraint(depresor_local_trn, depresor_joint, mo=True)
-            cmds.select(clear=True)
-        else:
-            depresor_joint = depresor_joint_name
-
-        blend02_index = self.BLEND02_INDEX[self.side]
-        cmds.connectAttr(f"{bta_u02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateU")
-        cmds.connectAttr(f"{bta_v02}.output", f"{uvpin_node}.coordinate[{blend02_index}].coordinateV")
-        locator02 = cmds.spaceLocator(name=f"{self.prefix}_lipProjected02_LOC")[0]
-        cmds.connectAttr(f"{uvpin_node}.outputMatrix[{blend02_index}]", f"{locator02}.offsetParentMatrix")
-
-        # =========================================================
-        # 6.6 CONTROLES UPPERPINCH Y LOWERPINCH (sobre locator02, ambos sides)
-        # Mismo patrón que levator/depresor pero anclados al lipProjected02
-        # =========================================================
-        upperPinch_name = f"{self.prefix}_upperPinch_CTRL"
-        if not cmds.objExists(upperPinch_name):
-            upperPinch_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mouthUpper"],
-                final_name=upperPinch_name
-            )
-
-            upperPinch_ctrl_grp = self.group_maker.create_rig_hierarchy(
-                upperPinch_ctrl, locator02, match_rotation=True, world_space=True
-            )
-        else:
-            upperPinch_ctrl = upperPinch_name
-            upperPinch_ctrl_grp = self._get_ctrl_root_grp(upperPinch_ctrl)
-
-        lowerPinch_name = f"{self.prefix}_lowerPinch_CTRL"
-        if not cmds.objExists(lowerPinch_name):
-            lowerPinch_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mouthLower"],
-                final_name=lowerPinch_name
-            )
-
-            lowerPinch_ctrl_grp = self.group_maker.create_rig_hierarchy(
-                lowerPinch_ctrl, locator02, match_rotation=True, world_space=True
-            )
-            lowerPinch_negative = cmds.group(lowerPinch_ctrl_grp, n=f"{self.prefix}_lowerPinch_negative_GRP")
-            cmds.setAttr(f"{self.prefix}_lowerPinch_negative_GRP.scaleY", -1)
-            #cmds.parent(lowerPinch_ctrl_grp, lowerPinch_negative)
-        else:
-            lowerPinch_ctrl = lowerPinch_name
-            lowerPinch_ctrl_grp = self._get_ctrl_root_grp(lowerPinch_ctrl)
-
-        # =========================================================
-        # 6.7 SETUP DE OFF/TRN + JOINTS PARA UPPERPINCH Y LOWERPINCH (ambos sides)
-        # =========================================================
-        upperPinch_off_name = f"{self.prefix}_upperPinchLocal_OFF"
-        upperPinch_trn_name = f"{self.prefix}_upperPinchLocal_TRN"
-        if not cmds.objExists(upperPinch_off_name):
-            upperPinch_local_off, upperPinch_local_trn = self._build_off_network(
-                prefix=self.prefix, base_name="upperPinch",
-                source_ctrl=upperPinch_ctrl, source_ctrl_grp=upperPinch_ctrl_grp
-            )
-        else:
-            upperPinch_local_off, upperPinch_local_trn = upperPinch_off_name, upperPinch_trn_name
-
-        upperPinch_joint_name = f"{self.prefix}_upperPinch_JNT"
-        if not cmds.objExists(upperPinch_joint_name):
-            cmds.select(clear=True)
-            upperPinch_joint = cmds.joint(n=upperPinch_joint_name)
-            cmds.matchTransform(upperPinch_joint, upperPinch_ctrl_grp, pos=True, rot=True)
-            cmds.parentConstraint(upperPinch_local_trn, upperPinch_joint, mo=True)
-            cmds.select(clear=True)
-        else:
-            upperPinch_joint = upperPinch_joint_name
-
-        lowerPinch_off_name = f"{self.prefix}_lowerPinchLocal_OFF"
-        lowerPinch_trn_name = f"{self.prefix}_lowerPinchLocal_TRN"
-        if not cmds.objExists(lowerPinch_off_name):
-            lowerPinch_local_off, lowerPinch_local_trn = self._build_off_network(
-                prefix=self.prefix, base_name="lowerPinch",
-                source_ctrl=lowerPinch_ctrl, source_ctrl_grp=lowerPinch_ctrl_grp
-            )
-            cmds.setAttr(f"{lowerPinch_local_off}.scaleY", -1)
-            cmds.setAttr(f"{lowerPinch_local_off}.scaleX", -1)
-            cmds.setAttr(f"{lowerPinch_local_off}.scaleZ", -1)
-        else:
-            lowerPinch_local_off, lowerPinch_local_trn = lowerPinch_off_name, lowerPinch_trn_name
-
-        lowerPinch_joint_name = f"{self.prefix}_lowerPinch_JNT"
-        if not cmds.objExists(lowerPinch_joint_name):
-            cmds.select(clear=True)
-            lowerPinch_joint = cmds.joint(n=lowerPinch_joint_name)
-            cmds.matchTransform(lowerPinch_joint, lowerPinch_ctrl_grp, pos=True, rot=True)
-            cmds.parentConstraint(lowerPinch_local_trn, lowerPinch_joint, mo=True)
-            cmds.select(clear=True)
-        else:
-            lowerPinch_joint = lowerPinch_joint_name
-
-        #if self.side == "R":
-            #mirror_behavior_grp = f"{self.root_instance.rig_name}_mirrorBehaviour_GRP"
-            #if cmds.objExists(mirror_behavior_grp):
-                #cmds.parent(levator_ctrl_grp,depresor_ctrl_grp, mirror_behavior_grp)
-                #cmds.setAttr(f"{levator_ctrl_grp}.scaleX", -1)
-                #cmds.setAttr(f"{levator_ctrl_grp}.scaleY", 1)
-                #cmds.setAttr(f"{levator_ctrl_grp}.scaleZ", 1)
-                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleX", -1)
-                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleY", 1)
-                #cmds.setAttr(f"{depresor_ctrl_grp}.scaleZ", 1)
-
-        # =========================================================
-        # LIP CENTER OF PROJECTION + AIM MATRIX + MAYA MUSCLE KEEP OUT
-        # =========================================================
-        # El locator de proyeccion es UNICO y central: se crea en la primera
-        # llamada a build() y las siguientes lo reutilizan.
-        # Lo que se repite por lado es el aim locator + su keepOut: los tres
-        # (C, L, R) nacen en la MISMA posicion y solo cambia su orientacion,
-        # porque son tres rayos que salen del mismo punto de proyeccion.
-        # El keepOut de cada uno lo desliza por su propia Z hasta sacarlo
-        # de la nurbs.
-
-        # nurb_locator_name = f"C_{self.rig_name}_lipCenterOfProjection_LOC"
-        # if not cmds.objExists(nurb_locator_name):
-        #     nurbCenter_locator = cmds.spaceLocator(name=nurb_locator_name)[0]
-        #     cmds.matchTransform(nurbCenter_locator, center_locator, pos=True, rot=True)
-        #     cmds.setAttr(f"{nurbCenter_locator}.translateZ", 6)
-        # else:
-        #     nurbCenter_locator = nurb_locator_name
-
-        # # La nurbs se convierte a Muscle Object una sola vez (es compartida).
-        # surface_trn, muscle_shape = self._get_or_create_muscle_surface()
-
-        # # --- C: apunta al tracker local del centro ---
-        # # Si aun no existe caemos al locator proyectado del centro.
-        # center_target = f"C_{self.rig_name}_mouthCenterLocal_TRN"
-        # if not cmds.objExists(center_target):
-        #     center_target = center_locator_name
-
-        # self._build_projection_aim_keepout(
-        #     side_code="C",
-        #     nurb_center_locator=nurbCenter_locator,
-        #     target_node=center_target,
-        #     surface_trn=surface_trn,
-        # )
-
-        # # --- Lado actual (L o R): apunta a la comisura de este lado ---
-        # aimCenter_locator = self._build_projection_aim_keepout(
-        #     side_code=self.side,
-        #     nurb_center_locator=nurbCenter_locator,
-        #     target_node=end_local_trn,
-        #     surface_trn=surface_trn,
-        # )
-
-            
-        # =========================================================
-        #Creacion de los joints
-        # =========================================================
-        cmds.select(clear=True)
-
-        upper_joint_name = f"C_{self.rig_name}_lipUpper_JNT"
-        if not cmds.objExists(upper_joint_name):
-            upper_joint = cmds.joint(n=upper_joint_name)
-            cmds.matchTransform(upper_joint, upper_lip_grp, pos=True, rot=True)
-            if cmds.objExists(upper_local_trn):
-                cmds.parentConstraint(upper_local_trn, upper_joint, mo=True)
-            else:
-                cmds.warning(f"MouthModule: no se pudo crear el parentConstraint de {upper_joint}, "
-                              f"'{upper_local_trn}' no existe en la escena.")
-            cmds.select(clear=True)
-        else:
-            upper_joint = upper_joint_name
-
-        lower_joint_name = f"C_{self.rig_name}_lipLower_JNT"
-        if not cmds.objExists(lower_joint_name):
-            lower_joint = cmds.joint(n=lower_joint_name)
-            cmds.matchTransform(lower_joint, lower_lip_grp, pos=True, rot=True)
-            if cmds.objExists(lower_local_trn):
-                cmds.parentConstraint(lower_local_trn, lower_joint, mo=True)
-            else:
-                cmds.warning(f"MouthModule: no se pudo crear el parentConstraint de {lower_joint}, "
-                              f"'{lower_local_trn}' no existe en la escena.")
-            cmds.select(clear=True)
-        else:
-            lower_joint = lower_joint_name
-
-        
-        
-        freeze_joint_name = f"C_{self.rig_name}_freeze_JNT"
-        if not cmds.objExists(freeze_joint_name):
-            freeze_joint = cmds.joint(n=freeze_joint_name)
-        else:
-            freeze_joint = freeze_joint_name
-            
-
-        # =========================================================
-        # 7. CURVA DE CURVATURA DE LOS LABIOS
-        # Solo se construye de verdad cuando ya existen los 7 locators
-        # (es decir, en la llamada de build() del segundo lado).
-        # =========================================================
-        self._build_lip_curve()
-
-        # =========================================================
-        # 8. BIND SKIN de las curvas upper/lower — solo cuando la curva
-        # ya existe (segunda llamada de build()) y todavía no tiene skinCluster
-        # =========================================================
-        upper_curve_name = f"C_{self.rig_name}_lipUpperLine_CRV"
-        lower_curve_name = f"C_{self.rig_name}_lipLowerLine_CRV"
-
-        upperSkinning = None
-        lowerSkinning = None
-
-        if cmds.objExists(upper_curve_name):
-            existing_upper_skin = cmds.ls(cmds.listHistory(upper_curve_name) or [], type="skinCluster")
-            if not existing_upper_skin:
-                upperSkinning = cmds.skinCluster(
-                    freeze_joint, upper_joint, upper_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{upperSkinning}.input[0].inputGeometry", f=True)
-                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
-                cmds.skinPercent(upperSkinning, f"{upper_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
-            else:
-                upperSkinning = existing_upper_skin[0]
-
-        # La curva original (lipProjected, alimentada por un decomposeMatrix por
-        # cada locator) conecta su worldSpace (global) al originalGeometry[0]
-        # del primer skinCluster creado (Upper).
-        if upperSkinning and cmds.objExists(self.curve_transform):
-            src = f"{self.curve_transform}.worldSpace[0]"
-            dst = f"{upperSkinning}.originalGeometry[0]"
-            if not cmds.isConnected(src, dst):
-                cmds.connectAttr(src, dst, force=True)
-
-        self._connect_freeze_lock_weights(freeze_joint, upperSkinning)
-        self._connect_joint_lock_weights(upper_joint, upperSkinning)
-
-        if cmds.objExists(lower_curve_name):
-            existing_lower_skin = cmds.ls(cmds.listHistory(lower_curve_name) or [], type="skinCluster")
-            if not existing_lower_skin:
-                lowerSkinning = cmds.skinCluster(
-                    freeze_joint, lower_joint, lower_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                cmds.connectAttr(f"{self.curve_transform}.worldSpace[0]", f"{lowerSkinning}.input[0].inputGeometry", f=True)
-                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5)])
-                cmds.skinPercent(lowerSkinning, f"{lower_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5)])
-            else:
-                lowerSkinning = existing_lower_skin[0]
-
-        # La curva original (lipProjected) también debe alimentar el
-        # originalGeometry[0] del skinCluster de Lower (mismo criterio que Upper).
-        if lowerSkinning and cmds.objExists(self.curve_transform):
-            src = f"{self.curve_transform}.worldSpace[0]"
-            dst = f"{lowerSkinning}.originalGeometry[0]"
-            if not cmds.isConnected(src, dst):
-                cmds.connectAttr(src, dst, force=True)
-
-        self._connect_freeze_lock_weights(freeze_joint, lowerSkinning)
-        self._connect_joint_lock_weights(lower_joint, lowerSkinning)
-
-        # --- BIND SKIN de las curvas de levator / depresor / upperPinch / lowerPinch ---
-        # Mismo sistema que upper/lower, pero cada curva es compartida entre L y R,
-        # asi que los joints influencia son freeze_joint + el joint de cada lado.
-        levator_curve_name = f"C_{self.rig_name}_lipCurvatureLevator_CRV"
-        depresor_curve_name = f"C_{self.rig_name}_lipCurvatureDepresor_CRV"
-        upperPinch_curve_name = f"C_{self.rig_name}_lipCurvatureUpperPinch_CRV"
-        lowerPinch_curve_name = f"C_{self.rig_name}_lipCurvatureLowerPinch_CRV"
-
-        L_levator_joint = f"L_{self.rig_name}_levator_JNT"
-        R_levator_joint = f"R_{self.rig_name}_levator_JNT"
-        L_depresor_joint = f"L_{self.rig_name}_depresor_JNT"
-        R_depresor_joint = f"R_{self.rig_name}_depresor_JNT"
-        L_upperPinch_joint = f"L_{self.rig_name}_upperPinch_JNT"
-        R_upperPinch_joint = f"R_{self.rig_name}_upperPinch_JNT"
-        L_lowerPinch_joint = f"L_{self.rig_name}_lowerPinch_JNT"
-        R_lowerPinch_joint = f"R_{self.rig_name}_lowerPinch_JNT"
-
-        levatorSkinning = None
-        depresorSkinning = None
-        upperPinchSkinning = None
-        lowerPinchSkinning = None
-
-        if cmds.objExists(levator_curve_name) and cmds.objExists(L_levator_joint) and cmds.objExists(R_levator_joint):
-            existing_levator_skin = cmds.ls(cmds.listHistory(levator_curve_name) or [], type="skinCluster")
-            if not existing_levator_skin:
-                levatorSkinning = cmds.skinCluster(
-                    freeze_joint, L_levator_joint, R_levator_joint, levator_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
-                # no le toca a ningun lado; sin esta linea se queda con el peso
-                # automatico del bind y un joint de un lado se lo lleva entero.
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv de las otras curvas de la cadena: tambien solo freeze,
-                # asi heredan su deformacion sin anadir nada encima.
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[1]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[5]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv que si conduce esta curva, uno por lado.
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[2]", transformValue=[(freeze_joint, 0.5), (L_levator_joint, 0.5)])
-                cmds.skinPercent(levatorSkinning, f"{levator_curve_name}.cv[4]", transformValue=[(freeze_joint, 0.5), (R_levator_joint, 0.5)])
-            else:
-                levatorSkinning = existing_levator_skin[0]
-
-        # Levator hereda la deformación ya resuelta de Upper (cadena Upper -> Levator -> UpperPinch)
-        self._chain_curve_into_skincluster(upper_curve_name, levatorSkinning)
-        self._connect_freeze_lock_weights(freeze_joint, levatorSkinning)
-        self._connect_joint_lock_weights(L_levator_joint, levatorSkinning)
-        self._connect_joint_lock_weights(R_levator_joint, levatorSkinning)
-
-        if cmds.objExists(depresor_curve_name) and cmds.objExists(L_depresor_joint) and cmds.objExists(R_depresor_joint):
-            existing_depresor_skin = cmds.ls(cmds.listHistory(depresor_curve_name) or [], type="skinCluster")
-            if not existing_depresor_skin:
-                depresorSkinning = cmds.skinCluster(
-                    freeze_joint, L_depresor_joint, R_depresor_joint, depresor_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
-                # no le toca a ningun lado; sin esta linea se queda con el peso
-                # automatico del bind y un joint de un lado se lo lleva entero.
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv de las otras curvas de la cadena: tambien solo freeze,
-                # asi heredan su deformacion sin anadir nada encima.
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[1]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[5]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv que si conduce esta curva, uno por lado.
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[2]", transformValue=[(freeze_joint, 0.5), (L_depresor_joint, 0.5)])
-                cmds.skinPercent(depresorSkinning, f"{depresor_curve_name}.cv[4]", transformValue=[(freeze_joint, 0.5), (R_depresor_joint, 0.5)])
-            else:
-                depresorSkinning = existing_depresor_skin[0]
-
-        # Depresor hereda la deformación ya resuelta de Lower (cadena Lower -> Depresor -> LowerPinch)
-        self._chain_curve_into_skincluster(lower_curve_name, depresorSkinning)
-        self._connect_freeze_lock_weights(freeze_joint, depresorSkinning)
-        self._connect_joint_lock_weights(L_depresor_joint, depresorSkinning)
-        self._connect_joint_lock_weights(R_depresor_joint, depresorSkinning)
-
-        if cmds.objExists(upperPinch_curve_name) and cmds.objExists(L_upperPinch_joint) and cmds.objExists(R_upperPinch_joint):
-            existing_upperPinch_skin = cmds.ls(cmds.listHistory(upperPinch_curve_name) or [], type="skinCluster")
-            if not existing_upperPinch_skin:
-                upperPinchSkinning = cmds.skinCluster(
-                    freeze_joint, L_upperPinch_joint, R_upperPinch_joint, upperPinch_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
-                # no le toca a ningun lado; sin esta linea se queda con el peso
-                # automatico del bind y un joint de un lado se lo lleva entero.
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv de las otras curvas de la cadena: tambien solo freeze,
-                # asi heredan su deformacion sin anadir nada encima.
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[2]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[4]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv que si conduce esta curva, uno por lado.
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_upperPinch_joint, 0.5)])
-                cmds.skinPercent(upperPinchSkinning, f"{upperPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_upperPinch_joint, 0.5)])
-            else:
-                upperPinchSkinning = existing_upperPinch_skin[0]
-
-        # UpperPinch hereda la deformación ya resuelta de Levator
-        self._chain_curve_into_skincluster(levator_curve_name, upperPinchSkinning)
-        self._connect_freeze_lock_weights(freeze_joint, upperPinchSkinning)
-        self._connect_joint_lock_weights(L_upperPinch_joint, upperPinchSkinning)
-        self._connect_joint_lock_weights(R_upperPinch_joint, upperPinchSkinning)
-
-        if cmds.objExists(lowerPinch_curve_name) and cmds.objExists(L_lowerPinch_joint) and cmds.objExists(R_lowerPinch_joint):
-            existing_lowerPinch_skin = cmds.ls(cmds.listHistory(lowerPinch_curve_name) or [], type="skinCluster")
-            if not existing_lowerPinch_skin:
-                lowerPinchSkinning = cmds.skinCluster(
-                    freeze_joint, L_lowerPinch_joint, R_lowerPinch_joint, lowerPinch_curve_name,
-                    tsb=True, bm=0, sm=0, nw=1, wd=0, mi=1, dr=4.0
-                )[0]
-                # Esquinas y centro: solo freeze. El cv[3] es el centro del labio,
-                # no le toca a ningun lado; sin esta linea se queda con el peso
-                # automatico del bind y un joint de un lado se lo lleva entero.
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[0]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[3]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[6]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv de las otras curvas de la cadena: tambien solo freeze,
-                # asi heredan su deformacion sin anadir nada encima.
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[2]", transformValue=[(freeze_joint, 1.0)])
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[4]", transformValue=[(freeze_joint, 1.0)])
-                # Los cv que si conduce esta curva, uno por lado.
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[1]", transformValue=[(freeze_joint, 0.5), (L_lowerPinch_joint, 0.5)])
-                cmds.skinPercent(lowerPinchSkinning, f"{lowerPinch_curve_name}.cv[5]", transformValue=[(freeze_joint, 0.5), (R_lowerPinch_joint, 0.5)])
-            else:
-                lowerPinchSkinning = existing_lowerPinch_skin[0]
-
-        # LowerPinch hereda la deformación ya resuelta de Depresor
-        self._chain_curve_into_skincluster(depresor_curve_name, lowerPinchSkinning)
-        self._connect_freeze_lock_weights(freeze_joint, lowerPinchSkinning)
-        self._connect_joint_lock_weights(L_lowerPinch_joint, lowerPinchSkinning)
-        self._connect_joint_lock_weights(R_lowerPinch_joint, lowerPinchSkinning)
-
-        cmds.select(clear=True)
-
-        upperPrebind_joint_name = f"C_{self.rig_name}_lipUpperPreBind_JNT"
-        if not cmds.objExists(upperPrebind_joint_name):
-            upperPrebind_joint = cmds.joint(n=upperPrebind_joint_name)
-            cmds.matchTransform(upperPrebind_joint, upper_joint, pos=True, rot=True)
-            cmds.select(clear=True)
-        else:
-            upperPrebind_joint = upperPrebind_joint_name
-
-        if not cmds.listRelatives(upperPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, upperPrebind_joint, mo=True)
-
-        if upperSkinning:
-            self._connect_prebind_to_skincluster(upperSkinning, upper_joint, upperPrebind_joint)
-
-        lowerPrebind_joint_name = f"C_{self.rig_name}_lipLowerPreBind_JNT"
-        if not cmds.objExists(lowerPrebind_joint_name):
-            lowerPrebind_joint = cmds.joint(n=lowerPrebind_joint_name)
-            cmds.matchTransform(lowerPrebind_joint, lower_joint, pos=True, rot=True)
-            cmds.select(clear=True)
-        else:
-            lowerPrebind_joint = lowerPrebind_joint_name
-
-        if not cmds.listRelatives(lowerPrebind_joint, children=True, type="parentConstraint"):
-            cmds.parentConstraint(center_locator_name, lowerPrebind_joint, mo=True)
-
-        if lowerSkinning:
-            self._connect_prebind_to_skincluster(lowerSkinning, lower_joint, lowerPrebind_joint)
-            
-        # =========================================================
-        # 9. CREACIÓN DE TRACKERS / MOTION PATHS Y CONSTRAINTS
-        # =========================================================
-        if (cmds.objExists(upper_curve_name) and cmds.objExists(lower_curve_name)
-                and cmds.objExists(levator_curve_name) and cmds.objExists(depresor_curve_name)):
-            u_levator_L = 0.25
-            u_depresor_L = 0.25
-
-            # --- UPPER / LEVATORES ---
-            # Levator L
-            _, tracker_upper_L = self._get_or_create_curve_motion_locator(
-                curve_name=upper_curve_name, base_name="levatorFollow", u_value=u_levator_L, side="L"
-            )
-            # Levator R
-            _, tracker_upper_R = self._get_or_create_curve_motion_locator(
-                curve_name=upper_curve_name, base_name="levatorFollow", u_value=1.0 - u_levator_L, side="R"
-            )
-
-            # --- LOWER / DEPRESORES ---
-            # Depresor L
-            _, tracker_lower_L = self._get_or_create_curve_motion_locator(
-                curve_name=lower_curve_name, base_name="depresorFollow", u_value=u_depresor_L, side="L"
-            )
-            # Depresor R
-            _, tracker_lower_R = self._get_or_create_curve_motion_locator(
-                curve_name=lower_curve_name, base_name="depresorFollow", u_value=1.0 - u_depresor_L, side="R"
-            )
-
-            # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---
-            for side_code in ["L", "R"]:
-                prefix_side = f"{side_code}_{self.rig_name}"
-                
-                # Nombres de los Global Trackers creados
-                upper_global_loc = f"{prefix_side}_levatorFollow_trackerGlobal_LOC"
-                lower_global_loc = f"{prefix_side}_depresorFollow_trackerGlobal_LOC"
-
-                # Nombres de los Trackers LOCALES creados
-                upper_local_loc = f"{prefix_side}_levatorFollow_tracker_LOC"
-                lower_local_loc = f"{prefix_side}_depresorFollow_tracker_LOC"
-
-                # Nombres de los controles
-                levator_ctrl = f"{prefix_side}_levator_CTRL"
-                depresor_ctrl = f"{prefix_side}_depresor_CTRL"
-
-                # 1. LEVATOR: Apuntamos directamente al grupo raíz principal (_GRP)
-                levator_grp = f"{prefix_side}_levator_GRP"
-                if cmds.objExists(levator_grp):
-                    if not cmds.listRelatives(levator_grp, type="parentConstraint"):
-                        cmds.parentConstraint(upper_global_loc, levator_grp, mo=True)
-
-                    # --- OFF LOCAL DEL LEVATOR: lo conduce el Tracker LOCAL ---
-                    levator_off = f"{prefix_side}_levatorLocal_OFF"
-                    if cmds.objExists(levator_off) and cmds.objExists(upper_local_loc):
-                        if not cmds.listRelatives(levator_off, type="parentConstraint"):
-                            cmds.parentConstraint(upper_local_loc, levator_off, mo=True)
-
-                    # --- PREBIND DEL LEVATOR (conducido por el Tracker LOCAL) ---
-                    levator_joint_side = f"{prefix_side}_levator_JNT"
-                    levatorPrebind_name = f"{prefix_side}_levatorPreBind_JNT"
-                    self._setup_prebind_joint(
-                        prebind_name=levatorPrebind_name,
-                        source_joint=levator_joint_side,
-                        driver_target=upper_local_loc
-                    )
-
-                # 2. DEPRESOR: Si existe el grupo negativo usamos ese, si no el _GRP principal
-                if cmds.objExists(depresor_ctrl):
-                    neg_grp = f"{prefix_side}_depresor_negative_GRP"
-                    depresor_grp = f"{prefix_side}_depresor_GRP"
-                    target_depresor_grp = neg_grp if cmds.objExists(neg_grp) else depresor_grp
-
-                    if cmds.objExists(target_depresor_grp):
-                        if not cmds.listRelatives(target_depresor_grp, type="parentConstraint"):
-                            cmds.parentConstraint(lower_global_loc, target_depresor_grp, mo=True)
-
-                    # --- OFF LOCAL DEL DEPRESOR: lo conduce el Tracker LOCAL ---
-                    depresor_off = f"{prefix_side}_depresorLocal_OFF"
-                    if cmds.objExists(depresor_off) and cmds.objExists(lower_local_loc):
-                        if not cmds.listRelatives(depresor_off, type="parentConstraint"):
-                            cmds.parentConstraint(lower_local_loc, depresor_off, mo=True)
-
-                    # --- PREBIND DEL DEPRESOR (conducido por el Tracker LOCAL) ---
-                    depresor_joint_side = f"{prefix_side}_depresor_JNT"
-                    depresorPrebind_name = f"{prefix_side}_depresorPreBind_JNT"
-                    self._setup_prebind_joint(
-                        prebind_name=depresorPrebind_name,
-                        source_joint=depresor_joint_side,
-                        driver_target=lower_local_loc
-                    )
-
-            # --- UPPERPINCH / LOWERPINCH ----
-            # UpperPinch va DESPUÉS de Levator en la cadena (Upper -> Levator -> UpperPinch),
-            # así que su tracker debe leer el world space de la curva Levator (la anterior),
-            # no de Upper. Igual para LowerPinch con Depresor (Lower -> Depresor -> LowerPinch).
-            u_pinch_L = 0.1
-
-            # Upper pinch L
-            _, tracker_upperPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=u_pinch_L, side="L"
-            )
-            # Upper pinch R
-            _, tracker_upperPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=levator_curve_name, base_name="upperPinchFollow", u_value=1.0 - u_pinch_L, side="R"
-            )
-
-            # Lower pinch L
-            _, tracker_lowerPinch_L = self._get_or_create_curve_motion_locator(
-                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=u_pinch_L, side="L"
-            )
-            # Lower pinch R
-            _, tracker_lowerPinch_R = self._get_or_create_curve_motion_locator(
-                curve_name=depresor_curve_name, base_name="lowerPinchFollow", u_value=1.0 - u_pinch_L, side="R"
-            )
-
-            # --- CONEXIÓN / PARENT CONSTRAINT A LOS GRUPOS DE CONTROLES ---
-            for side_code in ["L", "R"]:
-                prefix_side = f"{side_code}_{self.rig_name}"
-
-                # Nombres de los Global Trackers creados
-                
-                upperPinch_global_loc = f"{prefix_side}_upperPinchFollow_trackerGlobal_LOC"
-                lowerPinch_global_loc = f"{prefix_side}_lowerPinchFollow_trackerGlobal_LOC"
-
-                # Nombres de los Trackers LOCALES creados
-                upperPinch_local_loc = f"{prefix_side}_upperPinchFollow_tracker_LOC"
-                lowerPinch_local_loc = f"{prefix_side}_lowerPinchFollow_tracker_LOC"
-
-                # Nombres de los controles
-                lowerPinch_ctrl_name = f"{prefix_side}_lowerPinch_CTRL"
-
-                # 1. UPPERPINCH: apuntamos directamente al grupo raíz principal (_GRP)
-                upperPinch_grp = f"{prefix_side}_upperPinch_GRP"
-                if cmds.objExists(upperPinch_grp):
-                    if not cmds.listRelatives(upperPinch_grp, type="parentConstraint"):
-                        cmds.parentConstraint(upperPinch_global_loc, upperPinch_grp, mo=True)
-
-                    # --- OFF LOCAL DEL UPPERPINCH: lo conduce el Tracker LOCAL ---
-                    upperPinch_off = f"{prefix_side}_upperPinchLocal_OFF"
-                    if cmds.objExists(upperPinch_off) and cmds.objExists(upperPinch_local_loc):
-                        if not cmds.listRelatives(upperPinch_off, type="parentConstraint"):
-                            cmds.parentConstraint(upperPinch_local_loc, upperPinch_off, mo=True)
-
-                    # --- PREBIND DEL UPPERPINCH (conducido por el Tracker LOCAL) ---
-                    upperPinch_joint_side = f"{prefix_side}_upperPinch_JNT"
-                    upperPinchPrebind_name = f"{prefix_side}_upperPinchPreBind_JNT"
-                    self._setup_prebind_joint(
-                        prebind_name=upperPinchPrebind_name,
-                        source_joint=upperPinch_joint_side,
-                        driver_target=upperPinch_local_loc
-                    )
-
-                # 2. LOWERPINCH: si existe el grupo negativo usamos ese, si no el _GRP principal
-                if cmds.objExists(lowerPinch_ctrl_name):
-                    neg_grp = f"{prefix_side}_lowerPinch_negative_GRP"
-                    lowerPinch_grp = f"{prefix_side}_lowerPinch_GRP"
-                    target_lowerPinch_grp = neg_grp if cmds.objExists(neg_grp) else lowerPinch_grp
-
-                    if cmds.objExists(target_lowerPinch_grp):
-                        if not cmds.listRelatives(target_lowerPinch_grp, type="parentConstraint"):
-                            cmds.parentConstraint(lowerPinch_global_loc, target_lowerPinch_grp, mo=True)
-
-                    # --- OFF LOCAL DEL LOWERPINCH: lo conduce el Tracker LOCAL ---
-                    lowerPinch_off = f"{prefix_side}_lowerPinchLocal_OFF"
-                    if cmds.objExists(lowerPinch_off) and cmds.objExists(lowerPinch_local_loc):
-                        if not cmds.listRelatives(lowerPinch_off, type="parentConstraint"):
-                            cmds.parentConstraint(lowerPinch_local_loc, lowerPinch_off, mo=True)
-
-                    # --- PREBIND DEL LOWERPINCH (conducido por el Tracker LOCAL) ---
-                    lowerPinch_joint_side = f"{prefix_side}_lowerPinch_JNT"
-                    lowerPinchPrebind_name = f"{prefix_side}_lowerPinchPreBind_JNT"
-                    self._setup_prebind_joint(
-                        prebind_name=lowerPinchPrebind_name,
-                        source_joint=lowerPinch_joint_side,
-                        driver_target=lowerPinch_local_loc
-                    )
-
-        # =========================================================
-        # 9.9 OFFSET EN Y DE LAS SHAPES DE LOS CONTROLES DE LABIO
-        # Solo CV: upper arriba, lower abajo. Pivotes intactos.
-        # =========================================================
-        self._offset_lip_shapes()
-
-        # =========================================================
-        # 10. ORGANIZACION DEL OUTLINER
-        # Va al final a proposito: cuando todo existe y ya esta conectado.
-        # Solo mueve nodos a grupos en identidad, no toca el rig.
-        # =========================================================
-        self._organize_outliner(control_groups=[
-            mid_lip_grp,
-            end_lip_grp,
-            upper_lip_grp,
-            lower_lip_grp,
-            levator_ctrl_grp,
-            depresor_ctrl_grp,
-            upperPinch_ctrl_grp,
-            lowerPinch_ctrl_grp,
-        ])
-
-        return mid_lip_grp, end_lip_grp, end_local_off, end_local_trn
+        group_name = f"C_{self.rig_name}_mouth_GRP"
+        if cmds.objExists(group_name):
+            cmds.delete(group_name)
+
+        self.controls = {}
+        self.joints = {}
+        self.cascade_links = {}
+        self.output_nodes = {}
+
+        cascade_name = f"C_{self.rig_name}_mouthCascade_GRP"
+        if cmds.objExists(cascade_name):
+            cmds.delete(cascade_name)
+        self.cascade_group = None
+
+        # 1. Los centros de los dos labios. Son el primer padre de la cadena.
+        mid_controls = {}
+        for half in ("Upper", "Lower"):
+            main_ctrl, _ = self._build_mid(half)
+            mid_controls[half] = main_ctrl
+
+        # 2. Las comisuras. Segundo padre, compartidas por las dos mitades.
+        corner_controls = {}
+        for side in self.sides:
+            corner_controls[side] = self._build_corner(side)
+
+        # 3. Los eslabones, que ya solo cuelgan de los dos anteriores.
+        for half in ("Upper", "Lower"):
+            mid_ctrl = mid_controls.get(half)
+            if not mid_ctrl:
+                continue
+
+            for side in self.sides:
+                corner_ctrl = corner_controls.get(side)
+                if not corner_ctrl:
+                    continue
+
+                for key in ("01", "02"):
+                    self._build_chain_link(half, side, key,
+                                           mid_ctrl, corner_ctrl)
+
+        # 3b. La cascada: una curva por labio. Va despues de los eslabones
+        #     porque necesita sus bases ya creadas.
+        if self.use_cascade:
+            for half in ("Upper", "Lower"):
+                if mid_controls.get(half):
+                    self._build_cascade_curve(half, mid_controls[half],
+                                              corner_controls)
+
+        # 4. Recoger todo lo que quedo suelto en el mundo.
+        roots = []
+        for control in self.controls.values():
+            node = control
+            while True:
+                parent = cmds.listRelatives(node, parent=True, type="transform")
+                if not parent:
+                    break
+                node = parent[0]
+            if node not in roots:
+                roots.append(node)
+
+        if self.cascade_group and cmds.objExists(self.cascade_group):
+            roots.append(self.cascade_group)
+
+        if roots:
+            self.module_group = cmds.group(roots, n=group_name)
+
+        # Si el jaw ya existe, se engancha ahora. Si no, lo hara build_module
+        # cuando construya la mandibula.
+        if not self.attach_to_jaw():
+            cmds.warning("[SimpleMouth] Todavia no hay controles de jaw. "
+                         "La boca queda montada pero sin seguir a la mandibula "
+                         "hasta que se llame a attach_to_jaw().")
+
+        print(f"[SimpleMouth] {len(self.controls)} controles y joints.")
+
+        return self.module_group

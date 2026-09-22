@@ -34,6 +34,7 @@ dedos no entran en el esqueleto _ENV.
 import maya.cmds as cmds
 
 import fingers_module
+import fingersIk_module
 
 
 class ToesModule(fingers_module.FingersModule):
@@ -45,6 +46,15 @@ class ToesModule(fingers_module.FingersModule):
     SETTINGS_LABEL  = "TOES"
     FOLLOW_ATTR     = "FollowFoot"
     FOLLOW_NICE     = "Follow Foot"
+
+    #: El IK de los dedos del pie tiene su propio space switch (mundo <-> pie).
+    #: Antes esto se hacia sobreescribiendo create_ik_space_switch aqui; ahora
+    #: que el IK vive en su propio modulo, se cambia la clase que lo monta.
+    IK_BUILDER = fingersIk_module.ToesIkModule
+
+    #: Tipo de modulo en module_specs. Sin esto heredaria "finger" de
+    #: FingersModule y leeria las features de la mano (fan, spread, fist...).
+    MODULE_TYPE = "toe"
 
     # ------------------------------------------------------------------ #
     #  INIT
@@ -61,7 +71,8 @@ class ToesModule(fingers_module.FingersModule):
                  settings_ctrl=None,
                  ik_follow_foot=0.0,
                  attach_joint=None,
-                 leg_grp=None):
+                 leg_grp=None,
+                 features=None):
 
         super(ToesModule, self).__init__(
             wrist_guide=ball_guide,
@@ -72,6 +83,7 @@ class ToesModule(fingers_module.FingersModule):
             pref_angle=pref_angle,
             settings_ctrl=settings_ctrl,
             ik_follow_hand=ik_follow_foot,
+            features=features,
         )
 
         self.ball_guide = ball_guide
@@ -190,52 +202,8 @@ class ToesModule(fingers_module.FingersModule):
         self.settings_ctrl = ctrl
         return ctrl
 
-    # ------------------------------------------------------------------ #
-    #  SPACE SWITCH DEL CONTROL IK  (mundo <-> pie)
-    # ------------------------------------------------------------------ #
-    def create_ik_space_switch(self, ik_gen, ik_ctrl, bind_ball, toe_name, parent_grp):
-        """Dos espacios para el control IK del dedo del pie.
-
-        - WORLD: grupo estático. Con FollowFoot = 0 el dedo se queda clavado en
-          el suelo aunque el pie ruede: es justo lo que se quiere para que los
-          dedos se queden pegados al suelo mientras el talón despega.
-        - FOOT: grupo constreñido al ball bind. Con FollowFoot = 1 el control
-          viaja con el pie.
-        """
-        spaces_grp = cmds.group(em=True,
-                                n=f"{self.prefix}_{toe_name}_ikSpaces_GRP",
-                                p=parent_grp)
-        cmds.setAttr(f"{spaces_grp}.visibility", 0)
-
-        space_world = cmds.group(em=True,
-                                 n=f"{self.prefix}_{toe_name}_ikSpaceWorld_GRP",
-                                 p=spaces_grp)
-        space_foot = cmds.group(em=True,
-                                n=f"{self.prefix}_{toe_name}_ikSpaceFoot_GRP",
-                                p=spaces_grp)
-
-        cmds.matchTransform(space_world, ik_gen)
-        cmds.matchTransform(space_foot, ik_gen)
-
-        if cmds.objExists(bind_ball):
-            cmds.parentConstraint(bind_ball, space_foot, mo=True)
-
-        if not cmds.attributeQuery(self.FOLLOW_ATTR, node=ik_ctrl, exists=True):
-            cmds.addAttr(ik_ctrl, ln=self.FOLLOW_ATTR, nn=self.FOLLOW_NICE,
-                         at="double", min=0, max=1, dv=self.ik_follow_hand, k=True)
-
-        pc = cmds.parentConstraint(space_world, space_foot, ik_gen, mo=True)[0]
-        cmds.setAttr(f"{pc}.interpType", 2)      # shortest, para que no flipee
-
-        aliases = cmds.parentConstraint(pc, q=True, weightAliasList=True)
-        world_alias, foot_alias = aliases[0], aliases[1]
-
-        rev = cmds.createNode("reverse", n=f"{self.prefix}_{toe_name}_ikFollow_REV")
-        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{rev}.inputX")
-        cmds.connectAttr(f"{rev}.outputX", f"{pc}.{world_alias}")
-        cmds.connectAttr(f"{ik_ctrl}.{self.FOLLOW_ATTR}", f"{pc}.{foot_alias}")
-
-        return pc
+    # El space switch del control IK (mundo <-> pie) se ha mudado a
+    # fingersIk_module.ToesIkModule, junto con el resto del setup de IK.
 
     # ------------------------------------------------------------------ #
     #  BUILD
@@ -271,6 +239,11 @@ class ToesModule(fingers_module.FingersModule):
         self.ikh_master_grp = cmds.group(
             em=True, n=f"{self.prefix}_{self.GROUP_TAG}_IKH_GRP")
 
+        # ---- MODULO DE IK ----
+        # Aqui y no antes: el constructor necesita los grupos maestros, que
+        # acaban de crearse justo arriba.
+        self._setup_ik_builder()
+
         # ---- 1. CADENAS BIND (todavía en world, sin emparentar) ----
         built = []          # [(toe_name, guide_root, bind_chain), ...]
         used_names = {}
@@ -290,23 +263,32 @@ class ToesModule(fingers_module.FingersModule):
         settings = self.get_or_create_settings_ctrl(attach, all_chains)
 
         # Plan B para dedos totalmente rectos: el eje "a través del pie".
-        fallback_normal = self.fallback_curl_normal(all_chains)
+        # Solo se usa para los preferred angles del solver, asi que sin IK no
+        # hay nada que calcular.
+        fallback_normal = (self.ik_builder.fallback_curl_normal(all_chains)
+                           if self.ik_builder else None)
 
         # ---- 3. DEDO A DEDO ----
         for toe_name, guide_root, bind_chain in built:
 
             # 3.1 Normal de curvatura ANTES de duplicar (misma pose en las 3 cadenas)
-            curl_normal = self.detect_curl_normal(bind_chain)
-            if curl_normal is None:
-                curl_normal = fallback_normal
-                if not self.curl_axis_override.get(toe_name):
-                    cmds.warning(f"[toes] '{toe_name}' está recto en la guía: uso el eje "
-                                 f"transversal del pie. Si dobla al revés usa "
-                                 f"curl_axis_override.")
+            curl_normal = None
+            if self.ik_builder:
+                curl_normal = self.ik_builder.detect_curl_normal(bind_chain)
+                if curl_normal is None:
+                    curl_normal = fallback_normal
+                    if not self.curl_axis_override.get(toe_name):
+                        cmds.warning(f"[toes] '{toe_name}' está recto en la guía: uso el eje "
+                                     f"transversal del pie. Si dobla al revés usa "
+                                     f"curl_axis_override.")
 
             # 3.2 Duplicar cadenas FK / IK
             fk_chain = self.duplicate_chain(bind_chain, "fk")
-            ik_chain = self.duplicate_chain(bind_chain, "ik") if self.build_ik else []
+            # La cadena IK depende del builder, NO de self.build_ik. Si
+            # dependiera del flag, bastaria que alguien se saltase
+            # _setup_ik_builder() para tener cadena IK y ningun modulo que la
+            # monte: exactamente el AttributeError sobre None que daba antes.
+            ik_chain = self.duplicate_chain(bind_chain, "ik") if self.ik_builder else []
 
             # 3.3 Las tres cadenas cuelgan del ball bind (mismos valores locales)
             cmds.parent(bind_chain[0], attach)
@@ -330,10 +312,10 @@ class ToesModule(fingers_module.FingersModule):
             # 3.6 Setup IK
             ik_ctrl, ik_handle = (None, None)
             if ik_chain:
-                ik_ctrl, ik_handle = self.create_finger_ik(ik_chain, attach,
-                                                           toe_name,
-                                                           parent_grp=ik_grp,
-                                                           curl_normal=curl_normal)
+                ik_ctrl, ik_handle = self.ik_builder.build_finger(ik_chain, attach,
+                                                                  toe_name,
+                                                                  parent_grp=ik_grp,
+                                                                  curl_normal=curl_normal)
                 if ik_ctrl is None:
                     cmds.delete(ik_chain[0])
                     ik_chain = []

@@ -54,24 +54,27 @@ class SpineGuides(object):
         
 class HorseSpineGuides(object):
     """
-    Guies de l espina del quadrupede: 4 joints de la grupa a la creu.
-
-    Es mantenen els noms "root" i "chest" perque el hip_module, el
-    chest_module i el neck fan servir aquestes guies.
+    Guies de l espina del quadrupede: dos joints, root (grupa) i end (creu).
+    La curva, el spline IK, els clusters i els controls els crea
+    horse_spine.HorseSpine al build.
     """
-    def __init__(self, names=("root", "spine_lumbar", "spine_thoracic", "chest"),
-                 positions=((0, 3, -15), (0, 2.5, -6.5), (0, 2.5, 2), (0, 3, 11))):
-        self.names = names
-        self.positions = positions
+    def __init__(self, root_name="spine_root", end_name="spine_end",
+                 root_pos=(0, 3, -15), end_pos=(0, 3, 11)):
+        self.root_name = root_name
+        self.end_name = end_name
+        self.root_pos = root_pos
+        self.end_pos = end_pos
         self.guides_group = None
 
     def spine_guides(self):
         cmds.select(clear=True)
-        joints = []
-        for name, pos in zip(self.names, self.positions):
-            joints.append(cmds.joint(p=pos, name=name))   #cada joint penja de l anterior
+        root = cmds.joint(p=self.root_pos, name=self.root_name)
+        end = cmds.joint(p=self.end_pos, name=self.end_name)   #fill del root
 
-        self.guides_group = cmds.group(joints[0], n="spine_guides_GRP")
+        cmds.joint(root, edit=True, oj="xyz", sao="yup", ch=True, zso=True)
+        cmds.setAttr(f"{end}.jointOrient", 0, 0, 0)
+
+        self.guides_group = cmds.group(root, n="spine_guides_GRP")
         cmds.select(clear=True)
         return self.guides_group
 
@@ -117,6 +120,28 @@ class NeckGuides(object):
         
         cmds.select(clear = True)
         
+class HorseNeckGuides(object):
+    """
+    Guies del coll del caball: 3 joints en cadena (base, mig i final).
+    Al build (horse_neck.HorseNeck) s hi afegeixen els joints intermedis.
+    """
+    def __init__(self, names=("neck_root", "neck_mid", "neck_end"),
+                 positions=((0, 3, 12), (0, 10, 17), (0, 17, 21))):
+        self.names = names
+        self.positions = positions
+        self.guides_group = None
+
+    def neck_guides(self):
+        cmds.select(clear=True)
+        joints = [cmds.joint(p=pos, n=name) for name, pos in zip(self.names, self.positions)]
+
+        cmds.joint(joints[0], e=True, oj="xyz", sao="yup", ch=True, zso=True)
+        cmds.setAttr(f"{joints[-1]}.jointOrient", 0, 0, 0)
+
+        self.guides_group = cmds.group(joints[0], n="neck_guides_GRP")
+        cmds.select(clear=True)
+        return self.guides_group
+
 ########################################################################
 #LIMB
 ########################################################################
@@ -416,7 +441,7 @@ class CharacterGuides(object):
         spine_instance.spine_guides()
 
         #Crea les guies del coll
-        neck_instance = NeckGuides("neck_root","neck_end",(0, 3, 11), (0, 20, 23))
+        neck_instance = HorseNeckGuides()   #neck_root -> neck_mid -> neck_end
         neck_instance.neck_guides()
 
 

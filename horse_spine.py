@@ -2,28 +2,32 @@
 """
 horse_spine.py - Espina dorsal para caballo (Maya 2026, Python 3)
 
-Rig:
-  - Guías (locators) de grupa a cruz, editables antes de construir.
-  - Cadena de N joints repartidos por longitud de arco (X hacia delante, Y arriba).
-  - Spline IK sobre curva skineada a 3 drivers (hip / mid / chest).
-  - Advanced Twist con los drivers de hip y chest.
-  - FK por encima del IK: COG > fk01 > fk02 > chest.  mid sigue a hip+chest.
+Rig (completament IK):
+  - Dues guies (root i end) creades al guides_module.
+  - Curva recta de root a end, de grado 3 con 2 spans = 5 CVs:
+        cv0 hip | cv1 hipTangent | cv2 mid | cv3 chestTangent | cv4 chest
+  - Un cluster por CV (en systems_GRP) y un control encima de cada cluster
+    (GRP > SPC > OFF > SDK > CTRL) con parentConstraint control -> cluster.
+  - Jerarquía:  COG > hip   > hipTangent
+                COG > chest > chestTangent
+                COG > mid   (su SPC sigue 50% a hip y chest)
+  - Spline IK con Advanced Twist (controles hip y chest).
   - Stretch con compensación de escala global (atributo en chest_CTRL).
   - pelvis_JNT y chest_JNT fuera de la cadena spline.
 
 Integració amb l autorig (build_module):
-  - guide_names: fa servir els joints de guia de CharacterGuides
-    (root, spine_lumbar, spine_thoracic, chest) en lloc dels locators propis.
+  - guide_names: els dos joints de guia de CharacterGuides (spine_root, spine_end).
+    Aquest modul NO crea guies: les crea guides_module.HorseSpineGuides.
   - root_instance: els joints van a <rig>_rig_GRP i els controls penjen del
     body_CTL (que fa de COG, aixi no es crea un COG duplicat).
   - La mida dels controls s escala segons la llargada real de l espina.
   - attach_control(): fa que chestFix_CTL / localHip_CTL segueixin l espina.
 
-Uso standalone:
-    import horse_spine
+Uso:
+    import guides_module, horse_spine
+    guides_module.HorseSpineGuides().spine_guides()   # guies
     spine = horse_spine.HorseSpine(name="spine", num_joints=9)
-    spine.build_guides()   # coloca las guías en el caballo
-    spine.build()          # construye el rig
+    spine.build()                                      # rig
 """
 import maya.cmds as cmds
 import maya.api.OpenMaya as om2
@@ -31,14 +35,10 @@ import maya.api.OpenMaya as om2
 
 class HorseSpine(object):
 
-    GUIDE_NAMES = ("hip", "lumbar", "thoracic", "chest")
-    # Caballo mirando a +Z, en cm (grupa atrás, cruz delante)
-    GUIDE_DEFAULTS = (
-        (0.0, 150.0, -60.0),
-        (0.0, 147.0, -25.0),
-        (0.0, 150.0, 15.0),
-        (0.0, 158.0, 50.0),
-    )
+    # Guies per defecte (joints creats per guides_module.HorseSpineGuides)
+    DEFAULT_GUIDES = ("spine_root", "spine_end")
+    # Llargada per a la qual estan pensats els radis dels controls (~110 cm)
+    REFERENCE_LENGTH = 110.0
     STACK = ("SPC", "OFF", "SDK")   # GRP > SPC > OFF > SDK > CTRL
     CTRL_SUFFIX = "CTRL"
 
@@ -46,14 +46,14 @@ class HorseSpine(object):
                  guide_names=None, root_instance=None, cog_parent=None):
         if num_joints < 3:
             raise ValueError("num_joints debe ser >= 3")
-        if guide_names is not None and len(guide_names) != len(self.GUIDE_NAMES):
-            raise ValueError("guide_names necesita %d guias (grupa -> cruz)"
-                             % len(self.GUIDE_NAMES))
+        guide_names = tuple(guide_names or self.DEFAULT_GUIDES)
+        if len(guide_names) != 2:
+            raise ValueError("guide_names necesita 2 guias: (root, end)")
         self.name = name
         self.num_joints = num_joints
         self.up = om2.MVector(*up_vector)
 
-        #Guies externes (joints de CharacterGuides). Si es None, locators propis.
+        #Guies (root, end) creades al guides_module
         self.guide_names = guide_names
         self.root_instance = root_instance
 
@@ -67,36 +67,15 @@ class HorseSpine(object):
         self.scale = 1.0
 
     # ------------------------------------------------------------------ #
-    # GUIAS
+    # GUIES (nomes es llegeixen; es creen al guides_module)
     # ------------------------------------------------------------------ #
-    def build_guides(self):
-        grp_name = "%s_guides_GRP" % self.name
-        if cmds.objExists(grp_name):
-            cmds.warning("Las guías ya existen: %s" % grp_name)
-            return grp_name
-        grp = cmds.createNode("transform", name=grp_name)
-        for g, pos in zip(self.GUIDE_NAMES, self.GUIDE_DEFAULTS):
-            loc = cmds.spaceLocator(name="%s_%s_GUIDE" % (self.name, g))[0]
-            cmds.setAttr(loc + ".localScale", 5, 5, 5)
-            cmds.xform(loc, ws=True, t=pos)
-            cmds.parent(loc, grp)
-        return grp
-
     def _guide_positions(self):
-        if self.guide_names:
-            missing = [g for g in self.guide_names if not cmds.objExists(g)]
-            if missing:
-                raise RuntimeError("[HorseSpine] Falten guies: %s" % missing)
-            return [cmds.xform(g, q=True, ws=True, t=True) for g in self.guide_names]
-
-        positions = []
-        for g, default in zip(self.GUIDE_NAMES, self.GUIDE_DEFAULTS):
-            node = "%s_%s_GUIDE" % (self.name, g)
-            if cmds.objExists(node):
-                positions.append(cmds.xform(node, q=True, ws=True, t=True))
-            else:
-                positions.append(default)
-        return positions
+        missing = [g for g in self.guide_names if not cmds.objExists(g)]
+        if missing:
+            raise RuntimeError("[HorseSpine] Falten guies: %s. Crea-les amb "
+                               "guides_module abans del build." % missing)
+        return [om2.MVector(*cmds.xform(g, q=True, ws=True, t=True))
+                for g in self.guide_names]
 
     # ------------------------------------------------------------------ #
     # HELPERS
@@ -186,22 +165,23 @@ class HorseSpine(object):
         cmds.setAttr(sys_grp + ".inheritsTransform", 0)
         cmds.setAttr(sys_grp + ".visibility", 0)
 
-        # --- Curva por las guías, reconstruida uniforme ------------------
-        crv = cmds.curve(d=3, ep=positions, name=n + "_ik_CRV")
-        cmds.rebuildCurve(crv, ch=False, rpo=True, rt=0, end=1, kr=0,
-                          kcp=False, kep=True, kt=False, s=4, d=3)
-        crv = cmds.parent(crv, sys_grp)[0]
+        # --- Curva de 5 CVs (grau 3, 2 spans) -----------------------------
+        # Recta de root a end amb els CVs repartits a parts iguals:
+        # hip, tangent hip, mid, tangent chest, chest.
+        root_pos, end_pos = positions
+        if (end_pos - root_pos).length() < 0.0001:
+            raise RuntimeError("[HorseSpine] root i end estan al mateix punt")
+        cv_pos = [root_pos + (end_pos - root_pos) * (k / 4.0) for k in range(5)]
+
+        crv = cmds.curve(d=3, p=[(p.x, p.y, p.z) for p in cv_pos], name=n + "_ik_CRV")
         fn, crv_shape = self._curve_fn(crv)
         total = fn.length()
 
-        #Els radis estan pensats per a una espina de ~110 cm (GUIDE_DEFAULTS).
+        #Els radis estan pensats per a una espina de ~110 cm.
         #Si l escena te una altra escala, els controls s adapten.
-        ref = sum((om2.MVector(*self.GUIDE_DEFAULTS[i + 1]) -
-                   om2.MVector(*self.GUIDE_DEFAULTS[i])).length()
-                  for i in range(len(self.GUIDE_DEFAULTS) - 1))
-        self.scale = total / ref if ref > 0 else 1.0
+        self.scale = total / self.REFERENCE_LENGTH
 
-        # --- Puntos y matrices de la cadena ------------------------------
+        # --- Punts i matrius de la cadena ---------------------------------
         pts = []
         for i in range(self.num_joints):
             p, _ = self._point_at_length(fn, total * i / float(self.num_joints - 1))
@@ -210,10 +190,6 @@ class HorseSpine(object):
         for i, p in enumerate(pts):
             aim = (pts[i + 1] - p) if i < len(pts) - 1 else (p - pts[i - 1])
             mats.append(self._aim_matrix(p, aim))
-
-        mid_pos, mid_tan = self._point_at_length(fn, total * 0.5)
-        p13, _ = self._point_at_length(fn, total / 3.0)
-        p23, _ = self._point_at_length(fn, total * 2.0 / 3.0)
 
         # --- Joints ------------------------------------------------------
         joints = []
@@ -226,41 +202,40 @@ class HorseSpine(object):
         pelvis_jnt = self._joint(n + "_pelvis_JNT", mats[0], jnts_grp, 3.0)
         chest_jnt = self._joint(n + "_chest_JNT", mats[-1], joints[-1], 3.0)
 
+        # --- Clusters (un per CV) -----------------------------------------
+        cv_names = ["hip", "hipTangent", "mid", "chestTangent", "chest"]
+        clusters = {}
+        for k, key in enumerate(cv_names):
+            handle = cmds.cluster("%s.cv[%d]" % (crv, k), name="%s_%s_CLS" % (n, key))[1]
+            clusters[key] = cmds.parent(handle, sys_grp)[0]
+        crv = cmds.parent(crv, sys_grp)[0]
+        fn, crv_shape = self._curve_fn(crv)
+
         # --- Controles ---------------------------------------------------
         if self.cog_parent and cmds.objExists(self.cog_parent):
             #El body_CTL de l autorig ja fa de COG: no se n crea un altre
             cog = {"ctrl": ctrls_grp}
         else:
-            cog = self._ctrl_stack(n + "_COG", pts[0], ctrls_grp, 45.0, (0, 1, 0), 22)
-        hip = self._ctrl_stack(n + "_hip", pts[0], cog["ctrl"], 28.0, (0, 0, 1), 17)
-        fk1 = self._ctrl_stack(n + "_fk01", p13, cog["ctrl"], 24.0, (0, 0, 1), 18)
-        fk2 = self._ctrl_stack(n + "_fk02", p23, fk1["ctrl"], 24.0, (0, 0, 1), 18)
-        chest = self._ctrl_stack(n + "_chest", pts[-1], fk2["ctrl"], 28.0, (0, 0, 1), 17)
-        mid = self._ctrl_stack(n + "_mid", mid_pos, cog["ctrl"], 20.0, (0, 0, 1), 20)
+            cog = self._ctrl_stack(n + "_COG", cv_pos[0], ctrls_grp, 45.0, (0, 1, 0), 22)
+
+        hip = self._ctrl_stack(n + "_hip", cv_pos[0], cog["ctrl"], 28.0, (0, 0, 1), 17)
+        chest = self._ctrl_stack(n + "_chest", cv_pos[4], cog["ctrl"], 28.0, (0, 0, 1), 17)
+        mid = self._ctrl_stack(n + "_mid", cv_pos[2], cog["ctrl"], 22.0, (0, 0, 1), 20)
+
+        # Tangents: sota el control principal mes proper
+        hip_tan = self._ctrl_stack(n + "_hipTangent", cv_pos[1], hip["ctrl"], 16.0, (0, 0, 1), 18)
+        chest_tan = self._ctrl_stack(n + "_chestTangent", cv_pos[3], chest["ctrl"], 16.0, (0, 0, 1), 18)
+
+        # El mid segueix a mitges hip i chest (es pot animar a sobre)
         cmds.parentConstraint(hip["ctrl"], chest["ctrl"], mid["spc"], mo=True,
                               name=n + "_mid_SPC_PAC")
 
-        # --- Drivers de la curva -----------------------------------------
-        hip_drv = self._joint(n + "_hip_DRV", mats[0], hip["ctrl"], 4.0)
-        mid_drv = self._joint(n + "_mid_DRV", self._aim_matrix(mid_pos, mid_tan),
-                              mid["ctrl"], 4.0)
-        chest_drv = self._joint(n + "_chest_DRV", mats[-1], chest["ctrl"], 4.0)
-        for d in (hip_drv, mid_drv, chest_drv):
-            cmds.setAttr(d + ".drawStyle", 2)
-
-        skin = cmds.skinCluster([hip_drv, mid_drv, chest_drv], crv, tsb=True,
-                                mi=3, name=n + "_ik_SKC")[0]
-        cmds.setAttr(skin + ".normalizeWeights", 0)
-        num_cvs = cmds.getAttr(crv_shape + ".spans") + cmds.getAttr(crv_shape + ".degree")
-        for i in range(num_cvs):
-            t = i / float(num_cvs - 1)
-            if t <= 0.5:
-                w = (1.0 - 2.0 * t, 2.0 * t, 0.0)
-            else:
-                w = (0.0, 2.0 - 2.0 * t, 2.0 * t - 1.0)
-            cmds.skinPercent(skin, "%s.cv[%d]" % (crv, i),
-                             tv=[(hip_drv, w[0]), (mid_drv, w[1]), (chest_drv, w[2])])
-        cmds.setAttr(skin + ".normalizeWeights", 1)
+        # --- Control -> cluster --------------------------------------------
+        ctrl_by_cv = {"hip": hip, "hipTangent": hip_tan, "mid": mid,
+                      "chestTangent": chest_tan, "chest": chest}
+        for key in cv_names:
+            cmds.parentConstraint(ctrl_by_cv[key]["ctrl"], clusters[key], mo=True,
+                                  name="%s_%s_CLS_PAC" % (n, key))
 
         # --- Spline IK + Advanced Twist ----------------------------------
         ik = cmds.ikHandle(name=n + "_IKH", sj=joints[0], ee=joints[-1],
@@ -273,8 +248,8 @@ class HorseSpine(object):
         cmds.setAttr(ik + ".dWorldUpAxis", 0)        # +Y
         cmds.setAttr(ik + ".dWorldUpVector", 0, 1, 0, type="double3")
         cmds.setAttr(ik + ".dWorldUpVectorEnd", 0, 1, 0, type="double3")
-        cmds.connectAttr(hip_drv + ".worldMatrix[0]", ik + ".dWorldUpMatrix")
-        cmds.connectAttr(chest_drv + ".worldMatrix[0]", ik + ".dWorldUpMatrixEnd")
+        cmds.connectAttr(hip["ctrl"] + ".worldMatrix[0]", ik + ".dWorldUpMatrix")
+        cmds.connectAttr(chest["ctrl"] + ".worldMatrix[0]", ik + ".dWorldUpMatrixEnd")
 
         # --- Stretch con escala global -----------------------------------
         cmds.addAttr(chest["ctrl"], ln="stretch", at="double",
@@ -305,8 +280,12 @@ class HorseSpine(object):
             cmds.connectAttr(mdl + ".output", j + ".translateX")
 
         # --- Pelvis y pecho fuera del spline -----------------------------
+        # pelvis i pit segueixen NOMES els seus controls (posicio i rotacio).
+        # El pit abans nomes rotava amb el control i la posicio la treia del
+        # final del spline, que es desplaca una mica quan es mou el mid:
+        # per aixo les cames de davant es movien.
         cmds.parentConstraint(hip["ctrl"], pelvis_jnt, mo=True, name=n + "_pelvis_PAC")
-        cmds.orientConstraint(chest["ctrl"], chest_jnt, mo=True, name=n + "_chest_ORC")
+        cmds.parentConstraint(chest["ctrl"], chest_jnt, mo=True, name=n + "_chest_PAC")
 
         # --- Integracio amb l autorig -------------------------------------
         if self.root_instance is not None:
@@ -316,18 +295,14 @@ class HorseSpine(object):
         if self.cog_parent and cmds.objExists(self.cog_parent):
             ctrls_grp = cmds.parent(ctrls_grp, self.cog_parent)[0]
 
-        # --- Limpieza ----------------------------------------------------
-        if not self.guide_names:
-            guides = n + "_guides_GRP"
-            if cmds.objExists(guides):
-                cmds.setAttr(guides + ".visibility", 0)
         cmds.select(cog["ctrl"])
 
         self.data = {
             "module": module, "joints": joints, "pelvis": pelvis_jnt,
             "chest_jnt": chest_jnt, "ik": ik, "curve": crv,
-            "controls": {"cog": cog, "hip": hip, "fk01": fk1, "fk02": fk2,
-                         "chest": chest, "mid": mid},
+            "clusters": clusters,
+            "controls": {"cog": cog, "hip": hip, "hipTangent": hip_tan,
+                         "mid": mid, "chestTangent": chest_tan, "chest": chest},
         }
         return self.data
 
@@ -377,10 +352,3 @@ class HorseSpine(object):
                                     name="%s_follow_PAC" % node)[0]
         print("[HorseSpine] %s segueix %s (via %s)" % (ctl, driver, node))
         return cns
-
-
-if __name__ == "__main__":
-    spine = HorseSpine(name="spine", num_joints=9)
-    spine.build_guides()
-    # Coloca las guías y después:
-    # spine.build()

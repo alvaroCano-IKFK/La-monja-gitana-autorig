@@ -22,6 +22,7 @@ import spaceSwitching_module
 import headSpace_module
 import curvature_module
 import back_legs_module
+import horse_neck
 
 
 
@@ -39,6 +40,7 @@ class BuildRig(object):
 
         # 0. CONSTRUIR BODY
         self.body_rig = body_module.BodyModule(
+                root_guide="spine_root",   # la guia "root" del biped ja no existeix
                 rig_name="Character",
                 root_instance=self.root_rig
             )    
@@ -50,7 +52,7 @@ class BuildRig(object):
         self.spine_rig = horse_spine.HorseSpine(
                 name="Character_spine",
                 num_joints=9,
-                guide_names=("root", "spine_lumbar", "spine_thoracic", "chest"),
+                guide_names=("spine_root", "spine_end"),
                 root_instance=self.root_rig
             )
         self.spine_data = self.spine_rig.build()
@@ -60,6 +62,20 @@ class BuildRig(object):
         # l stretch estigui apagat.
         self.spine_chest = self.spine_data["chest_jnt"]   # cames de davant
         self.spine_pelvis = self.spine_data["pelvis"]     # pates del darrere
+
+        # 2. CONSTRUIR COLL (ribbon NURBS + uvPin, 3 controls).
+        #    La base segueix el pit de l espina
+        self.horse_neck_rig = horse_neck.HorseNeck(
+                root_guide="neck_root",
+                mid_guide="neck_mid",
+                end_guide="neck_end",
+                rig_name="Character",
+                v_patches=10,
+                u_patches=2,
+                parent_joint=self.spine_chest,
+                root_instance=self.root_rig
+            )
+        self.horse_neck_rig.build()
 
         # ---------------------------------------------------------------
         # CHEST / NECK / HIP DEL BIPED: DESACTIVATS PER AL QUADRUPEDE

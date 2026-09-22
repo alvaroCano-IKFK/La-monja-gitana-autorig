@@ -693,6 +693,44 @@ class EyebrowSkullGuides(object):
         cmds.select(clear=True)
         return self.guides_group
 
+class NoseGuides(object):
+    """
+    Crea les guies del nas.
+
+    """
+
+    def __init__(self, nose_root, nose_tip, root_pos=(0, 24, 10), tip_pos=(0, 24, 12)):
+        self.nose_root = nose_root
+        self.nose_tip = nose_tip
+        self.root_pos = root_pos
+        self.tip_pos = tip_pos
+        self.guides_group = None
+
+    def nose_guides(self):
+        cmds.select(clear=True)
+
+        # Crea el joint root de les guies del nas
+        root_joint = cmds.joint(p=self.root_pos, name=self.nose_root)
+        if not root_joint:
+            print(f"Error creando la joint: {self.nose_root}")
+            return
+
+        # Crea el joint final de les guies del nas
+        tip_joint = cmds.joint(p=self.tip_pos, name=self.nose_tip)
+        if not tip_joint:
+            print(f"Error creando la joint: {self.nose_tip}")
+            return
+        
+        base_nostril_joint = cmds.joint(p=(0, 156, 11), name="base_nostril_JNT")
+
+        nostril_joint = cmds.joint(p=(0.5, 156, 8), name="nostril_JNT")
+
+        # Crea el grup de les guies del nas
+        self.guides_group = cmds.group(root_joint, base_nostril_joint, nostril_joint, tip_joint, n="nose_guides_GRP")
+        if self.guides_group is None:
+            print("Error al crear el grupo de guías del nas.")
+
+        cmds.select(clear=True)
 
 ##### INSTANCIAS #####
 

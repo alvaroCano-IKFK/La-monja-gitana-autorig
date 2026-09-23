@@ -99,6 +99,12 @@ class Mirror(object):
         types_with_right = sorted({entry["type"] for entry in recipe or []
                                    if entry.get("side") == "R"})
 
+        types_with_right += [
+            module_type
+            for module_type in self._center_types_with_roots(recipe)
+            if module_type not in types_with_right
+        ]
+
         for module_type in types_with_right:
             if not self.mirror_face and module_specs.is_face(module_type):
                 continue
@@ -117,6 +123,31 @@ class Mirror(object):
     # ------------------------------------------------------------------
     # QUE HAY QUE ESPEJAR
     # ------------------------------------------------------------------
+    @staticmethod
+    def _center_types_with_roots(recipe):
+        """
+        Modulos de CENTRO de la receta que aun asi tienen guias que espejar.
+
+        La boca y el nas estan declarados con sides ["C"]: una sola instancia
+        construye los dos lados. Por eso nunca van a tener una entrada de lado
+        "R" en la receta, y el filtro de abajo, que solo mira entradas "R", los
+        dejaba fuera para siempre. Sus guias no se espejaban nunca.
+
+        Aqui se recogen los tipos de la receta que NO pueden tener lado R pero
+        que si declaran mirror_roots. Los brazos y las piernas no entran: esos
+        si pueden tener entrada "R", y espejarlos cuando solo hay lado L
+        dejaria guias sueltas por la escena, que es justo lo que evita el
+        filtro original.
+        """
+        types_in_recipe = {entry.get("type") for entry in recipe or []}
+
+        return sorted(
+            module_type for module_type in types_in_recipe
+            if module_type in module_specs.MODULE_SPECS
+            and "R" not in module_specs.module_sides(module_type)
+            and module_specs.mirror_roots(module_type)
+        )
+
     def _collect_roots(self, recipe):
         """
         Decide la lista de guias raiz a espejar a partir de la receta.
@@ -135,6 +166,11 @@ class Mirror(object):
             # dejar guias sueltas en la escena que luego estorban.
             wanted = sorted({entry["type"] for entry in recipe
                              if entry.get("side") == "R"})
+
+            # Y los de centro que tienen guias fuera del eje (boca, nariz).
+            wanted += [module_type
+                       for module_type in self._center_types_with_roots(recipe)
+                       if module_type not in wanted]
 
         for module_type in wanted:
             if not self.mirror_face and module_specs.is_face(module_type):

@@ -211,9 +211,15 @@ MODULE_SPECS = {
         "face": True,
         # Sin jaw la boca se monta pero no sigue a la mandibula.
         "recommends": ["neck", "jaw"],
-        # Vacio: las guias solo existen en +X y el lado R se saca espejando la
-        # X dentro del modulo. No hace falta ninguna guia R_ de la boca.
-        "mirror_roots": [],
+        # SimpleMouthModule sigue sacando el lado R negando la X de las guias
+        # L, o sea que no NECESITA estas guias R. Se espejan igualmente para
+        # poder ver la boca entera al colocar, que es mas comodo que imaginarse
+        # la mitad que falta.
+        #
+        # Con L_lip_end basta: lip_in01 y lip_in02 cuelgan de ella
+        # (BocaGuides.parent_in_between_to_end) y mirrorJoint se lleva la
+        # jerarquia entera de cada raiz. C_lip_mid no se espeja: esta en X = 0.
+        "mirror_roots": ["L_lip_end"],
         "always": [
             Feature("lip_chain", "Lip Chain"),
             Feature("corners", "Corners"),
@@ -304,14 +310,19 @@ MODULE_SPECS = {
     # Modulo de centro, como "mouth": una sola instancia construye los dos
     # costats. guides_module.NoseGuides nomes crea la guia de l'aleta al
     # costat +X ("L_nose_nostril"); NoseModule mira la X internament per
-    # treure el costat R. Per aixo no cal MIRROR i mirror_roots es buit.
+    # treure el costat R. Per aixo no cal MIRROR, pero es mirallen igualment
+    # per poder veure el nas sencer mentre es col.loquen les guies.
     "nose": {
         "label": "Nose",
         "order": 58,
         "sides": ["C"],
         "face": True,
         "recommends": ["neck"],
-        "mirror_roots": [],
+        # Solo la aleta: es la unica guia del nas que esta fuera del eje.
+        # nose_root, nose_tip y L_nose_nostrilBase estan en X = 0 (esta ultima
+        # a pesar del prefijo "L_"), asi que espejarlas crearia un duplicado
+        # encima del original.
+        "mirror_roots": ["L_nose_nostril"],
         "always": [
             Feature("nose_root", "Nose Root"),
             Feature("tip", "Tip"),

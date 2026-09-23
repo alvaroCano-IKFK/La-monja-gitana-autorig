@@ -1,5 +1,6 @@
 import maya.cmds as cmds
 import controlsLibrary
+import groups_module
 import module_specs
 
 
@@ -25,29 +26,15 @@ class NoseModule(module_specs.FeaturesMixin):
     No rep "side": build_module no en passa cap per aquest modul (com la
     boca), perque una sola crida ja fa els dos costats.
 
-    TODO (pendent, falta groups_module.py per fer-ho be):
-    Els controls d'aquest modul es posicionen amb un cmds.xform manual
-    (namas translate, sense grup pare ni orientacio). NO es aixi com ho fa
-    la resta del rig: eyebrowsModule.py (i probablement tots els altres
-    moduls de cara) creen el control amb controlsLibrary.create_control_
-    from_lib() i despres el passen per:
+    Els controls es creen amb controlsLibrary i despres passen per
+    groups_module.ControlsGroups.create_rig_hierarchy(), que els monta la
+    jerarquia GRP > SPC > OFF > SDK > ANIM > CTRL y coloca el GRP sobre el
+    objetivo. Igual que la resta de moduls de cara.
 
-        self.group_maker = groups_module.ControlsGroups()
-        ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
-
-    create_rig_hierarchy() sembla crear la jerarquia d'offset estandard
-    (grups _OFF/_SDK/etc, per com s'usa) i posicionar/orientar el control
-    contra la GUIA (no contra el joint). Falta veure groups_module.py per
-    saber exactament quins grups crea i que retorna.
-
-    Complicacio especifica del nas: el nostril R no te guia real (es
-    treu invertint la X de "L_nose_nostril" dins d'aquest modul), aixi que
-    create_rig_hierarchy no li pot passar un nom de guia per al costat R
-    directament -- probablement calgui cridar-lo amb la guia L i despres
-    mirallar el grup resultant, pero cal confirmar-ho amb el codi real.
-
-    Quan es tingui groups_module.py, reescriure create_controllers() per
-    seguir aquest mateix patro en lloc del cmds.xform manual d'ara.
+    El nostril R no te guia real, pero si te JOINT: create_nose_joints() ja
+    l'ha creat negant la X de la guia L. Per aixo la jerarquia s'alinea contra
+    els JOINTS i no contra les guies: aixi els dos costats van pel mateix
+    cami i no cal cap cas especial per la R.
     """
 
     def __init__(self, rig_name="rig", root_instance=None, features=None):
@@ -91,6 +78,12 @@ class NoseModule(module_specs.FeaturesMixin):
 
         self.joints = []
         self.controls = []
+
+        self.group_maker = groups_module.ControlsGroups()
+
+        # GRP raiz de cada control, para poder organizarlos al final.
+        self.control_groups = []
+        self.module_group = None
 
     # ------------------------------------------------------------------
     # GUIES
@@ -200,56 +193,63 @@ class NoseModule(module_specs.FeaturesMixin):
     # CONTROLADORS
     # ------------------------------------------------------------------
 
+    def _make_control(self, name, target):
+        """
+        Crea un control i li monta la jerarquia GRP > SPC > OFF > SDK > ANIM.
+
+        L'objectiu es el JOINT, no la guia: el nostril R no te guia pero si
+        joint, i aixi els dos costats fan servir el mateix cami.
+
+        match_rotation=True: el GRP agafa tambe l'orientacio del joint. Ara
+        mateix els joints es creen sense rotacio, o sea que surt identitat,
+        pero si algun dia s'orienten, els controls els seguiran sols.
+        """
+        if not target or not cmds.objExists(target):
+            cmds.warning(f"[Nose] No existeix '{target}'. No creo '{name}'.")
+            return None, None
+
+        control = controlsLibrary.create_control_from_lib(
+            lib_name="circle", final_name=name
+        )
+
+        group = self.group_maker.create_rig_hierarchy(
+            control, target, match_rotation=True, world_space=True
+        )
+
+        self.controls.append(control)
+        self.control_groups.append(group)
+
+        return control, group
+
     def create_controllers(self):
         """
         Crea els controladors: nose_root i nose_tip sempre (son features
         "always"), i els dos nostrils + base_nostril nomes si "nostrils"
-        esta activa. Fa servir la mateixa shape "circle" de la libreria que
-        s'usa a la boca (controlsLibrary.create_control_from_lib).
-        """
-        nose_root_pos = cmds.xform(self.nose_root_jnt, q=True, ws=True, t=True)
-        nose_root_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name="circle",
-            final_name=self.nose_root_ctrl,
-        )
-        cmds.xform(nose_root_ctrl, ws=True, t=nose_root_pos)
-        self.nose_root_ctrl = nose_root_ctrl
-        self.controls.append(nose_root_ctrl)
+        esta activa.
 
-        nose_tip_pos = cmds.xform(self.nose_tip_jnt, q=True, ws=True, t=True)
-        nose_tip_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name="circle",
-            final_name=self.nose_tip_ctrl,
+        Ja no es posicionen amb un cmds.xform solt: cada un porta la seva
+        jerarquia de grups, com la resta del rig. Aixi el control queda amb
+        els canals a zero i hi ha SPC, OFF i SDK lliures per si despres cal
+        penjar-hi space switches, correctius o driven keys.
+        """
+        self.nose_root_ctrl, _ = self._make_control(
+            self.nose_root_ctrl, self.nose_root_jnt
         )
-        cmds.xform(nose_tip_ctrl, ws=True, t=nose_tip_pos)
-        self.nose_tip_ctrl = nose_tip_ctrl
-        self.controls.append(nose_tip_ctrl)
+        self.nose_tip_ctrl, _ = self._make_control(
+            self.nose_tip_ctrl, self.nose_tip_jnt
+        )
 
         if not self.has("nostrils"):
             return self.controls
 
         for side in ("L", "R"):
-            nostril_pos = cmds.xform(self.nostril_jnt[side], q=True, ws=True, t=True)
-
-            nostril_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name="circle",
-                final_name=self.nostril_ctrl[side],
+            self.nostril_ctrl[side], _ = self._make_control(
+                self.nostril_ctrl[side], self.nostril_jnt[side]
             )
-            cmds.xform(nostril_ctrl, ws=True, t=nostril_pos)
 
-            self.nostril_ctrl[side] = nostril_ctrl
-            self.controls.append(nostril_ctrl)
-
-        base_nostril_pos = cmds.xform(self.base_nostril_jnt, q=True, ws=True, t=True)
-
-        base_nostril_ctrl = controlsLibrary.create_control_from_lib(
-            lib_name="circle",
-            final_name=self.base_nostril_ctrl,
+        self.base_nostril_ctrl, _ = self._make_control(
+            self.base_nostril_ctrl, self.base_nostril_jnt
         )
-        cmds.xform(base_nostril_ctrl, ws=True, t=base_nostril_pos)
-
-        self.base_nostril_ctrl = base_nostril_ctrl
-        self.controls.append(base_nostril_ctrl)
 
         return self.controls
 
@@ -313,5 +313,25 @@ class NoseModule(module_specs.FeaturesMixin):
         self.duplicate_nostril_joints()
         self.create_controllers()
         self.constraint_joints_to_controllers()
+        self.organize()
 
         return self.joints, self.controls
+
+    def organize(self):
+        """
+        Recull els GRP dels controls sota un grup del modul, per no deixar-los
+        solts a l'arrel de l'escena.
+        """
+        group_name = f"{self.center_prefix}nose_GRP"
+
+        existing = [group for group in self.control_groups
+                    if group and cmds.objExists(group)]
+        if not existing:
+            return None
+
+        if cmds.objExists(group_name):
+            cmds.delete(group_name)
+
+        self.module_group = cmds.group(existing, n=group_name)
+
+        return self.module_group

@@ -188,6 +188,19 @@ class Window(QtWidgets.QDialog):
             pressed_bg=self.COLOR_PRESSED_BG,
         ))
 
+    def compact_button(self, button, width=90):
+        """
+        Boto petit, per als que van sota l arbre de moduls (GUIDES, MIRROR).
+        Es el mateix estil que general_style pero amb la lletra i el padding
+        reduits, en comptes de repetir el replace del CSS a cada boto.
+        """
+        button.setMinimumHeight(24)
+        button.setFixedWidth(width)
+        button.setStyleSheet(button.styleSheet()
+                             .replace("font-size: 13px;", "font-size: 11px;")
+                             .replace("padding-top: 7px;", "padding-top: 3px;")
+                             .replace("padding-bottom: 7px;", "padding-bottom: 3px;"))
+
     def scrollbar_css(self):
         """
         Barra de desplacament fina i del color de la finestra. La de Maya per
@@ -377,8 +390,13 @@ class Window(QtWidgets.QDialog):
         self.import_btn = QtWidgets.QPushButton("IMPORT GUIDES")
         self.general_style(self.import_btn)
 
+        #MIRROR ja no viu a "1. Data management": ha baixat al costat de
+        #GUIDES, que es amb el que es fa servir (crear guies -> espejar-les).
         self.mirror_btn = QtWidgets.QPushButton("MIRROR")
         self.general_style(self.mirror_btn)
+        self.compact_button(self.mirror_btn)
+        self.mirror_btn.setToolTip("Espeja les guies L cap a R dels moduls que "
+                                   "tenen costat R a l arbre.")
 
         #-------------------------------------------------
         # 2. Moduls
@@ -417,18 +435,41 @@ class Window(QtWidgets.QDialog):
             selected_bg=self.COLOR_SELECTED_BG,
         ) + self.scrollbar_css())
 
+        #Checkbox per posar tots els moduls de cop, en comptes d anar-los
+        #afegint un a un des del panell lateral.
+        self.all_modules_check = QtWidgets.QCheckBox("Tots els moduls")
+        self.all_modules_check.setToolTip(
+            "Afegeix tots els moduls a l arbre amb les seves features per "
+            "defecte. En desmarcar-la, buida l arbre.")
+        self.all_modules_check.setStyleSheet("""
+            QCheckBox {{
+                font-family: 'Georgia', serif;
+                font-size: 12px;
+                color: {accent};
+                background-color: transparent;
+                spacing: 6px;
+            }}
+            QCheckBox::indicator {{
+                width: 12px;
+                height: 12px;
+                border: 1px solid {border};
+                border-radius: 2px;
+                background-color: {panel_bg};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {accent};
+            }}
+        """.format(accent=self.COLOR_ACCENT,
+                   border=self.COLOR_BORDER,
+                   panel_bg=self.COLOR_PANEL_BG))
+
         #Boto de guies, petit, sota l arbre. Crea nomes les guies dels moduls
         #que hi ha a l arbre (mira create_guides).
         self.guides_btn = QtWidgets.QPushButton("GUIDES")
         self.general_style(self.guides_btn)
-        self.guides_btn.setMinimumHeight(24)
-        self.guides_btn.setFixedWidth(90)
+        self.compact_button(self.guides_btn)
         self.guides_btn.setToolTip("Crea les guies dels moduls de l arbre. "
                                    "Les que ja existeixen no es toquen.")
-        self.guides_btn.setStyleSheet(self.guides_btn.styleSheet().replace(
-            "font-size: 13px;", "font-size: 11px;").replace(
-            "padding-top: 7px;", "padding-top: 3px;").replace(
-            "padding-bottom: 7px;", "padding-bottom: 3px;"))
 
         #Petita pestanyeta lateral per desplegar/plegar el panell d afegir moduls
         self.add_panel_tab_btn = QtWidgets.QPushButton("▸")
@@ -627,7 +668,12 @@ class Window(QtWidgets.QDialog):
         imp_exp_layout.addWidget(self.import_btn)
         self.data_title[1].addLayout(imp_exp_layout)
 
-        self.data_title[1].addWidget(self.mirror_btn)
+        all_modules_layout = QtWidgets.QHBoxLayout()
+        all_modules_layout.setContentsMargins(2, 0, 0, 0)
+        all_modules_layout.addWidget(self.all_modules_check)
+        all_modules_layout.addStretch()
+        self.modules_title[1].addLayout(all_modules_layout)
+
         modules_row_layout = QtWidgets.QHBoxLayout()
         modules_row_layout.setSpacing(5)
         modules_row_layout.addWidget(self.modules_tree)
@@ -638,6 +684,7 @@ class Window(QtWidgets.QDialog):
         guides_row_layout = QtWidgets.QHBoxLayout()
         guides_row_layout.setContentsMargins(0, 0, 0, 0)
         guides_row_layout.addWidget(self.guides_btn)
+        guides_row_layout.addWidget(self.mirror_btn)
         guides_row_layout.addStretch()
         self.modules_title[1].addLayout(guides_row_layout)
 
@@ -894,7 +941,48 @@ class Window(QtWidgets.QDialog):
                 child.setToolTip(0, "Necessita: {}".format(needs))
 
         module_item.setExpanded(True)
+        self._sync_all_modules_check()
         print("Modul afegit: {}".format(module_specs.module_label(module_type)))
+
+    def toggle_all_modules(self, checked):
+        """
+        Marcada: posa tots els moduls a l arbre amb les features per defecte.
+        Desmarcada: buida l arbre.
+
+        Els moduls que ja hi eren no es toquen, aixi que si tenies un Arm amb
+        features a la teva manera, es queda com estava i nomes s afegeixen els
+        que faltaven.
+        """
+        if not checked:
+            self.modules_tree.clear()
+            self.module_rows = []
+            print("[UI] Arbre de moduls buidat.")
+            return
+
+        present = {row["type"] for row in self.module_rows}
+
+        for module_type in module_specs.module_types():
+            if module_type not in present:
+                self.add_module(module_type)
+
+        print("[UI] Tots els moduls a l arbre: {} files.".format(
+            len(self.module_rows)))
+
+    def _sync_all_modules_check(self):
+        """
+        Posa la checkbox d acord amb l arbre sense disparar el seu senyal.
+
+        Sense el blockSignals, marcar-la programaticament tornaria a cridar
+        toggle_all_modules i entrariem en bucle; i desmarcar-la en treure un
+        modul buidaria l arbre sencer, que es just el contrari del que ha
+        demanat l usuari.
+        """
+        present = {row["type"] for row in self.module_rows}
+        complete = present == set(module_specs.module_types())
+
+        self.all_modules_check.blockSignals(True)
+        self.all_modules_check.setChecked(complete)
+        self.all_modules_check.blockSignals(False)
 
     def remove_module_item(self, item):
         """
@@ -910,6 +998,7 @@ class Window(QtWidgets.QDialog):
         module_type = item.data(0, QtCore.Qt.UserRole)
         self.modules_tree.takeTopLevelItem(index)
         self.module_rows = [row for row in self.module_rows if row["item"] is not item]
+        self._sync_all_modules_check()
         print("Modul tret: {}".format(module_type))
 
     # ------------------------------------------------------------------
@@ -1018,6 +1107,8 @@ class Window(QtWidgets.QDialog):
 
             self._apply_row_sides(row, sides)
             self._apply_row_features(row, features)
+
+        self._sync_all_modules_check()
 
         print("[UI] Arbre de moduls restaurat: {} files.".format(
             len(self.module_rows)))
@@ -1192,6 +1283,8 @@ class Window(QtWidgets.QDialog):
         self.builder.build(recipe)
 
     def create_connections(self):
+        self.all_modules_check.toggled.connect(self.toggle_all_modules)
+
         self.guides_btn.clicked.connect(self.create_guides)
         #self.guides_btn02.clicked.connect(lambda: self.character.create_guides())
 

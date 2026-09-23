@@ -301,15 +301,17 @@ MODULE_SPECS = {
     # ja les ha creat -- exactament igual que "arm", "leg" o "eye". Per aixo
     # ha de tenir sides=["L", "R"], no ["C"]; amb ["C"] nomes es crida un
     # cop amb side="C" i busca una guia "nostril_C_GUIDE" que no existeix.
+    # Modulo de centro, como "mouth": una sola instancia construye los dos
+    # costats. guides_module.NoseGuides nomes crea la guia de l'aleta al
+    # costat +X ("L_nose_nostril"); NoseModule mira la X internament per
+    # treure el costat R. Per aixo no cal MIRROR i mirror_roots es buit.
     "nose": {
         "label": "Nose",
         "order": 58,
-        "sides": ["L", "R"],
+        "sides": ["C"],
         "face": True,
         "recommends": ["neck"],
-        # Guia arrel del nostril que cal espejar per tenir el lado R.
-        # Ajusta el nom si a guides_module la guia arrel es diu diferent.
-        "mirror_roots": ["L_nostril_GUIDE"],
+        "mirror_roots": [],
         "always": [
             Feature("nose_root", "Nose Root"),
             Feature("tip", "Tip"),

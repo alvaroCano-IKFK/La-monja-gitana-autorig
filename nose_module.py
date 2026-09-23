@@ -1,7 +1,6 @@
 import maya.cmds as cmds
 import control_library
 import module_specs
-from nodeCreator_module import NodeCreator
 
 
 class NoseModule(module_specs.FeaturesMixin):
@@ -33,7 +32,6 @@ class NoseModule(module_specs.FeaturesMixin):
         self.rig_name = rig_name
         self.root_instance = root_instance
         self.center_prefix = f"C_{self.rig_name}_"
-        self.node_creator = NodeCreator()
 
         # Noms de les guies TAL COM les crea guides_module.NoseGuides.
         # Cap guia de tot el rig porta sufix "_GUIDE". "L_nose_nostrilBase"

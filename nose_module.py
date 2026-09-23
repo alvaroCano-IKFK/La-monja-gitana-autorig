@@ -1,5 +1,5 @@
 import maya.cmds as cmds
-import control_library
+import controlsLibrary
 import module_specs
 
 
@@ -24,6 +24,30 @@ class NoseModule(module_specs.FeaturesMixin):
 
     No rep "side": build_module no en passa cap per aquest modul (com la
     boca), perque una sola crida ja fa els dos costats.
+
+    TODO (pendent, falta groups_module.py per fer-ho be):
+    Els controls d'aquest modul es posicionen amb un cmds.xform manual
+    (namas translate, sense grup pare ni orientacio). NO es aixi com ho fa
+    la resta del rig: eyebrowsModule.py (i probablement tots els altres
+    moduls de cara) creen el control amb controlsLibrary.create_control_
+    from_lib() i despres el passen per:
+
+        self.group_maker = groups_module.ControlsGroups()
+        ctrl_gen = self.group_maker.create_rig_hierarchy(ctrl, guide_name)
+
+    create_rig_hierarchy() sembla crear la jerarquia d'offset estandard
+    (grups _OFF/_SDK/etc, per com s'usa) i posicionar/orientar el control
+    contra la GUIA (no contra el joint). Falta veure groups_module.py per
+    saber exactament quins grups crea i que retorna.
+
+    Complicacio especifica del nas: el nostril R no te guia real (es
+    treu invertint la X de "L_nose_nostril" dins d'aquest modul), aixi que
+    create_rig_hierarchy no li pot passar un nom de guia per al costat R
+    directament -- probablement calgui cridar-lo amb la guia L i despres
+    mirallar el grup resultant, pero cal confirmar-ho amb el codi real.
+
+    Quan es tingui groups_module.py, reescriure create_controllers() per
+    seguir aquest mateix patro en lloc del cmds.xform manual d'ara.
     """
 
     def __init__(self, rig_name="rig", root_instance=None, features=None):
@@ -55,13 +79,15 @@ class NoseModule(module_specs.FeaturesMixin):
             "R": f"R_{self.rig_name}_nostril_dup_JNT",
         }
 
-        # Controladors: un nostril_CTRL per costat, i un base_nostril_CTRL
-        # unic de centre.
+        # Controladors: un nostril_CTRL per costat, un base_nostril_CTRL i
+        # nose_root/nose_tip_CTRL unics de centre.
         self.nostril_ctrl = {
             "L": f"L_{self.rig_name}_nostril_CTRL",
             "R": f"R_{self.rig_name}_nostril_CTRL",
         }
         self.base_nostril_ctrl = f"{self.center_prefix}nostrilBase_CTRL"
+        self.nose_root_ctrl = f"{self.center_prefix}noseRoot_CTRL"
+        self.nose_tip_ctrl = f"{self.center_prefix}noseTip_CTRL"
 
         self.joints = []
         self.controls = []
@@ -176,21 +202,38 @@ class NoseModule(module_specs.FeaturesMixin):
 
     def create_controllers(self):
         """
-        Crea els controladors dels dos nostrils (L i R) i el de
-        base_nostril (de centre, nomes un). Nomes si "nostrils" esta
-        activa. Ajusta els kwargs de create_control() a la teva llibreria
-        real.
+        Crea els controladors: nose_root i nose_tip sempre (son features
+        "always"), i els dos nostrils + base_nostril nomes si "nostrils"
+        esta activa. Fa servir la mateixa shape "circle" de la libreria que
+        s'usa a la boca (controlsLibrary.create_control_from_lib).
         """
+        nose_root_pos = cmds.xform(self.nose_root_jnt, q=True, ws=True, t=True)
+        nose_root_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name="circle",
+            final_name=self.nose_root_ctrl,
+        )
+        cmds.xform(nose_root_ctrl, ws=True, t=nose_root_pos)
+        self.nose_root_ctrl = nose_root_ctrl
+        self.controls.append(nose_root_ctrl)
+
+        nose_tip_pos = cmds.xform(self.nose_tip_jnt, q=True, ws=True, t=True)
+        nose_tip_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name="circle",
+            final_name=self.nose_tip_ctrl,
+        )
+        cmds.xform(nose_tip_ctrl, ws=True, t=nose_tip_pos)
+        self.nose_tip_ctrl = nose_tip_ctrl
+        self.controls.append(nose_tip_ctrl)
+
         if not self.has("nostrils"):
             return self.controls
 
         for side in ("L", "R"):
             nostril_pos = cmds.xform(self.nostril_jnt[side], q=True, ws=True, t=True)
 
-            nostril_ctrl = control_library.create_control(
-                name=self.nostril_ctrl[side],
-                shape="circle",
-                size=1.0,
+            nostril_ctrl = controlsLibrary.create_control_from_lib(
+                lib_name="circle",
+                final_name=self.nostril_ctrl[side],
             )
             cmds.xform(nostril_ctrl, ws=True, t=nostril_pos)
 
@@ -199,10 +242,9 @@ class NoseModule(module_specs.FeaturesMixin):
 
         base_nostril_pos = cmds.xform(self.base_nostril_jnt, q=True, ws=True, t=True)
 
-        base_nostril_ctrl = control_library.create_control(
-            name=self.base_nostril_ctrl,
-            shape="circle",
-            size=1.0,
+        base_nostril_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name="circle",
+            final_name=self.base_nostril_ctrl,
         )
         cmds.xform(base_nostril_ctrl, ws=True, t=base_nostril_pos)
 
@@ -217,11 +259,18 @@ class NoseModule(module_specs.FeaturesMixin):
 
     def constraint_joints_to_controllers(self):
         """
-        Parent constraint dels joints de cada nostril (original + duplicat,
-        si n'hi ha) cap al seu propi controlador, i del joint de
-        base_nostril cap al seu controlador de centre. Nomes si "nostrils"
-        esta activa.
+        Parent constraint de nose_root i nose_tip al seu control (sempre),
+        dels joints de cada nostril (original + duplicat, si n'hi ha) cap
+        al seu propi controlador, i del joint de base_nostril cap al seu
+        controlador de centre (nomes si "nostrils" esta activa).
         """
+        cmds.parentConstraint(
+            self.nose_root_ctrl, self.nose_root_jnt, maintainOffset=True
+        )
+        cmds.parentConstraint(
+            self.nose_tip_ctrl, self.nose_tip_jnt, maintainOffset=True
+        )
+
         if not self.has("nostrils"):
             return
 

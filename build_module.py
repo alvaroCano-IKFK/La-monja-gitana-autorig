@@ -38,13 +38,15 @@ class BuildRig(object):
         self.root_rig.build()
         #self.root_rig.mirrorControls()
 
-        # 0. CONSTRUIR BODY
-        self.body_rig = body_module.BodyModule(
-                root_guide="spine_root",   # la guia "root" del biped ja no existeix
+        # 0. HIP + BODY (COG amb pivot movible)
+        #    Va abans de l espina perque els seus controls pengen del body_CTL
+        self.body_rig = None
+        self.hip_rig = hip_module.HipModule(
+                root_guide="spine_root",
                 rig_name="Character",
                 root_instance=self.root_rig
-            )    
-        self.body_rig.build()   
+            )
+        self.hip_rig.build()
 
 
         # 1. CONSTRUIR ESPINA (quadrupede)
@@ -85,7 +87,6 @@ class BuildRig(object):
         # ---------------------------------------------------------------
         self.chest_rig = None
         self.neck_rig = None
-        self.hip_rig = None
 
         # #CONSTRUIR CHEST
             

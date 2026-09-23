@@ -13,6 +13,8 @@ Rig (completament IK):
                 COG > mid   (su SPC sigue 50% a hip y chest)
   - Spline IK con Advanced Twist (controles hip y chest).
   - Stretch con compensación de escala global (atributo en chest_CTRL).
+  - Los controles cuelgan del body_CTL (COG), que crea hip_module con su
+    pivote movible. build_body=True solo para usar la espina por separado.
   - pelvis_JNT y chest_JNT fuera de la cadena spline.
 
 Integració amb l autorig (build_module):
@@ -43,7 +45,8 @@ class HorseSpine(object):
     CTRL_SUFFIX = "CTRL"
 
     def __init__(self, name="spine", num_joints=9, up_vector=(0, 1, 0),
-                 guide_names=None, root_instance=None, cog_parent=None):
+                 guide_names=None, root_instance=None, cog_parent=None,
+                 build_body=False, body_parent=None):
         if num_joints < 3:
             raise ValueError("num_joints debe ser >= 3")
         guide_names = tuple(guide_names or self.DEFAULT_GUIDES)
@@ -62,6 +65,12 @@ class HorseSpine(object):
         if cog_parent is None and root_instance is not None:
             cog_parent = getattr(root_instance, "body_ctl", None)
         self.cog_parent = cog_parent
+
+        #El body (COG) el crea hip_module. Nomes amb build_body=True el crea
+        #aquest modul (per fer servir l espina sola, fora de l autorig)
+        self.build_body = build_body
+        self.body_parent = body_parent      # None -> local_CTL del root
+        self.body = None
 
         #Es calcula al build a partir de la llargada de la curva
         self.scale = 1.0
@@ -118,9 +127,11 @@ class HorseSpine(object):
         return jnt
 
     def _ctrl_stack(self, name, pos, parent, radius=15.0,
-                    normal=(0, 0, 1), color=17):
+                    normal=(0, 0, 1), color=17, suffix=None):
         radius *= self.scale
-        grp = cmds.createNode("transform", name=name + "_GRP", parent=parent)
+        suffix = suffix or self.CTRL_SUFFIX
+        grp = cmds.createNode("transform", name=name + "_GRP",
+                              **({"parent": parent} if parent else {}))
         cmds.xform(grp, ws=True, t=[pos.x, pos.y, pos.z])
         stack = {"grp": grp}
         last = grp
@@ -128,7 +139,7 @@ class HorseSpine(object):
             last = cmds.createNode("transform", name="%s_%s" % (name, suf),
                                    parent=last)
             stack[suf.lower()] = last
-        ctrl = cmds.circle(name="%s_%s" % (name, self.CTRL_SUFFIX),
+        ctrl = cmds.circle(name="%s_%s" % (name, suffix),
                            nr=normal, r=radius, ch=False)[0]
         ctrl = cmds.parent(ctrl, last, relative=True)[0]
         for shp in cmds.listRelatives(ctrl, shapes=True, fullPath=True) or []:
@@ -139,6 +150,73 @@ class HorseSpine(object):
                          channelBox=False)
         stack["ctrl"] = ctrl
         return stack
+
+    # ------------------------------------------------------------------ #
+    # BODY (COG) AMB PIVOT MOVIBLE
+    # ------------------------------------------------------------------ #
+    def _build_body(self, pos):
+        """
+        local_CTL
+         └ COGPivot_CTRL          el animador el mou per recol.locar el pivot
+           └ COGPivot_NEG         rep la inversa de la MATRIU LOCAL del pivot
+             └ body_CTL           d aqui pengen els controls de l espina
+               └ bodyOut_TRN      -> parentConstraint -> body_JNT
+
+        Moure el pivot no mou res (el NEG ho cancel.la). Rotar o escalar el
+        body ho fa al voltant del punt on s hagi deixat el pivot.
+        No es toquen rotatePivot ni scalePivot, aixi que no hi ha desplacaments
+        rars quan el body esta rotat.
+        """
+        rig = self.root_instance.rig_name if self.root_instance else self.name
+
+        body_ctl_name = "%s_body_CTL" % rig
+        if cmds.objExists(body_ctl_name):
+            cmds.warning("[HorseSpine] %s ja existeix: no es torna a crear."
+                         % body_ctl_name)
+            return {"ctrl": body_ctl_name}
+
+        parent = self.body_parent
+        if parent is None and self.root_instance is not None:
+            parent = getattr(self.root_instance, "localCtl", None)
+        if parent and not cmds.objExists(parent):
+            parent = None
+
+        # Pivot
+        pivot = self._ctrl_stack("%s_COGPivot" % rig, pos, parent,
+                                 22.0, (0, 1, 0), 18)
+
+        # NEG: cancel.la la matriu local del pivot
+        neg = cmds.createNode("transform", name="%s_COGPivot_NEG" % rig,
+                              parent=pivot["ctrl"])
+        inv = cmds.createNode("inverseMatrix", name="%s_COGPivot_IMX" % rig)
+        cmds.connectAttr(pivot["ctrl"] + ".matrix", inv + ".inputMatrix")
+        cmds.connectAttr(inv + ".outputMatrix", neg + ".offsetParentMatrix")
+
+        # Body (COG)
+        body = self._ctrl_stack("%s_body" % rig, pos, neg,
+                                45.0, (0, 1, 0), 17, suffix="CTL")
+
+        # Sortida per al joint: filla del body i en identitat, aixi no li
+        # afecta res del pivot
+        out = cmds.createNode("transform", name="%s_bodyOut_TRN" % rig,
+                              parent=body["ctrl"])
+
+        cmds.select(clear=True)
+        jnt = cmds.joint(name="%s_body_JNT" % rig,
+                         p=[pos.x, pos.y, pos.z],
+                         radius=3.0 * self.scale)
+        cmds.select(clear=True)
+        rig_grp = "%s_rig_GRP" % rig
+        if cmds.objExists(rig_grp):
+            jnt = cmds.parent(jnt, rig_grp)[0]
+        cmds.parentConstraint(out, jnt, mo=True, name="%s_body_PAC" % rig)
+
+        if self.root_instance is not None:
+            self.root_instance.body_ctl = body["ctrl"]
+
+        self.body = {"pivot": pivot, "neg": neg, "ctrl": body["ctrl"],
+                     "stack": body, "out": out, "joint": jnt}
+        return self.body
 
     # ------------------------------------------------------------------ #
     # BUILD
@@ -210,6 +288,12 @@ class HorseSpine(object):
             clusters[key] = cmds.parent(handle, sys_grp)[0]
         crv = cmds.parent(crv, sys_grp)[0]
         fn, crv_shape = self._curve_fn(crv)
+
+        # --- Body (COG) amb pivot movible ---------------------------------
+        if self.build_body:
+            self._build_body(cv_pos[0])
+            if self.body:
+                self.cog_parent = self.body["ctrl"]
 
         # --- Controles ---------------------------------------------------
         if self.cog_parent and cmds.objExists(self.cog_parent):
@@ -301,6 +385,7 @@ class HorseSpine(object):
             "module": module, "joints": joints, "pelvis": pelvis_jnt,
             "chest_jnt": chest_jnt, "ik": ik, "curve": crv,
             "clusters": clusters,
+            "body": self.body,
             "controls": {"cog": cog, "hip": hip, "hipTangent": hip_tan,
                          "mid": mid, "chestTangent": chest_tan, "chest": chest},
         }

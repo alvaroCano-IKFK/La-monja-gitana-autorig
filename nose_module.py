@@ -1,57 +1,106 @@
 import maya.cmds as cmds
 import control_library
-import guides_module
+import module_specs
 from nodeCreator_module import NodeCreator
 
 
-class NoseModule:
+class NoseModule(module_specs.FeaturesMixin):
+    """
+    Modul del nas.
 
-    def __init__(self, rig_name="rig", side="L"):
+    Una UNICA instancia construeix les DOS aletes (nostrils), igual que la
+    boca: guides_module.NoseGuides nomes crea la guia de l'aleta al costat
+    +X ("L_nose_nostril"). Aquest modul llegeix aquesta guia i en treu el
+    costat R invertint la X ell mateix -- no cal passar per MIRROR ni tenir
+    cap guia "R_nose_nostril" a l'escena.
 
-        self.side = side
+    IMPORTANT: la signatura ha de coincidir amb com el crida build_module.py
+    (_build_nose):
+
+        nose_module.NoseModule(
+            rig_name=self.RIG_NAME,
+            root_instance=self.root_rig,
+            features=features,
+        )
+
+    No rep "side": build_module no en passa cap per aquest modul (com la
+    boca), perque una sola crida ja fa els dos costats.
+    """
+
+    def __init__(self, rig_name="rig", root_instance=None, features=None):
+        self._init_features("nose", features)
+
         self.rig_name = rig_name
-        self.prefix = f"{self.side}_{self.rig_name}_"
-        # Prefix de centre: les peces uniques (nose_root, nose_tip,
-        # base_nostril) fan servir "C_" en lloc del side, encara que el
-        # modul s'instancii un cop per L i un cop per R.
+        self.root_instance = root_instance
         self.center_prefix = f"C_{self.rig_name}_"
         self.node_creator = NodeCreator()
 
-        # Noms de les guies (ajusta-ho a la teva convenció real)
-        self.nose_root_guide = f"{self.center_prefix}noseRoot_GUIDE"
-        self.nose_tip_guide = f"{self.center_prefix}noseTip_GUIDE"
-        # base_nostril es una peca central unica entre els dos nostrils:
-        # porta center_prefix (C_), NO side, perque nomes n'hi ha d'haver
-        # un al centre encara que el modul s'instancii per L i per R.
-        self.base_nostril_guide = f"{self.center_prefix}nostrilBase_GUIDE"
-        self.nostril_guide = f"{self.prefix}nostril_GUIDE"
+        # Noms de les guies TAL COM les crea guides_module.NoseGuides.
+        # Cap guia de tot el rig porta sufix "_GUIDE". "L_nose_nostrilBase"
+        # es de centre (X=0) malgrat el prefix "L_" del nom; "L_nose_nostril"
+        # si que es lateral (X>0) i es l'unica guia real de l'aleta.
+        self.nose_root_guide = "nose_root"
+        self.nose_tip_guide = "nose_tip"
+        self.base_nostril_guide = "L_nose_nostrilBase"
+        self.nostril_guide = "L_nose_nostril"
 
         # Noms dels joints definitius
         self.nose_root_jnt = f"{self.center_prefix}noseRoot_JNT"
         self.nose_tip_jnt = f"{self.center_prefix}noseTip_JNT"
         self.base_nostril_jnt = f"{self.center_prefix}nostrilBase_JNT"
-        self.nostril_jnt = f"{self.prefix}nostril_JNT"
-        self.nostril_jnt_dup = f"{self.prefix}nostril_dup_JNT"
+        self.nostril_jnt = {
+            "L": f"L_{self.rig_name}_nostril_JNT",
+            "R": f"R_{self.rig_name}_nostril_JNT",
+        }
+        self.nostril_jnt_dup = {
+            "L": f"L_{self.rig_name}_nostril_dup_JNT",
+            "R": f"R_{self.rig_name}_nostril_dup_JNT",
+        }
 
-        # Controladors: el nostril te el seu (per side), i base_nostril
-        # te el seu propi controlador de centre, NO es penja al root.
-        self.nostril_ctrl = f"{self.prefix}nostril_CTRL"
+        # Controladors: un nostril_CTRL per costat, i un base_nostril_CTRL
+        # unic de centre.
+        self.nostril_ctrl = {
+            "L": f"L_{self.rig_name}_nostril_CTRL",
+            "R": f"R_{self.rig_name}_nostril_CTRL",
+        }
         self.base_nostril_ctrl = f"{self.center_prefix}nostrilBase_CTRL"
 
         self.joints = []
         self.controls = []
 
     # ------------------------------------------------------------------
+    # GUIES
+    # ------------------------------------------------------------------
+
+    def _required_guides(self):
+        """Guies que fan falta segons les features actives."""
+        guides = [self.nose_root_guide, self.nose_tip_guide]
+
+        if self.has("nostrils"):
+            guides += [self.base_nostril_guide, self.nostril_guide]
+
+        return guides
+
+    def _missing_guides(self):
+        return [g for g in self._required_guides() if not cmds.objExists(g)]
+
+    # ------------------------------------------------------------------
     # JOINTS
     # ------------------------------------------------------------------
 
-    def _create_joint_from_guide(self, guide_name, joint_name):
-        """Crea un joint a la posicio d'una guia."""
+    def _create_joint_from_guide(self, guide_name, joint_name, mirror_x=False):
+        """
+        Crea un joint a la posicio d'una guia. Si mirror_x=True, inverteix
+        la component X de la posicio -- aixi es treu el costat R sense que
+        calgui cap guia R_ real a l'escena.
+        """
         if not cmds.objExists(guide_name):
             cmds.warning(f"La guia {guide_name} no existeix.")
             return None
 
         pos = cmds.xform(guide_name, q=True, ws=True, t=True)
+        if mirror_x:
+            pos = [-pos[0], pos[1], pos[2]]
 
         cmds.select(clear=True)
         jnt = cmds.joint(name=joint_name)
@@ -70,49 +119,58 @@ class NoseModule:
             self.nose_tip_guide, self.nose_tip_jnt
         )
 
-        # base_nostril es unic i de centre: si ja el va crear l'altra
-        # instancia del modul (l'altre side), el reutilitzem tal qual.
-        if cmds.objExists(self.base_nostril_jnt):
-            cmds.warning(
-                f"{self.base_nostril_jnt} ja existeix, es reutilitza (joint de centre)."
-            )
-        else:
+        self.joints = [self.nose_root_jnt, self.nose_tip_jnt]
+
+        # Les aletes son opcionals (feature "nostrils"): sense elles nomes hi
+        # ha nose_root i nose_tip.
+        if self.has("nostrils"):
             self.base_nostril_jnt = self._create_joint_from_guide(
                 self.base_nostril_guide, self.base_nostril_jnt
             )
 
-        self.nostril_jnt = self._create_joint_from_guide(
-            self.nostril_guide, self.nostril_jnt
-        )
+            # L es la posicio real de la guia; R surt de mirallar-ne la X.
+            self.nostril_jnt["L"] = self._create_joint_from_guide(
+                self.nostril_guide, self.nostril_jnt["L"], mirror_x=False
+            )
+            self.nostril_jnt["R"] = self._create_joint_from_guide(
+                self.nostril_guide, self.nostril_jnt["R"], mirror_x=True
+            )
 
-        self.joints = [
-            self.nose_root_jnt,
-            self.nose_tip_jnt,
-            self.base_nostril_jnt,
-            self.nostril_jnt,
-        ]
+            self.joints += [
+                self.base_nostril_jnt,
+                self.nostril_jnt["L"],
+                self.nostril_jnt["R"],
+            ]
 
         cmds.select(clear=True)
         return self.joints
 
-    def duplicate_nostril_joint(self):
+    def duplicate_nostril_joints(self):
         """
-        Duplica el joint del nostril mantenint exactament la mateixa posicio.
+        Duplica els dos joints de nostril (L i R) mantenint exactament la
+        mateixa posicio. Nomes si "nostrils" i "nostril_dup" estan actives.
         parentOnly=True evita duplicar fills que pengin del joint original.
         """
-        dup = cmds.duplicate(
-            self.nostril_jnt, name=self.nostril_jnt_dup, parentOnly=True
-        )[0]
+        if not (self.has("nostrils") and self.has("nostril_dup")):
+            return {}
 
-        # Si el duplicat queda penjat com a fill de l'original, el traiem a world
-        parent = cmds.listRelatives(dup, parent=True)
-        if parent:
-            cmds.parent(dup, world=True)
+        for side in ("L", "R"):
+            dup = cmds.duplicate(
+                self.nostril_jnt[side],
+                name=self.nostril_jnt_dup[side],
+                parentOnly=True,
+            )[0]
 
-        self.nostril_jnt_dup = dup
-        self.joints.append(dup)
+            # Si el duplicat queda penjat com a fill de l'original, el
+            # traiem a world.
+            parent = cmds.listRelatives(dup, parent=True)
+            if parent:
+                cmds.parent(dup, world=True)
 
-        return dup
+            self.nostril_jnt_dup[side] = dup
+            self.joints.append(dup)
+
+        return self.nostril_jnt_dup
 
     # ------------------------------------------------------------------
     # CONTROLADORS
@@ -120,42 +178,38 @@ class NoseModule:
 
     def create_controllers(self):
         """
-        Crea el controlador del nostril (per side) i el de base_nostril
-        (de centre, nomes un). Ajusta els kwargs de create_control() a la
-        teva llibreria real.
+        Crea els controladors dels dos nostrils (L i R) i el de
+        base_nostril (de centre, nomes un). Nomes si "nostrils" esta
+        activa. Ajusta els kwargs de create_control() a la teva llibreria
+        real.
         """
-        # Controlador del nostril (per side)
-        nostril_pos = cmds.xform(self.nostril_jnt, q=True, ws=True, t=True)
+        if not self.has("nostrils"):
+            return self.controls
 
-        nostril_ctrl = control_library.create_control(
-            name=self.nostril_ctrl,
-            shape="circle",
-            size=1.0,
-        )
-        cmds.xform(nostril_ctrl, ws=True, t=nostril_pos)
+        for side in ("L", "R"):
+            nostril_pos = cmds.xform(self.nostril_jnt[side], q=True, ws=True, t=True)
 
-        self.nostril_ctrl = nostril_ctrl
-        self.controls.append(nostril_ctrl)
-
-        # Controlador de base_nostril (centre): nomes es crea un cop, si
-        # l'altra instancia del modul (l'altre side) ja el va crear, el
-        # reutilitzem en lloc de duplicar-lo.
-        if cmds.objExists(self.base_nostril_ctrl):
-            cmds.warning(
-                f"{self.base_nostril_ctrl} ja existeix, es reutilitza (control de centre)."
-            )
-        else:
-            base_nostril_pos = cmds.xform(self.base_nostril_jnt, q=True, ws=True, t=True)
-
-            base_nostril_ctrl = control_library.create_control(
-                name=self.base_nostril_ctrl,
+            nostril_ctrl = control_library.create_control(
+                name=self.nostril_ctrl[side],
                 shape="circle",
                 size=1.0,
             )
-            cmds.xform(base_nostril_ctrl, ws=True, t=base_nostril_pos)
+            cmds.xform(nostril_ctrl, ws=True, t=nostril_pos)
 
-            self.base_nostril_ctrl = base_nostril_ctrl
-            self.controls.append(base_nostril_ctrl)
+            self.nostril_ctrl[side] = nostril_ctrl
+            self.controls.append(nostril_ctrl)
+
+        base_nostril_pos = cmds.xform(self.base_nostril_jnt, q=True, ws=True, t=True)
+
+        base_nostril_ctrl = control_library.create_control(
+            name=self.base_nostril_ctrl,
+            shape="circle",
+            size=1.0,
+        )
+        cmds.xform(base_nostril_ctrl, ws=True, t=base_nostril_pos)
+
+        self.base_nostril_ctrl = base_nostril_ctrl
+        self.controls.append(base_nostril_ctrl)
 
         return self.controls
 
@@ -165,35 +219,51 @@ class NoseModule:
 
     def constraint_joints_to_controllers(self):
         """
-        Parent constraint dels dos joints del nostril (original + duplicat)
-        cap al mateix controlador de nostril, i del joint de base_nostril
-        cap al seu propi controlador de centre (no al root).
+        Parent constraint dels joints de cada nostril (original + duplicat,
+        si n'hi ha) cap al seu propi controlador, i del joint de
+        base_nostril cap al seu controlador de centre. Nomes si "nostrils"
+        esta activa.
         """
-        cmds.parentConstraint(
-            self.nostril_ctrl, self.nostril_jnt, maintainOffset=True
-        )
-        cmds.parentConstraint(
-            self.nostril_ctrl, self.nostril_jnt_dup, maintainOffset=True
-        )
+        if not self.has("nostrils"):
+            return
 
-        # base_nostril nomes cal constrenyer-lo un cop; si l'altra
-        # instancia (l'altre side) ja ho ha fet, no ho tornem a fer.
-        existing_constraints = cmds.listRelatives(
-            self.base_nostril_jnt, type="parentConstraint"
-        ) or []
-        if not existing_constraints:
+        for side in ("L", "R"):
             cmds.parentConstraint(
-                self.base_nostril_ctrl, self.base_nostril_jnt, maintainOffset=True
+                self.nostril_ctrl[side], self.nostril_jnt[side], maintainOffset=True
             )
+
+            if self.has("nostril_dup"):
+                cmds.parentConstraint(
+                    self.nostril_ctrl[side], self.nostril_jnt_dup[side],
+                    maintainOffset=True,
+                )
+
+        cmds.parentConstraint(
+            self.base_nostril_ctrl, self.base_nostril_jnt, maintainOffset=True
+        )
 
     # ------------------------------------------------------------------
     # BUILD COMPLET
     # ------------------------------------------------------------------
 
     def build(self):
-        """Executa tot el modul en ordre."""
+        """
+        Executa tot el modul en ordre. Una sola crida construeix L i R.
+
+        Torna None (i avisa) si falta alguna guia -- aixi build_module la
+        pot saltar en lloc de petar, igual que fa amb la boca, el jaw, les
+        celles i els ulls.
+        """
+        missing = self._missing_guides()
+        if missing:
+            cmds.warning(
+                "[Nose] Falten guies ({}). Es salta el nas.".format(
+                    ", ".join(missing))
+            )
+            return None
+
         self.create_nose_joints()
-        self.duplicate_nostril_joint()
+        self.duplicate_nostril_joints()
         self.create_controllers()
         self.constraint_joints_to_controllers()
 

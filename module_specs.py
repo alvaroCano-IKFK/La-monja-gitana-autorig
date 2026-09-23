@@ -294,13 +294,22 @@ MODULE_SPECS = {
 
     # Modulo de centro, como la boca: una instancia construye los dos lados y
     # las guias de las aletas solo existen en +X. mirror_roots vacio por eso.
+    # A diferencia de "mouth", NoseModule NO construeix els dos costats des
+    # d'una sola instancia: fa servir self.side per triar la guia del
+    # nostril (nostril_{side}_GUIDE) i el seu prefix, i nomes reutilitza les
+    # peces de centre (base_nostril) quan l'altra instancia (l'altre side)
+    # ja les ha creat -- exactament igual que "arm", "leg" o "eye". Per aixo
+    # ha de tenir sides=["L", "R"], no ["C"]; amb ["C"] nomes es crida un
+    # cop amb side="C" i busca una guia "nostril_C_GUIDE" que no existeix.
     "nose": {
         "label": "Nose",
         "order": 58,
-        "sides": ["C"],
+        "sides": ["L", "R"],
         "face": True,
         "recommends": ["neck"],
-        "mirror_roots": [],
+        # Guia arrel del nostril que cal espejar per tenir el lado R.
+        # Ajusta el nom si a guides_module la guia arrel es diu diferent.
+        "mirror_roots": ["L_nostril_GUIDE"],
         "always": [
             Feature("nose_root", "Nose Root"),
             Feature("tip", "Tip"),

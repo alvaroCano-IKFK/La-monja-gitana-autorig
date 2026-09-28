@@ -176,6 +176,19 @@ class EyebrowsModule(object):
             "tangent_control_style", self.control_style
         )
 
+        # Giro y tamano de los CVs. Van en la SHAPE, nunca en el transform:
+        # girar o escalar el transform se lleva el pivote, y con el el joint
+        # que sigue al control y los constraints que lo usan de padre.
+        #
+        # 90 en X porque los controles de la libreria estan dibujados en el
+        # plano XZ, tumbados para el cuerpo, y en la cara tienen que mirar al
+        # frente.
+        self.cv_rotation = (0, 90.0, 0.0)
+
+        # Los sub comparten sitio con su principal, asi que si midieran lo
+        # mismo quedarian uno encima de otro y no habria como pincharlos.
+        self.sub_cv_scale = 0.2
+
         # Parametros configurables de la bezier / upCurve
         self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
         self.up_curve_offset = kwargs.get("up_curve_offset", 0.5)
@@ -1249,6 +1262,7 @@ class EyebrowsModule(object):
             lib_name=self.main_control_style,
             final_name=f"{self.prefix}_Main_CTRL",
         )
+        controlsLibrary.transform_shape(main_ctl, rotate=self.cv_rotation)
         main_ctl_gen = self.group_maker.create_rig_hierarchy(
             main_ctl, mid_guide_name
         )
@@ -1299,6 +1313,9 @@ class EyebrowsModule(object):
             sub_ctrl_name = f"{self.prefix}_{label}_CTRL"
             sub_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.corner_control_style, final_name=sub_ctrl_name
+            )
+            controlsLibrary.transform_shape(
+                sub_ctrl, rotate=self.cv_rotation, scale=self.sub_cv_scale
             )
             sub_ctl_gen = self.group_maker.create_rig_hierarchy(
                 sub_ctrl, sub_guide_name
@@ -1364,6 +1381,10 @@ class EyebrowsModule(object):
                 tangent_ctl = controlsLibrary.create_control_from_lib(
                     lib_name=self.tangent_control_style,
                     final_name=tangent_ctl_name,
+                )
+                controlsLibrary.transform_shape(
+                    tangent_ctl, rotate=self.cv_rotation,
+                    scale=self.sub_cv_scale
                 )
 
                 tangent_ctl_gen = self.group_maker.create_rig_hierarchy(

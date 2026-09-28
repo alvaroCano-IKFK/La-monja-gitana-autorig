@@ -29,6 +29,7 @@ import jaw_module
 import eyebrowsModule
 import eyes_module
 import nose_module
+import socket_module
 import progress_module
 import controlsLibrary
 import module_specs
@@ -227,6 +228,7 @@ class BuildRig(object):
             "eyebrow": self._build_eyebrow,
             "eye":     self._build_eye,
             "nose":    self._build_nose,
+            "socket":  self._build_socket,
         }
 
         builder = builders.get(entry["type"])
@@ -554,6 +556,21 @@ class BuildRig(object):
             return None
 
         return nose
+
+    def _build_socket(self, side, features):
+        """Socket del ojo. Un modulo por lado, como el ojo o la ceja."""
+        socket = socket_module.SocketModule(
+            rig_name=self.RIG_NAME,
+            side=side,
+            root_instance=self.root_rig,
+            features=features,
+        )
+
+        # build() comprueba sus guias y avisa si falta alguna.
+        if socket.build() is None:
+            return None
+
+        return socket
 
     def _core_skinning(self):
         skn = skinning_module.SkinningModule(

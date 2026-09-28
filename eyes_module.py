@@ -195,6 +195,24 @@ class EyesModule(module_specs.FeaturesMixin):
         self.styles = {"mainFk": "circleControl",
                        "eyelid":"eyelid",
                        "eyelidSub": "eyelidSub",}
+
+        # Giro y tamano de los CVs. Van en la SHAPE, nunca en el transform:
+        # girar o escalar el transform se lleva el pivote, y con el el joint
+        # que sigue al control y los constraints que lo usan de padre.
+        #
+        # 90 en X porque los controles de la libreria estan dibujados en el
+        # plano XZ, tumbados para el cuerpo, y en la cara tienen que mirar al
+        # frente.
+        self.cv_rotation = (90.0, 0.0, 0.0)
+
+        # Los sub comparten sitio con su principal, asi que si midieran lo
+        # mismo quedarian uno encima de otro y no habria como pincharlos.
+        self.sub_cv_scale = 0.6
+
+        # Tamano de TODOS los controles de este modulo, sobre los CVs. Los de
+        # la libreria estan dibujados para el cuerpo y en la cara salen
+        # enormes. Este es el numero que hay que tocar si siguen sin cuadrar.
+        self.cv_scale = 0.25
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
@@ -698,6 +716,8 @@ class EyesModule(module_specs.FeaturesMixin):
                 lib_name=self.styles["eyelid"],
                 final_name=ctrl_name
             )
+            controlsLibrary.transform_shape(ctrl, rotate=self.cv_rotation,
+                                            scale=self.cv_scale)
             ctrl_grp = self.group_maker.create_rig_hierarchy(
                 ctrl, guide_node, match_rotation=True, world_space=True
             )
@@ -2848,6 +2868,8 @@ class EyesModule(module_specs.FeaturesMixin):
                     lib_name=self.styles["eyelid"],
                     final_name=ctrl_name
                 )
+                controlsLibrary.transform_shape(ctrl, rotate=self.cv_rotation,
+                                                scale=self.cv_scale)
 
                 ctrl_grp = self.group_maker.create_rig_hierarchy(
                     ctrl, joint, match_rotation=True, world_space=True
@@ -2890,6 +2912,10 @@ class EyesModule(module_specs.FeaturesMixin):
                 sub_ctrl = controlsLibrary.create_control_from_lib(
                     lib_name=self.styles["eyelidSub"],
                     final_name=sub_ctrl_name
+                )
+                controlsLibrary.transform_shape(
+                    sub_ctrl, rotate=self.cv_rotation,
+                    scale=self.cv_scale * self.sub_cv_scale
                 )
 
                 sub_ctrl_grp = self.group_maker.create_rig_hierarchy(

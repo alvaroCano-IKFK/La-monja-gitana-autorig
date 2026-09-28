@@ -23,7 +23,9 @@ class JawModule(object):
         self.rig_name = rig_name
         self.root_instance = root_instance
         self.mouth_instances = mouth_instances or []
-        self.styles = {"mainFk": "squareControl"}
+        self.styles = {"mainFk": "squareControl",
+                      "upperJaw": "upperJaw",
+                       "lowerJaw":"lowerJaw" }
         
         self.side = side
         self.prefix = f"{self.side}_{rig_name}"
@@ -1020,7 +1022,7 @@ class JawModule(object):
         #Controles con el local set up
         #UPPER CONTROL 
         jaw_upper_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["upperJaw"],
                 final_name=f"{self.prefix}_jawUpper_CTRL"
             )
         
@@ -1052,7 +1054,7 @@ class JawModule(object):
         
         #LOWER CONTROL
         jaw_lower_ctrl = controlsLibrary.create_control_from_lib(
-                lib_name=self.styles["mainFk"],
+                lib_name=self.styles["lowerJaw"],
                 final_name=f"{self.prefix}_jawLower_CTRL"
             )
 

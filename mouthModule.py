@@ -48,6 +48,10 @@ class SimpleMouthModule(object):
         "02": 0.33,
     }
 
+    # Forma y tamano por defecto cuando una clave no esta en styles.
+    DEFAULT_STYLE = "circleControl"
+    DEFAULT_STYLE_SCALE = 1.0
+
     # Como se llama cada eslabon en cada mitad
     CHAIN_NAMES = {
         "Upper": {"01": "levator", "02": "upperPinch"},
@@ -76,6 +80,76 @@ class SimpleMouthModule(object):
 
         self.sides = sides
         self.control_size = control_size
+
+        # ==========================================================
+        # FORMAS DE LOS CONTROLES
+        # ----------------------------------------------------------
+        # Igual que self.styles de limbs_module: la clave es el papel que
+        # hace el control y el valor es el nombre del JSON de la libreria,
+        # sin la extension. Para ver los que tienes:
+        #
+        #     import controlsLibrary
+        #     controlsLibrary.report_library_sizes()
+        #
+        # Si un nombre no existe en la libreria, create_control_from_lib
+        # avisa y cae a un circulo, asi que una clave mal escrita no rompe
+        # el build pero se ve en el script editor.
+        # "midUpper" y "midLower" van por separado: son dos controles
+        # distintos, uno en cada labio, y antes los dos leian la misma clave
+        # "mid" y salian iguales.
+        self.styles = {
+            "midUpper":   "mouthUpper",
+            "midLower":   "mouthLower",
+            "corner":     "L_lipCorner",
+            "levator":    "mouthUpper",
+            "depresor":   "mouthLower",
+            "upperPinch": "mouthUpper",
+            "lowerPinch": "mouthLower",
+        }
+
+        # Ajuste de tamano por control, multiplicando la escala global del
+        # rig. Va aparte de styles porque una misma forma puede necesitar
+        # tamanos distintos segun donde este: las comisuras suelen pedir algo
+        # mas pequeno que el centro del labio.
+        #
+        # Lo que no este aqui usa DEFAULT_STYLE_SCALE.
+        self.style_scales = {
+            "corner": 0.8,
+        }
+
+        # ==========================================================
+        # DESPLAZAMIENTO DE LOS CVs
+        # ----------------------------------------------------------
+        # Mueve la SHAPE, no el control. Los CVs se apartan del pivote pero el
+        # transform se queda donde esta, con los canales a cero.
+        #
+        # Es lo que hay que hacer aqui: si movieras el control, moverias
+        # tambien su pivote, y con el se irian el joint que lo sigue y los
+        # constraints que lo usan de padre. Asi solo cambia donde ves el dibujo
+        # y puedes separarlo del labio para poder pincharlo sin pelearte con la
+        # malla.
+        #
+        # El labio de arriba sube y el de abajo baja. Las comisuras no llevan
+        # entrada: se quedan sobre el borde, que es donde toca.
+        #
+        # Va en el espacio del CONTROL, no del mundo. Como los controles
+        # heredan la orientacion de su guia, la Y del control sigue el angulo
+        # del labio en vez de ir recta hacia arriba.
+        self.style_cv_offsets = {
+            "midUpper":   (0.0, 1.0, 0.0),
+            "levator":    (0.0, 1.0, 0.0),
+            "upperPinch": (0.0, 1.0, 0.0),
+
+            "midLower":   (0.0, -1.0, 0.0),
+            "depresor":   (0.0, -1.0, 0.0),
+            "lowerPinch": (0.0, -1.0, 0.0),
+        }
+
+        # A True el desplazamiento se multiplica por la escala global del rig,
+        # la misma que aplica controlsLibrary a las shapes. Asi un personaje
+        # mas grande separa los controles proporcionalmente y no se le quedan
+        # pegados al labio.
+        self.scale_cv_offsets = True
 
         # Reparto de la comisura entre las dos mitades de la mandibula.
         # 0.5 = parentConstraint al 50% entre jawUpper y jawLower, que es lo
@@ -193,9 +267,13 @@ class SimpleMouthModule(object):
         return position, rotation
 
     def _make_control(self, name, position, rotation=None, normal=(0, 0, 1),
-                      mirrored=False):
+                      mirrored=False, style=None):
         """
         Un control en una posicion, con su jerarquia GRP/SPC/OFF/SDK/ANIM.
+
+        Args:
+            style: clave de self.styles ("mid", "corner", "levator"...). Si no
+                esta en el diccionario se usa DEFAULT_STYLE.
 
         Devuelve (control, grupo_raiz). Se usa controlsLibrary si esta; si no,
         un circulo, para que el modulo se pueda probar suelto.
@@ -203,18 +281,28 @@ class SimpleMouthModule(object):
         if cmds.objExists(name):
             cmds.delete(name)
 
+        lib_name = self.styles.get(style, self.DEFAULT_STYLE)
+        scale = self.style_scales.get(style, self.DEFAULT_STYLE_SCALE)
+
         control = None
         if controlsLibrary is not None:
             try:
                 control = controlsLibrary.create_control_from_lib(
-                    lib_name="circle", final_name=name
+                    lib_name=lib_name, final_name=name, scale=scale
                 )
-            except Exception:
+            except Exception as error:
+                cmds.warning(f"[SimpleMouth] No he podido crear '{name}' con la "
+                             f"forma '{lib_name}': {error}")
                 control = None
 
         if control is None:
             control = cmds.circle(n=name, nr=normal, r=self.control_size,
                                   ch=False)[0]
+
+        # Antes de meterlo en la jerarquia: los CVs van en espacio de objeto,
+        # asi que el desplazamiento viaja con el control cuando el GRP se
+        # coloca sobre la guia.
+        self._offset_control_cvs(control, style)
 
         # Un locator temporal como destino del match: create_rig_hierarchy
         # espera un nodo, no una posicion.
@@ -239,6 +327,36 @@ class SimpleMouthModule(object):
             self._insert_mirror(control, group)
 
         return control, group
+
+    def _offset_control_cvs(self, control, style):
+        """
+        Aparta los CVs de la shape de un control, sin tocar su transform.
+
+        Se recorren las shapes una a una en vez de usar "control.cv[*]":
+        algunos controles de la libreria llevan mas de una curva, y esa
+        sintaxis solo alcanza a la primera.
+        """
+        offset = self.style_cv_offsets.get(style)
+        if not offset or not any(offset):
+            return None
+
+        if self.scale_cv_offsets and controlsLibrary is not None:
+            try:
+                rig_scale = controlsLibrary.get_rig_scale()
+            except Exception:
+                rig_scale = 1.0
+            offset = tuple(value * rig_scale for value in offset)
+
+        shapes = cmds.listRelatives(control, shapes=True,
+                                    type="nurbsCurve") or []
+        if not shapes:
+            return None
+
+        for shape in shapes:
+            cmds.move(offset[0], offset[1], offset[2], f"{shape}.cv[*]",
+                      relative=True, objectSpace=True)
+
+        return offset
 
     def _insert_mirror(self, control, group):
         """
@@ -354,7 +472,9 @@ class SimpleMouthModule(object):
             return None, None
 
         name = f"C_{self.rig_name}_lip{half}Mid_CTRL"
-        control, group = self._make_control(name, position, rotation)
+        # half vale "Upper" o "Lower", asi que la clave sale sola.
+        control, group = self._make_control(name, position, rotation,
+                                            style=f"mid{half}")
 
         self.mid_groups[half] = group
         self.controls[f"{half}Mid"] = control
@@ -378,7 +498,8 @@ class SimpleMouthModule(object):
 
         name = f"{side}_{self.rig_name}_lipCorner_CTRL"
         control, group = self._make_control(name, position, rotation,
-                                            mirrored=(side == "R"))
+                                            mirrored=(side == "R"),
+                                            style="corner")
 
         self.corner_groups[side] = group
 
@@ -399,8 +520,11 @@ class SimpleMouthModule(object):
         base_name = self.CHAIN_NAMES[half][key]
         name = f"{side}_{self.rig_name}_{base_name}_CTRL"
 
+        # El estilo va por base_name, asi que cada eslabon puede llevar su
+        # propia forma sin tocar nada mas.
         control, group = self._make_control(name, position, rotation,
-                                            mirrored=(side == "R"))
+                                            mirrored=(side == "R"),
+                                            style=base_name)
 
         # Los padres se leen por su nodo de salida: el de la comisura R tiene
         # escala negativa y no puede ser target de un constraint a pelo.

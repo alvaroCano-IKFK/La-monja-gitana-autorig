@@ -37,6 +37,7 @@ import module_specs
 import fingersIk_module
 import nose_module
 import toes_module
+import socket_module
 
 window_instance = None
 
@@ -81,6 +82,7 @@ def run():
     importlib.reload(fingersIk_module)
     importlib.reload(nose_module)
     importlib.reload(toes_module)
+    importlib.reload(socket_module)
     
     global window_instance
 

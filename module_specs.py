@@ -298,6 +298,30 @@ MODULE_SPECS = {
         ],
     },
 
+    "socket": {
+        "label": "Eye Socket",
+        "order": 57,
+        "sides": ["L", "R"],
+        "face": True,
+        # Va por encima del parpado, asi que lo normal es tener tambien el ojo.
+        # Se construye igual sin el: solo comparte la posicion de referencia de
+        # las guias, ningun nodo.
+        "recommends": ["eye", "neck"],
+        # Las ocho guias son joints sueltos, o sea ocho raices.
+        "mirror_roots": [
+            "L_socket_up", "L_socket_low", "L_socket_in", "L_socket_out",
+            "L_socket_upIn", "L_socket_upOut",
+            "L_socket_lowIn", "L_socket_lowOut",
+        ],
+        "always": [
+            Feature("main_controls", "Main Controls (up / low / in / out)"),
+        ],
+        "optional": [
+            Feature("sub_controls", "Sub Controls", default=True),
+            Feature("between_controls", "In-Between Subs", default=True),
+        ],
+    },
+
     # Modulo de centro, como la boca: una instancia construye los dos lados y
     # las guias de las aletas solo existen en +X. mirror_roots vacio por eso.
     # A diferencia de "mouth", NoseModule NO construeix els dos costats des

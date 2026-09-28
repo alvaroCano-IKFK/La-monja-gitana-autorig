@@ -278,9 +278,16 @@ class NoseModule(module_specs.FeaturesMixin):
             cmds.parentConstraint(
                 self.nostril_ctrl[side], self.nostril_jnt[side], maintainOffset=True
             )
+            cmds.scaleConstraint(
+                self.nostril_ctrl[side], self.nostril_jnt[side], maintainOffset=True
+            )
 
             if self.has("nostril_dup"):
                 cmds.parentConstraint(
+                    self.nostril_ctrl[side], self.nostril_jnt_dup[side],
+                    maintainOffset=True,
+                )
+                cmds.scaleConstraint(
                     self.nostril_ctrl[side], self.nostril_jnt_dup[side],
                     maintainOffset=True,
                 )

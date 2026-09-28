@@ -103,7 +103,7 @@ MODULE_SPECS = {
             # Twist NO depende de curvature: twist_module tiene fallback y se
             # crea su propia curva degree-2 si no le pasas source_curve.
             # Si curvature esta, se la pasamos y sale mejor.
-            Feature("twist", "Twist", requires=("curvature",)),
+            Feature("twist", "Twist", default=True),
             # default=True porque el autorig viejo montaba el soft IK en los
             # brazos siempre. Si lo dejas en False, el comportamiento por
             # defecto del rig cambia sin que nadie se entere.
@@ -112,9 +112,9 @@ MODULE_SPECS = {
             # condition_node del diccionario que devuelve apply_soft_ik().
             Feature("pv_pin", "Pole Vector Pin", requires=("soft_ik",)),
             #Feature("stretch", "Stretch", implemented=False),
-            Feature("ik", "IK"),
-            Feature("ikfk_switch", "IK/FK Switch"),
-            Feature("pole_vector", "Pole Vector"),
+            Feature("ik", "IK",default=True),
+            Feature("ikfk_switch", "IK/FK Switch",default=True),
+            Feature("pole_vector", "Pole Vector",default=True),
         ],
     },
 
@@ -157,9 +157,9 @@ MODULE_SPECS = {
         ],
         "optional": [
             Feature("curvature", "Curvature", default=True),
-            Feature("twist", "Twist", requires=("curvature",)),
+            Feature("twist", "Twist", default=True),
             Feature("soft_ik", "Soft IK", default=True),
-            Feature("pv_pin", "Pole Vector Pin", requires=("soft_ik",))
+            Feature("pv_pin", "Pole Vector Pin", default=True)
             #Feature("stretch", "Stretch", implemented=False),
         ],
     },
@@ -227,7 +227,7 @@ MODULE_SPECS = {
         "optional": [
             # use_cascade del modulo: una curva por labio para que mover un
             # control empuje un poco a los vecinos.
-            Feature("cascade", "Cascade", default=True),
+            Feature("cascade", "Cascade", default=False),
             # corner_upper_lower_attr: atributo UpperLower animable en las
             # comisuras. Apagado por defecto, igual que en el modulo.
             Feature("corner_attr", "Corner Upper/Lower Attr"),

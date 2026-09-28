@@ -69,11 +69,20 @@ class TwistModule(object):
         cmds.matchTransform(self.upper_twist_end, mid_joint, pos=True, rot=True)
 
         cmds.parent(self.upper_twist_end, self.upper_twist_start)
+
+        # Emparentar bajo el non roll ANTES de crear el IK y limpiar orientacion:
+        # asi rotateX del twist es directamente el twist relativo al non roll.
+        cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
+        cmds.setAttr(f"{self.upper_twist_start}.translate", 0, 0, 0)
+        cmds.setAttr(f"{self.upper_twist_start}.rotate", 0, 0, 0)
+        cmds.setAttr(f"{self.upper_twist_start}.jointOrient", 0, 0, 0)
+
         cmds.select(cl=True)
         ik_hdl_upper_twist = cmds.ikHandle(sj=self.upper_twist_start, ee=self.upper_twist_end, sol="ikSCsolver", name=f"{self.side}_{self.name}UpperTwist_HDL")[0]
 
+        # Posicion: el codo (sigue el stretch). Orientacion: el hombro -> aporta el roll.
         cmds.pointConstraint(mid_joint, ik_hdl_upper_twist, mo=False)
-        cmds.parent(self.upper_twist_start, self.nonroll_upper_start)
+        cmds.orientConstraint(start_joint, ik_hdl_upper_twist, mo=True)
 
         self.lower_twist_start = cmds.duplicate(mid_joint, po=True, n=f"{self.side}_{self.name}_lowerTwistStart_JNT")[0]
         cmds.parent(self.lower_twist_start, mid_joint)
@@ -200,21 +209,9 @@ class TwistModule(object):
                 target_list = self.lower_motion_paths
                 twist_start_joint = self.lower_twist_start
 
-            if segment_name == "upper":
-                pma_twist = NodeCreator(
-                        side=self.side, node_type="plusMinusAverage",
-                        base_name=self.name, name=segment_name,
-                        tag="twistExtract", parent=None, custom_suffix=None
-                    )
-                pma_node = pma_twist.create()
-                cmds.setAttr(f"{pma_node}.operation", 2)  # Subtract
-
-                cmds.connectAttr(f"{twist_start_joint}.rotateX", f"{pma_node}.input1D[0]")
-                cmds.connectAttr(f"{self.nonroll_upper_start}.rotateX", f"{pma_node}.input1D[1]")
-
-                twist_source = f"{pma_node}.output1D"
-            else:
-                twist_source = f"{twist_start_joint}.rotateX"
+            # upper: upper_twist_start es hijo del non roll -> su rotateX ya es el twist limpio
+            # lower: lower_twist_start es hijo del mid_joint -> igual
+            twist_source = f"{twist_start_joint}.rotateX"
 
             # Inversión matemática del valor de rotación frontTwist para comportamiento de espejo en R
             if self.side == "R":

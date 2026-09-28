@@ -40,9 +40,12 @@ class SimpleMouthModule(object):
     """
 
     # base_name -> peso del MID (la comisura se lleva 1 - peso)
+    #
+    #   01 = levator / depresor   -> mid 0.80 / comisura 0.20
+    #   02 = upperPinch / lowerPinch -> mid 0.33 / comisura 0.66
     CHAIN_WEIGHTS = {
-        "01": 0.75,
-        "02": 0.25,
+        "01": 0.8,
+        "02": 0.33,
     }
 
     # Como se llama cada eslabon en cada mitad

@@ -751,6 +751,133 @@ class SimpleMouthModule(object):
 
         return curve
 
+    # ------------------------------------------------------------------
+    # ORGANIZACION EN LA JERARQUIA DEL RIG
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ensure_group(name, parent=None):
+        """Grupo con ese nombre, creandolo si hace falta. Idempotente."""
+        if not cmds.objExists(name):
+            cmds.group(em=True, n=name)
+
+        if parent and cmds.objExists(parent):
+            current = cmds.listRelatives(name, parent=True)
+            if not current or current[0] != parent:
+                cmds.parent(name, parent)
+
+        return name
+
+    def _face_systems_root(self):
+        """
+        C_<rig>_face_GRP, bajo el rig_GRP. Aqui van los joints y las redes.
+
+        Compartido con la boca, el jaw, los ojos, las cejas y el socket. El
+        rig_GRP lo da rigRoot con get_rig_grp().
+        """
+        rig_grp = f"{self.rig_name}_rig_GRP"
+        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
+            rig_grp = self.root_instance.get_rig_grp()
+
+        parent = rig_grp if cmds.objExists(rig_grp) else None
+
+        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
+
+    def _face_controls_root(self):
+        """
+        C_<rig>_faceControls_GRP, bajo el local_CTL.
+
+        Es el grupo que lleva el parentConstraint desde el head_CTRL, el que
+        pone el modulo de jaw. Colgando aqui, los controles siguen a la cabeza
+        sin constraint propio.
+
+        Y sin constraint propio a proposito: si cada modulo se constriñera por
+        su cuenta, tendrias un constraint por modulo haciendo lo mismo y ese
+        movimiento llegaria tambien a los joints de skin, que es lo que rompe
+        el montaje de dos mallas. Controles arriba con la cabeza, joints
+        quietos abajo.
+        """
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
+
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+
+        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+
+    def _warn_if_head_not_attached(self):
+        """Avisa si el grupo de controles de cara no lo constriñe nadie."""
+        group = self._face_controls_root()
+        constraints = cmds.listRelatives(group, children=True,
+                                         type="constraint") or []
+
+        if not constraints:
+            cmds.warning(f"[SimpleMouth] '{group}' no esta constreñido a "
+                         f"nada: los controles no van a seguir a la cabeza. Lo "
+                         f"constriñe el modulo de jaw; comprueba que esta en "
+                         f"la receta.")
+
+        return bool(constraints)
+
+    def organize(self, group_name):
+        """
+        Reparte lo que el build deja suelto:
+
+            C_<rig>_faceControls_GRP        (sigue a la cabeza)
+               |- C_<rig>_mouth_GRP         los GRP de los controles
+
+            C_<rig>_face_GRP                (sistemas, bajo rig_GRP)
+               |- C_<rig>_mouthJoints_GRP   los joints de skin
+               |- C_<rig>_mouthCascade_GRP  curvas, bases y followers
+
+        El grupo de la cascada va a sistemas y NO a controles a proposito:
+        dentro hay nodos que reciben posiciones en mundo por conexion directa
+        (los controlPoints de las curvas y los followers), y una conexion
+        directa no compensa al padre. Por eso ese grupo lleva ademas
+        inheritsTransform a 0: este donde este, no hereda nada.
+
+        Los GRP de los controles si van al grupo de cara, pero para ellos el
+        emparentado es solo orden: todos llevan parentConstraint (a la
+        mandibula o a sus dos padres), y un constraint compensa la matriz del
+        padre. Siguen a la cabeza a traves del jaw, no a traves de este grupo.
+        """
+        control_roots = []
+        for control in self.controls.values():
+            node = control
+            while True:
+                parent = cmds.listRelatives(node, parent=True, type="transform")
+                if not parent:
+                    break
+                node = parent[0]
+            if node not in control_roots and node != self.cascade_group:
+                control_roots.append(node)
+
+        if control_roots:
+            if cmds.objExists(group_name):
+                cmds.delete(group_name)
+
+            self.module_group = cmds.group(control_roots, n=group_name)
+            self._ensure_group(self.module_group, self._face_controls_root())
+
+        systems_root = self._face_systems_root()
+
+        if self.cascade_group and cmds.objExists(self.cascade_group):
+            self._ensure_group(self.cascade_group, systems_root)
+
+        joints_grp = self._ensure_group(f"C_{self.rig_name}_mouthJoints_GRP",
+                                        systems_root)
+
+        for joint in cmds.ls(f"*_{self.rig_name}_*_JNT", type="joint") or []:
+            if not joint.endswith("_JNT"):
+                continue
+            if not any(key in joint for key in
+                       ("lipUpperMid", "lipLowerMid", "lipCorner",
+                        "levator", "depresor", "upperPinch", "lowerPinch")):
+                continue
+            if not cmds.listRelatives(joint, parent=True):
+                cmds.parent(joint, joints_grp)
+
+        return self.module_group
+
     def attach_to_jaw(self):
         """
         Engancha la boca a la mandibula. Separado de build() a proposito.
@@ -865,23 +992,8 @@ class SimpleMouthModule(object):
                     self._build_cascade_curve(half, mid_controls[half],
                                               corner_controls)
 
-        # 4. Recoger todo lo que quedo suelto en el mundo.
-        roots = []
-        for control in self.controls.values():
-            node = control
-            while True:
-                parent = cmds.listRelatives(node, parent=True, type="transform")
-                if not parent:
-                    break
-                node = parent[0]
-            if node not in roots:
-                roots.append(node)
-
-        if self.cascade_group and cmds.objExists(self.cascade_group):
-            roots.append(self.cascade_group)
-
-        if roots:
-            self.module_group = cmds.group(roots, n=group_name)
+        # 4. Repartir todo lo que quedo suelto en el mundo.
+        self.organize(group_name)
 
         # Si el jaw ya existe, se engancha ahora. Si no, lo hara build_module
         # cuando construya la mandibula.

@@ -183,14 +183,53 @@ class EyebrowsModule(object):
         # 90 en X porque los controles de la libreria estan dibujados en el
         # plano XZ, tumbados para el cuerpo, y en la cara tienen que mirar al
         # frente.
-        self.cv_rotation = (0, 90.0, 0.0)
+        self.cv_rotation = (90.0, 0.0, 0.0)
 
-        # Los sub comparten sitio con su principal, asi que si midieran lo
-        # mismo quedarian uno encima de otro y no habria como pincharlos.
-        self.sub_cv_scale = 0.2
+        # Radio que tiene que medir un control de este modulo en el mundo,
+        # ya contando la escala del rig. Es EL numero a tocar si los ves
+        # grandes o pequenos.
+        #
+        # Va por radio y no por factor a proposito: el Main, los sub y las
+        # tangentes usan formas distintas de la libreria, y cada JSON esta
+        # dibujado a un tamano distinto. Multiplicarlas todas por 0.25 no las
+        # iguala, solo las encoge conservando la diferencia. Por eso el Main
+        # se quedaba grande. controlsLibrary.scale_for_radius mide cada forma
+        # y saca su factor.
+        self.control_radius_target = 0.5
+
+        # Multiplicadores sobre ese radio, por papel.
+        # Los sub a 1.0: quieres que midan como el Main.
+        # Las tangentes mas pequenas, como los sub del socket: van pegadas a
+        # su sub y si midieran igual no habria como pincharlas.
+        self.sub_cv_scale = 1.0
+        self.tangent_cv_scale = 0.6
 
         # Parametros configurables de la bezier / upCurve
         self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
+
+        # Hacia donde se separa la tangente de su esquina:
+        #   "mid"       -> hacia la guia del centro de la ceja
+        #   "neighbour" -> hacia la guia de al lado (comportamiento anterior)
+        #
+        # Con "neighbour" el factor era una fraccion de UN SOLO hueco entre
+        # guias, o sea un noveno de la ceja. Por eso la tangente salia pegada
+        # al CV de la punta y por eso subir el factor no se notaba: el 0.1 de
+        # diferencia se quedaba en un 1% de la ceja.
+        self.tangent_reference = kwargs.get("tangent_reference", "mid")
+
+        # Cuanto se separa la tangente de su esquina, en fraccion del LARGO
+        # TOTAL de la ceja (de la esquina In a la Out). 0.15 = un 15% de la
+        # ceja.
+        #
+        # Se mide contra el largo total y no contra el camino hasta el centro
+        # por simetria: el centro no cae justo en medio (con 10 guias esta en
+        # la 05, o sea a 4 huecos del In y a 5 del Out), asi que un mismo
+        # factor dejaba una tangente mas lejos que la otra. Midiendo contra el
+        # largo total, las dos quedan a la misma distancia de su esquina.
+        #
+        # La DIRECCION sigue siendo hacia el centro; lo que cambia es de donde
+        # sale la distancia.
+        self.tangent_control_factor = kwargs.get("tangent_control_factor", 0.15)
         self.up_curve_offset = kwargs.get("up_curve_offset", 0.5)
 
         self.up_curve_normal = kwargs.get("up_curve_normal", (0.0, 0.0, 1.0))
@@ -641,6 +680,31 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     # Motion paths i configuració d'aim
     # ------------------------------------------------------------------
+    def _brow_length(self, base_prefix):
+        """
+        Distancia en mundo entre las dos guias de esquina.
+
+        Es la medida que da sentido al factor de la tangente: separarla un 15%
+        significa un 15% de la ceja, no de un hueco entre guias ni del camino
+        hasta el centro, que no son iguales en los dos lados.
+        """
+        first = f"{self.side}_{base_prefix}_01"
+        last = f"{self.side}_{base_prefix}_{self.num_joints:02d}"
+
+        if not (cmds.objExists(first) and cmds.objExists(last)):
+            return 0.0
+
+        start = cmds.xform(first, q=True, ws=True, t=True)
+        end = cmds.xform(last, q=True, ws=True, t=True)
+
+        return math.sqrt(sum((a - b) ** 2 for a, b in zip(start, end)))
+
+    def _shape_scale(self, lib_name, factor=1.0):
+        """Factor de CVs para que 'lib_name' mida el radio objetivo."""
+        return controlsLibrary.scale_for_radius(
+            lib_name, self.control_radius_target * factor
+        )
+
     def _aim_matrix_to_up(self, base_name, position_plug, up_trn):
         """
         Monta la pareja composeMatrix + aimMatrix que orienta un joint hacia su
@@ -1262,7 +1326,10 @@ class EyebrowsModule(object):
             lib_name=self.main_control_style,
             final_name=f"{self.prefix}_Main_CTRL",
         )
-        controlsLibrary.transform_shape(main_ctl, rotate=self.cv_rotation)
+        controlsLibrary.transform_shape(
+            main_ctl, rotate=self.cv_rotation,
+            scale=self._shape_scale(self.main_control_style)
+        )
         main_ctl_gen = self.group_maker.create_rig_hierarchy(
             main_ctl, mid_guide_name
         )
@@ -1315,7 +1382,9 @@ class EyebrowsModule(object):
                 lib_name=self.corner_control_style, final_name=sub_ctrl_name
             )
             controlsLibrary.transform_shape(
-                sub_ctrl, rotate=self.cv_rotation, scale=self.sub_cv_scale
+                sub_ctrl, rotate=self.cv_rotation,
+                scale=self._shape_scale(self.corner_control_style,
+                                        self.sub_cv_scale)
             )
             sub_ctl_gen = self.group_maker.create_rig_hierarchy(
                 sub_ctrl, sub_guide_name
@@ -1357,7 +1426,13 @@ class EyebrowsModule(object):
 
             # Controls de tangent per a les cantonades
             if label in corner_labels:
-                neighbour_idx = 2 if label == "In" else self.num_joints - 1
+                if self.tangent_reference == "neighbour":
+                    neighbour_idx = (2 if label == "In"
+                                     else self.num_joints - 1)
+                else:
+                    # La guia del centro, la misma que usa el control Main.
+                    neighbour_idx = mid_idx
+
                 neighbour_guide = (
                     f"{self.side}_{base_prefix}_{neighbour_idx:02d}"
                 )
@@ -1370,12 +1445,29 @@ class EyebrowsModule(object):
                 else:
                     nb_pos = sub_pos
 
-                tangent_factor = 0.3
-                tangent_pos = [
-                    sub_pos[0] + (nb_pos[0] - sub_pos[0]) * tangent_factor,
-                    sub_pos[1] + (nb_pos[1] - sub_pos[1]) * tangent_factor,
-                    sub_pos[2] + (nb_pos[2] - sub_pos[2]) * tangent_factor,
-                ]
+                # El CV de la bezier sale del joint local de esta tangente, y
+                # ese joint cuelga del control: moviendo el control se mueve
+                # el CV. Por eso basta con tocar el factor aqui, no hay que
+                # recolocar la curva por separado.
+                # Direccion hacia la referencia, normalizada, y distancia
+                # sacada del largo de la ceja. Asi el factor significa lo
+                # mismo en los dos lados.
+                direction = [nb_pos[axis] - sub_pos[axis] for axis in range(3)]
+                length = math.sqrt(sum(value * value for value in direction))
+
+                brow_length = self._brow_length(base_prefix)
+                distance = brow_length * self.tangent_control_factor
+
+                if length > 1e-6 and distance > 0.0:
+                    tangent_pos = [
+                        sub_pos[axis] + direction[axis] / length * distance
+                        for axis in range(3)
+                    ]
+                else:
+                    cmds.warning(f"[EyebrowsModule] No puedo separar la "
+                                 f"tangente de '{label}': la guia de "
+                                 f"referencia coincide con la esquina.")
+                    tangent_pos = list(sub_pos)
 
                 tangent_ctl_name = f"{self.prefix}_{label}Tan_CTRL"
                 tangent_ctl = controlsLibrary.create_control_from_lib(
@@ -1384,7 +1476,8 @@ class EyebrowsModule(object):
                 )
                 controlsLibrary.transform_shape(
                     tangent_ctl, rotate=self.cv_rotation,
-                    scale=self.sub_cv_scale
+                    scale=self._shape_scale(self.tangent_control_style,
+                                            self.tangent_cv_scale)
                 )
 
                 tangent_ctl_gen = self.group_maker.create_rig_hierarchy(

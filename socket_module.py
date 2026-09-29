@@ -321,31 +321,97 @@ class SocketModule(module_specs.FeaturesMixin):
             print(f"[Socket] {group}: {first} {self.BETWEEN_WEIGHT:.2f} / "
                   f"{second} {1.0 - self.BETWEEN_WEIGHT:.2f}")
 
+    @staticmethod
+    def _ensure_group(name, parent=None):
+        """Grupo con ese nombre, creandolo si hace falta. Idempotente."""
+        if not cmds.objExists(name):
+            cmds.group(em=True, n=name)
+
+        if parent and cmds.objExists(parent):
+            current = cmds.listRelatives(name, parent=True)
+            if not current or current[0] != parent:
+                cmds.parent(name, parent)
+
+        return name
+
+    def _face_systems_root(self):
+        """C_<rig>_face_GRP, bajo el rig_GRP. Compartido con boca, jaw, ojos y cejas."""
+        rig_grp = f"{self.rig_name}_rig_GRP"
+        if self.root_instance is not None and hasattr(self.root_instance, "get_rig_grp"):
+            rig_grp = self.root_instance.get_rig_grp()
+
+        parent = rig_grp if cmds.objExists(rig_grp) else None
+
+        return self._ensure_group(f"C_{self.rig_name}_face_GRP", parent)
+
+    def _face_controls_root(self):
+        """
+        C_<rig>_faceControls_GRP, bajo el local_CTL.
+
+        Es el mismo grupo que usan la boca, el jaw, los ojos y las cejas, y el
+        que lleva el parentConstraint desde el head_CTRL. Colgando aqui, los
+        controles del socket siguen a la cabeza sin constraint propio.
+
+        Y sin constraint propio a proposito: si cada modulo se constriñera por
+        su cuenta al head, tendrias diez constraints haciendo lo mismo y, peor,
+        ese movimiento llegaria tambien a los joints de skin, que es lo que
+        rompe el montaje de dos mallas. Controles arriba con la cabeza, joints
+        quietos abajo.
+        """
+        local_ctl = f"{self.rig_name}_local_CTL"
+        if self.root_instance is not None:
+            local_ctl = getattr(self.root_instance, "localCtl", None) or local_ctl
+
+        parent = local_ctl if cmds.objExists(local_ctl) else None
+
+        return self._ensure_group(f"C_{self.rig_name}_faceControls_GRP", parent)
+
     def organize(self):
         """
-        Recoge bajo un grupo del modulo lo que haya quedado suelto en el
-        mundo: los GRP de los principales y los joints. Los sub directos no
-        entran, que ya cuelgan de su principal.
+        Reparte lo que el build deja suelto:
+
+            C_<rig>_faceControls_GRP     (sigue a la cabeza)
+               |- <prefix>_GRP           los GRP de los principales
+
+            C_<rig>_face_GRP             (sistemas, bajo rig_GRP)
+               |- <prefix>_joints_GRP    los joints de skin, quietos
+
+        Los sub directos no entran en ninguno de los dos: ya cuelgan de su
+        principal.
         """
         group_name = f"{self.prefix}_GRP"
         if cmds.objExists(group_name):
             cmds.delete(group_name)
 
-        roots = []
-        for node in list(self.control_groups) + list(self.joints.values()):
-            if not node or not cmds.objExists(node):
-                continue
-            if cmds.listRelatives(node, parent=True):
-                continue
-            if node not in roots:
-                roots.append(node)
+        control_roots = [node for node in self.control_groups
+                         if node and cmds.objExists(node)
+                         and not cmds.listRelatives(node, parent=True)]
 
-        if not roots:
-            return None
+        if control_roots:
+            self.module_group = cmds.group(control_roots, n=group_name)
+            self._ensure_group(self.module_group, self._face_controls_root())
 
-        self.module_group = cmds.group(roots, n=group_name)
+            if not self._head_attachment(self._face_controls_root()):
+                cmds.warning(f"[Socket {self.side}] "
+                             f"C_{self.rig_name}_faceControls_GRP no esta "
+                             f"constreñido a nada: los controles no van a "
+                             f"seguir a la cabeza. Lo constriñe el modulo de "
+                             f"jaw; comprueba que esta en la receta.")
+
+        joints_grp = self._ensure_group(f"{self.prefix}_joints_GRP",
+                                        self._face_systems_root())
+        for joint in self.joints.values():
+            if joint and cmds.objExists(joint):
+                if not cmds.listRelatives(joint, parent=True):
+                    cmds.parent(joint, joints_grp)
 
         return self.module_group
+
+    @staticmethod
+    def _head_attachment(group):
+        """Constraints que cuelgan del grupo de controles de cara, si hay."""
+        return cmds.listRelatives(group, children=True,
+                                  type="constraint") or []
 
     def build(self):
         missing = self._missing_guides()

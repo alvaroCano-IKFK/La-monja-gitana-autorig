@@ -316,6 +316,35 @@ def ControladorUI():
 if __name__ == "__main__":
     ControladorUI()
     
+def scale_for_radius(lib_name, target_radius):
+    """
+    Factor que hay que pasarle a transform_shape para que una forma de la
+    libreria acabe midiendo 'target_radius' en el mundo.
+
+    Existe porque multiplicar todas las formas por el mismo numero NO las deja
+    del mismo tamano: cada JSON esta dibujado a un radio distinto (para verlo,
+    report_library_sizes). Si una forma esta dibujada al doble que otra,
+    escalarlas a las dos por 0.25 mantiene el doble de diferencia.
+
+    Tiene en cuenta la escala global del rig, que create_control_from_lib ya
+    aplica a los CVs al crear el control.
+
+    Devuelve 1.0 si la forma no esta en la libreria, o sea si el control ha
+    caido al circulo por defecto.
+    """
+    radius = control_radius(lib_name)
+
+    if not radius:
+        return 1.0
+
+    current = radius * get_rig_scale()
+
+    if current <= 1e-9:
+        return 1.0
+
+    return target_radius / current
+
+
 def transform_shape(control, rotate=None, scale=None, translate=None):
     """
     Mueve, gira o escala los CVs de un control SIN tocar su transform.

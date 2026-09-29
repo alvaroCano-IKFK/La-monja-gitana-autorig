@@ -11,25 +11,22 @@ class HipModule(object):
 
         local_CTL
          └ body_CTL             COG del rig
-           ├ COGPivot_CTRL      el translate va al rotatePivot i scalePivot del body
+           ├ COG_CTRL           translationFromMatrix -> rotatePivot i scalePivot
            ├ bodyOut_TRN        -> parentConstraint -> body_JNT
            └ localHip_CTL
 
-    Moure el COGPivot_CTRL no mou res: nomes canvia el punt sobre el qual gira
-    i escala el body.
+    El COG_CTRL es crea a la mateixa posicio que el body i tota la seva
+    jerarquia de grups penja del body_CTL. La seva matriu passa per un
+    translationFromMatrix i la translacio va als pivots del body: moure el
+    COG_CTRL no mou res, nomes canvia el punt sobre el qual gira i escala.
 
-    Dues coses que cal vigilar amb aquest sistema i que el modul ja resol:
-      - Si el body esta rotat o escalat, moure el pivot SI desplacaria el
-        control. Es compensa calculant rotatePivotTranslate i scalePivotTranslate
-        (compensate_pivot=True).
-      - Un parentConstraint segueix el rotatePivot del target, aixi que el
-        body_JNT es constreny a bodyOut_TRN (fill del body i en identitat).
+    El body_JNT es constreny a bodyOut_TRN (fill del body i en identitat)
+    perque un parentConstraint segueix el rotatePivot del target.
     """
 
     def __init__(self,root_guide ="root", 
                 rig_name="Character",
-                root_instance=None,
-                compensate_pivot=True
+                root_instance=None
                 ):
                     
         self.root_guide = root_guide
@@ -39,10 +36,9 @@ class HipModule(object):
         self.ctrl_style = "hipControl"
         self.group_maker = groups_module.ControlsGroups()
         self.root_instance = root_instance
-        self.compensate_pivot = compensate_pivot
         self.body_ctl = None
         self.body_joint = None
-        self.pivot_ctl = None
+        self.cog_ctl = None
 
     # ------------------------------------------------------------------ #
     # BODY (COG) AMB PIVOT MOVIBLE
@@ -65,45 +61,6 @@ class HipModule(object):
             cvs = [f"{shape}.cv[{j}]" for j in range(num_cvs)]
             cmds.rotate(rx, ry, rz, cvs, r=True, p=pivot, ws=True)
 
-    def build_pivot_compensation(self, body_ctl, pivot_ctl):
-        """
-        Compensa el desplacament que provoca moure el pivot quan el control
-        esta rotat o escalat:
-
-            rotatePivotTranslate = RP - RP * R
-            scalePivotTranslate  = SP - SP * S
-
-        Sense aixo, moure el pivot amb el body rotat desplaca tot el rig una
-        mica. Es el que fa Maya per dins quan mous el pivot a ma al viewport.
-        """
-        rig = self.rig_name
-
-        # --- Rotacio ---
-        rot_cmx = cmds.createNode("composeMatrix", n=f"{rig}_cogPivotRot_CMX")
-        cmds.connectAttr(f"{body_ctl}.rotate", f"{rot_cmx}.inputRotate")
-
-        rot_vpr = cmds.createNode("vectorProduct", n=f"{rig}_cogPivotRot_VPR")
-        cmds.setAttr(f"{rot_vpr}.operation", 4)        # point matrix product
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{rot_vpr}.input1")
-        cmds.connectAttr(f"{rot_cmx}.outputMatrix", f"{rot_vpr}.matrix")
-
-        rot_pma = cmds.createNode("plusMinusAverage", n=f"{rig}_cogPivotRot_PMA")
-        cmds.setAttr(f"{rot_pma}.operation", 2)        # subtract
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{rot_pma}.input3D[0]")
-        cmds.connectAttr(f"{rot_vpr}.output", f"{rot_pma}.input3D[1]")
-        cmds.connectAttr(f"{rot_pma}.output3D", f"{body_ctl}.rotatePivotTranslate")
-
-        # --- Escala ---
-        scl_mdv = cmds.createNode("multiplyDivide", n=f"{rig}_cogPivotScl_MDV")
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{scl_mdv}.input1")
-        cmds.connectAttr(f"{body_ctl}.scale", f"{scl_mdv}.input2")
-
-        scl_pma = cmds.createNode("plusMinusAverage", n=f"{rig}_cogPivotScl_PMA")
-        cmds.setAttr(f"{scl_pma}.operation", 2)
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{scl_pma}.input3D[0]")
-        cmds.connectAttr(f"{scl_mdv}.output", f"{scl_pma}.input3D[1]")
-        cmds.connectAttr(f"{scl_pma}.output3D", f"{body_ctl}.scalePivotTranslate")
-
     def build_body(self):
         """Crea el COG amb pivot movible i el joint del body."""
         rig = self.rig_name
@@ -122,24 +79,32 @@ class HipModule(object):
         body_off = self.group_maker.create_rig_hierarchy(body_ctl, self.root_guide)
         self.rotate_shape(body_ctl, 90, 0, 0)
 
-        # --- Control del pivot: penja del body ---
-        pivot_ctl = controlsLibrary.create_control_from_lib(
+        # --- Control del COG: mateixa posicio que el body i penjat d ell ---
+        cog_ctl = controlsLibrary.create_control_from_lib(
             lib_name="bodyControl",
-            final_name=f"{rig}_COGPivot_CTRL")
-        pivot_off = self.group_maker.create_rig_hierarchy(pivot_ctl, self.root_guide)
-        self.rotate_shape(pivot_ctl, 90, 0, 0)
-        self.scale_shape(pivot_ctl, 0.5)
-        cmds.parent(pivot_off, body_ctl)
+            final_name=f"{rig}_COG_CTRL")
+        cog_off = self.group_maker.create_rig_hierarchy(cog_ctl, self.root_guide)
+        self.rotate_shape(cog_ctl, 90, 0, 0)
+        self.scale_shape(cog_ctl, 0.5)
+        cmds.parent(cog_off, body_ctl)
 
         # Nomes es mou: rotar-lo o escalar-lo no te sentit
         for attr in ("rx", "ry", "rz", "sx", "sy", "sz"):
-            cmds.setAttr(f"{pivot_ctl}.{attr}", lock=True, keyable=False, channelBox=False)
+            cmds.setAttr(f"{cog_ctl}.{attr}", lock=True, keyable=False, channelBox=False)
 
-        # --- El translate del pivot mana els pivots del body ---
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{body_ctl}.rotatePivot")
-        cmds.connectAttr(f"{pivot_ctl}.translate", f"{body_ctl}.scalePivot")
-        if self.compensate_pivot:
-            self.build_pivot_compensation(body_ctl, pivot_ctl)
+        # --- La matriu del COG mana els pivots del body ---
+        if "translationFromMatrix" in (cmds.allNodeTypes() or []):
+            tfm = cmds.createNode("translationFromMatrix", n=f"{rig}_cogPivot_TFM")
+            cmds.connectAttr(f"{cog_ctl}.matrix", f"{tfm}.input")
+            out_plug = f"{tfm}.output"
+        else:
+            # Maya sense els nodes de matematiques nous
+            tfm = cmds.createNode("decomposeMatrix", n=f"{rig}_cogPivot_DCM")
+            cmds.connectAttr(f"{cog_ctl}.matrix", f"{tfm}.inputMatrix")
+            out_plug = f"{tfm}.outputTranslate"
+
+        cmds.connectAttr(out_plug, f"{body_ctl}.rotatePivot")
+        cmds.connectAttr(out_plug, f"{body_ctl}.scalePivot")
 
         # --- Sortida per al joint: filla del body i en identitat, aixi no li
         #     afecta el pivot (un parentConstraint si que seguiria el pivot) ---
@@ -162,7 +127,7 @@ class HipModule(object):
         if self.root_instance:
             self.root_instance.body_ctl = body_ctl   # el publiquem per als altres moduls
 
-        self.pivot_ctl = pivot_ctl
+        self.cog_ctl = cog_ctl
         self.body_ctl = body_ctl
         self.body_joint = body_joint
         print(f"[HipModule] Body amb pivot movible creat: {body_ctl}")

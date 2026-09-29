@@ -33,6 +33,7 @@ class LegModule(object):
                  bank_in_guide=None,
                  bank_out_guide=None,
                  scapula=False,
+                 pv_mult=1.0,
                  scapula_surface=None,
                  clavicle=True,
                  three_bone=False,
@@ -112,6 +113,9 @@ class LegModule(object):
         #   |- claviculeHip_CTRL      pivot a la clavicula, orientat al hip
         #                             -> legRoot_CTRL emparentat a sota + arrel del FK
         self.scapula = scapula
+        #Distancia del pole vector: proporcional a la llargada de la cama.
+        #Puja el valor per allunyar-lo mes del genoll.
+        self.pv_mult = pv_mult
         #Superficie del torax per projectar l escapula (proximityPin).
         #Si es None, l escapula nomes segueix el seu control.
         self.scapula_surface = scapula_surface
@@ -130,12 +134,29 @@ class LegModule(object):
             world_space=world_space
     )
     
-    def define_poleVector(self, start, mid, end, distance=15):
-        """Calcula la posición del pole vector basándose en la posición de los joints."""
-        # NO TOCADO: Tu método original exacto
+    def define_poleVector(self, start, mid, end, distance=None, mult=1.0):
+        """
+        Calcula la posicio del pole vector a partir dels joints.
+
+        Si no es dona distancia, es proporcional a la llargada de la cadena
+        (la suma dels segments de start fins a end), aixi que si les guies es
+        fan mes grans el pole vector s allunya igual i no se t enganxa al
+        genoll. mult el separa encara mes.
+        """
         sh_p = cmds.xform(start, q=True, ws=True, t=True)
         el_p = cmds.xform(mid, q=True, ws=True, t=True)
         wr_p = cmds.xform(end, q=True, ws=True, t=True)
+
+        # --- distancia proporcional a la cadena ---
+        if distance is None:
+            chain = self.ik_chain[:self.i_ankle + 1] if self.ik_chain else [start, mid, end]
+            total = 0.0
+            for a, b in zip(chain[:-1], chain[1:]):
+                pa = cmds.xform(a, q=True, ws=True, t=True)
+                pb = cmds.xform(b, q=True, ws=True, t=True)
+                total += math.sqrt(sum((pb[i] - pa[i]) ** 2 for i in range(3)))
+            distance = total * 0.5 * mult
+        # ------------------------------------------
 
         sw = [wr_p[i] - sh_p[i] for i in range(3)]
         se = [el_p[i] - sh_p[i] for i in range(3)]
@@ -255,10 +276,6 @@ class LegModule(object):
         cmds.connectAttr(f"{shape}.worldSpace[0]", f"{pin}.deformedGeometry")
         cmds.connectAttr(f"{bind_joint}.worldMatrix[0]", f"{pin}.inputMatrix[0]")
         cmds.connectAttr(f"{pin}.outputMatrix[0]", f"{projected}.offsetParentMatrix")
-        cmds.setAttr(f"{pin}.coordMode",1)
-        cmds.setAttr(f"{pin}.offsetTranslation", 0)
-        cmds.setAttr(f"{pin}.offsetOrientation", 0)
-
 
         self.scapula_pin = pin
         self.scapula_projected = projected
@@ -569,7 +586,8 @@ class LegModule(object):
         #cmds.xform(switch_gen, r = True,t=(14,0,0) )
         
            
-        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1], self.ik_chain[self.i_ankle], distance=15)
+        pv_pos = self.define_poleVector(self.ik_chain[0], self.ik_chain[1],
+                                        self.ik_chain[self.i_ankle], mult=self.pv_mult)
         pv_ctrl = controlsLibrary.create_control_from_lib(
             lib_name=self.styles["poleVector"],
             final_name=f"{self.prefix}_poleVector_CTRL")

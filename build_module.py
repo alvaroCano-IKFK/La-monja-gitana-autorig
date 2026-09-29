@@ -172,11 +172,11 @@ class BuildRig(object):
             # DAVANT: escapula (opcionalment lliscant pel torax), IK de 2 segments
             {"rig_name": "Leg", "suffix": "", "spine_parent": self.spine_chest,
              "clavicle": True, "scapula": True, "three_bone": False,
-             "scapula_surface": scapula_surface},
+             "scapula_surface": scapula_surface, "pv_mult": 1.0},
             # DARRERE: sense clavicula (pelvis de l espina), IK spring de 3 segments
             {"rig_name": "BackLeg", "suffix": "_back", "spine_parent": self.spine_pelvis,
              "clavicle": False, "scapula": False, "three_bone": True,
-             "scapula_surface": None},
+             "scapula_surface": None, "pv_mult": 1.0},
         ]
 
         self.leg_rigs = {}
@@ -215,6 +215,7 @@ class BuildRig(object):
                         bank_out_guide=guides["hoof_out"],
                         scapula=setup["scapula"],
                         scapula_surface=setup.get("scapula_surface"),
+                        pv_mult=setup.get("pv_mult", 1.0),
                         clavicle=setup["clavicle"],
                         three_bone=setup["three_bone"],
                         hock_guide=guides.get("hock")

@@ -24,6 +24,8 @@ import spaceSwitching_module
 import headSpace_module
 import soft_module
 import curvature_module
+import horse_neck
+import back_legs_module
 
 
 def run():
@@ -53,6 +55,8 @@ def run():
     importlib.reload(headSpace_module)
     importlib.reload(soft_module)
     importlib.reload(curvature_module)
+    importlib.reload(horse_neck)
+    importlib.reload(back_legs_module)
     
     ui = ui_module.UI()
     ui.main_UI()

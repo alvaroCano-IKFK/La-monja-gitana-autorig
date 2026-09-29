@@ -369,6 +369,42 @@ class FootGuides(object):
         cmds.parent(heel, ankle) 
 
 ############################################################
+#SUPERFICIE DEL TORAX (escapula)
+############################################################
+
+class ScapulaSurfaceGuides(object):
+    """
+    NURBS on llisca l escapula (proximityPin).
+
+    Es una esfera aplanada com una caixa toracica. Es una guia mes: col.loca-la
+    i escala-la sobre el model abans del BUILD. Al build se n fa una copia dins
+    del rig, enganxada al pit de l espina.
+    """
+    def __init__(self, name="scapula_surface_NRB",
+                 position=(0, 0, 0), scale=(6, 9, 14), radius=1.0):
+        self.name = name
+        self.position = position
+        self.scale = scale
+        self.radius = radius
+        self.surface = None
+
+    def create_surface(self):
+        if cmds.objExists(self.name):
+            cmds.warning(f"{self.name} ja existeix: no es torna a crear.")
+            self.surface = self.name
+            return self.name
+
+        surf = cmds.sphere(r=self.radius, ax=(0, 1, 0), n=self.name)[0]
+        cmds.setAttr(f"{surf}.translate", *self.position)
+        cmds.setAttr(f"{surf}.scale", *self.scale)
+        cmds.setAttr(f"{surf}.overrideEnabled", 1)
+        cmds.setAttr(f"{surf}.overrideShading", 0)   # nomes wireframe
+        cmds.select(clear=True)
+
+        self.surface = surf
+        return surf
+
+############################################################
 #HOOF (quadrupede)
 ############################################################
 
@@ -486,6 +522,10 @@ class CharacterGuides(object):
             "L_hoof_in_back", "L_hoof_out_back"
         )
         back_hoof_instance.hoof_guides()
+
+        #Superficie del torax per a l escapula (posa-la sobre el model)
+        scapula_surface = ScapulaSurfaceGuides(position=(0, 0, 6))
+        scapula_surface.create_surface()
        
         #Llista amb tots els grups de guies creats       
         guide_groups = [
@@ -493,6 +533,7 @@ class CharacterGuides(object):
             neck_instance.guides_group,
             leg_instance.guides_group,
             back_leg_instance.guides_group,
+            scapula_surface.surface,
          ]
 
         # Filtra nomes els grups que existeixen

@@ -16,25 +16,23 @@ NECK_SKIN_WEIGHTS = None
 
 class HorseNeck(object):
     """
-    Coll del caball amb RIBBON (NURBS + uvPin).
+    Coll del caball amb RIBBON (NURBS).
 
     Guies (guides_module.HorseNeckGuides): neck_root -> neck_mid -> neck_end
 
     Build:
       1. NURBS que ocupa tota la guia:
-            U = amplada del ribbon, 2 patches (grau 1)
-            V = llargada del coll, 10 patches (grau 3)
-      2. 3 joints driver (base, mig, final) que fan skin a la NURBS.
+            U = amplada, 1 span grau 2   -> 3 CVs (vora, centre, vora)
+            V = llargada, 2 spans grau 3 -> 5 CVs
+      2. 3 joints (base, mig i final) que deformen la NURBS amb un skinCluster.
+         Son els joints de skin del coll.
       3. 3 controls en jerarquia  neckBase > neckMid > neckEnd,
-         cadascun amb parentConstraint al seu driver.
-      4. Un uvPin amb 11 coordenades (u = 0.5, v = 0, 0.1 ... 1): una per cada
-         interseccio del centre de la NURBS amb les isoparms de V.
-         Cada outputMatrix va a l offsetParentMatrix d un joint de sortida.
+         cadascun amb parentConstraint al seu joint.
 
-         control -> driver joint -> skinCluster -> NURBS -> uvPin -> joints
+         control -> joint -> skinCluster -> NURBS
 
-    Els 11 joints de sortida son els de skin i no estan en jerarquia:
-    cadascun va enganxat a la superficie (un rivet sobre un ribbon).
+      4. Opcional (pin_joints > 0): joints extra enganxats a la superficie amb
+         un uvPin, repartits per la V. Per defecte no se n creen.
     """
 
     def __init__(self,
@@ -42,30 +40,22 @@ class HorseNeck(object):
                  mid_guide="neck_mid",
                  end_guide="neck_end",
                  rig_name="Character",
-                 v_patches=10,
-                 u_patches=2,
+                 v_spans=2,
+                 v_degree=3,
+                 u_spans=1,
+                 u_degree=2,
+                 pin_joints=0,
                  width=None,
                  parent_joint=None,
                  root_instance=None,
-                 skin_weights=[
-                [(0.9999, 0.0000, 0.0001), (0.9999, 0.0000, 0.0001), (0.9999, 0.0000, 0.0001)],   # fila V 0
-                [(0.8381, 0.1614, 0.0005), (0.8382, 0.1614, 0.0004), (0.8381, 0.1614, 0.0005)],   # fila V 1
-                [(0.6755, 0.3221, 0.0024), (0.6757, 0.3222, 0.0021), (0.6755, 0.3221, 0.0024)],   # fila V 2
-                [(0.5112, 0.4801, 0.0087), (0.5116, 0.4805, 0.0079), (0.5112, 0.4801, 0.0087)],   # fila V 3
-                [(0.3452, 0.6471, 0.0077), (0.3458, 0.6500, 0.0042), (0.3452, 0.6293, 0.0255)],   # fila V 4
-                [(0.1810, 0.7576, 0.0614), (0.1814, 0.7594, 0.0592), (0.1810, 0.7576, 0.0614)],   # fila V 5
-                [(0.0275, 0.8235, 0.1490), (0.0275, 0.8247, 0.1478), (0.0275, 0.8253, 0.1473)],   # fila V 6
-                [(0.0000, 0.7500, 0.2500), (0.0000, 0.7491, 0.2509), (0.0000, 0.7505, 0.2495)],   # fila V 7
-                [(0.0000, 0.6496, 0.3504), (0.0000, 0.6426, 0.3574), (0.0000, 0.6450, 0.3550)],   # fila V 8
-                [(0.0000, 0.5182, 0.4818), (0.0000, 0.5180, 0.4820), (0.0000, 0.5186, 0.4814)],   # fila V 9
-                [(0.0000, 0.3867, 0.6133), (0.0000, 0.3844, 0.6156), (0.0000, 0.3867, 0.6133)],   # fila V 10
-                [(0.0000, 0.2851, 0.7149), (0.0000, 0.2811, 0.7189), (0.0000, 0.2851, 0.7149)],   # fila V 11
-                [(0.0000, 0.1586, 0.8414), (0.0000, 0.1555, 0.8445), (0.0000, 0.1586, 0.8414)],   # fila V 12
-                ]):
+                 skin_weights=None):
         self.guides = [root_guide, mid_guide, end_guide]
         self.rig_name = rig_name
-        self.v_patches = v_patches
-        self.u_patches = u_patches
+        self.v_spans = v_spans
+        self.v_degree = v_degree
+        self.u_spans = u_spans
+        self.u_degree = u_degree
+        self.pin_joints = pin_joints
         self.width = width            # None -> 10% de la llargada del coll
         self.parent_joint = parent_joint
         self.root_instance = root_instance
@@ -76,9 +66,9 @@ class HorseNeck(object):
         self.group_maker = ControlsGroups()
 
         self.surface = None
-        self.drivers = []
+        self.joints = []        # els 3 joints de skin (base, mig, final)
         self.controls = []
-        self.joints = []
+        self.pinned = []        # joints extra enganxats amb uvPin (opcional)
         self.uv_pin = None
 
     # ------------------------------------------------------------------ #
@@ -126,40 +116,39 @@ class HorseNeck(object):
         # perque U sigui l amplada i V la llargada
         cmds.reverseSurface(surf, d=3, ch=False, rpo=True)
 
-        # U: 2 patches grau 1 | V: 10 patches grau 3 | rang 0-1 en tots dos
+        # U: 1 span grau 2 | V: 2 spans grau 3 | rang 0-1 en tots dos
         cmds.rebuildSurface(surf, ch=False, rpo=True, rt=0, end=1, kr=0,
                             kcp=False, kc=False,
-                            su=self.u_patches, du=1,
-                            sv=self.v_patches, dv=3,
+                            su=self.u_spans, du=self.u_degree,
+                            sv=self.v_spans, dv=self.v_degree,
                             tol=0.01, fr=0, dir=2)
 
         self.surface = cmds.parent(surf, parent)[0]
         return self.surface, seg_a / (seg_a + seg_b)
 
     # ------------------------------------------------------------------ #
-    # 2. DRIVERS + SKIN
+    # 2. JOINTS + SKIN
     # ------------------------------------------------------------------ #
-    def _build_drivers(self, guide_pos, parent):
+    def _build_joints(self, guide_pos, parent):
+        """Els 3 joints del coll: deformen la NURBS i son els de skin."""
         n = self.rig_name
         names = ["neckBase", "neckMid", "neckEnd"]
 
         # Cadena temporal per orientar-los al llarg del coll; despres se separen
         cmds.select(clear=True)
-        chain = [cmds.joint(p=p, n=f"{n}_{name}_DRV") for name, p in zip(names, guide_pos)]
+        chain = [cmds.joint(p=p, n=f"{n}_{name}_JNT") for name, p in zip(names, guide_pos)]
         cmds.joint(chain[0], e=True, oj="xyz", sao="yup", ch=True, zso=True)
         cmds.setAttr(f"{chain[-1]}.jointOrient", 0, 0, 0)
         cmds.select(clear=True)
 
-        self.drivers = []
+        self.joints = []
         for jnt in reversed(chain):
-            self.drivers.insert(0, cmds.parent(jnt, parent)[0])
-        for drv in self.drivers:
-            cmds.setAttr(f"{drv}.drawStyle", 2)   # amagats
-        return self.drivers
+            self.joints.insert(0, cmds.parent(jnt, parent)[0])
+        return self.joints
 
     def _skin_surface(self, mid_ratio):
         n = self.rig_name
-        skin = cmds.skinCluster(self.drivers, self.surface, tsb=True, mi=2,
+        skin = cmds.skinCluster(self.joints, self.surface, tsb=True, mi=2,
                                 n=f"{n}_neckRibbon_SKC")[0]
         cmds.setAttr(f"{skin}.normalizeWeights", 0)
 
@@ -167,7 +156,7 @@ class HorseNeck(object):
         num_u = cmds.getAttr(f"{shape}.spansU") + cmds.getAttr(f"{shape}.degreeU")
         num_v = cmds.getAttr(f"{shape}.spansV") + cmds.getAttr(f"{shape}.degreeV")
 
-        d0, d1, d2 = self.drivers
+        d0, d1, d2 = self.joints
 
         # 1) Pesos fets a ma, si n hi ha i quadren amb la NURBS
         table = self.skin_weights
@@ -206,7 +195,7 @@ class HorseNeck(object):
         names = ["neckBase", "neckMid", "neckEnd"]
         tops = []
         self.controls = []
-        for name, drv in zip(names, self.drivers):
+        for name, drv in zip(names, self.joints):
             ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.ctrl_style,
                 final_name=f"{n}_{name}_CTRL"
@@ -219,14 +208,14 @@ class HorseNeck(object):
         cmds.parent(tops[1], self.controls[0])
         cmds.parent(tops[2], self.controls[1])
 
-        for ctrl, drv in zip(self.controls, self.drivers):
+        for ctrl, drv in zip(self.controls, self.joints):
             cmds.parentConstraint(ctrl, drv, mo=True, n=f"{drv}_PAC")
         return tops
 
     # ------------------------------------------------------------------ #
-    # 4. UVPIN + JOINTS DE SORTIDA
+    # 4. UVPIN (opcional)
     # ------------------------------------------------------------------ #
-    def _build_output_joints(self, parent):
+    def _build_pinned_joints(self, parent):
         n = self.rig_name
         shape = cmds.listRelatives(self.surface, s=True, f=True)[0]
 
@@ -237,22 +226,24 @@ class HorseNeck(object):
         cmds.setAttr(f"{pin}.tangentAxis", 2)   # Z = tangent U (amplada)
         self.uv_pin = pin
 
-        self.joints = []
-        for i in range(self.v_patches + 1):
+        self.pinned = []
+        for i in range(self.pin_joints):
             cmds.setAttr(f"{pin}.coordinate[{i}].coordinateU", 0.5)
-            cmds.setAttr(f"{pin}.coordinate[{i}].coordinateV", i / float(self.v_patches))
+            cmds.setAttr(f"{pin}.coordinate[{i}].coordinateV",
+                         i / float(max(self.pin_joints - 1, 1)))
 
             cmds.select(clear=True)
-            jnt = cmds.joint(n=f"{n}_neck_{i + 1:02d}_JNT")
+            jnt = cmds.joint(n=f"{n}_neckPin_{i + 1:02d}_JNT")
             jnt = cmds.parent(jnt, parent)[0]
             for attr in ("translate", "rotate", "jointOrient"):
                 cmds.setAttr(f"{jnt}.{attr}", 0, 0, 0)
             cmds.connectAttr(f"{pin}.outputMatrix[{i}]", f"{jnt}.offsetParentMatrix")
-            self.joints.append(jnt)
+            self.pinned.append(jnt)
         cmds.select(clear=True)
 
-        self._fix_pin_axes()
-        return self.joints
+        if len(self.pinned) > 1:
+            self._fix_pin_axes()
+        return self.pinned
 
     def _fix_pin_axes(self):
         """
@@ -261,12 +252,12 @@ class HorseNeck(object):
         poden sortir girades: es comprova amb els dos primers joints.
         """
         pin = self.uv_pin
-        _, y, _ = self._world_axes(self.joints[0])
+        _, y, _ = self._world_axes(self.pinned[0])
         if self._dot(y, (0, 1, 0)) < 0:
             cmds.setAttr(f"{pin}.normalAxis", 4)   # -Y
 
-        x, _, p0 = self._world_axes(self.joints[0])
-        _, _, p1 = self._world_axes(self.joints[1])
+        x, _, p0 = self._world_axes(self.pinned[0])
+        _, _, p1 = self._world_axes(self.pinned[1])
         if self._dot(x, self._sub(p1, p0)) < 0:
             current = cmds.getAttr(f"{pin}.tangentAxis")
             cmds.setAttr(f"{pin}.tangentAxis", 5 if current == 2 else 2)   # Z <-> -Z
@@ -290,10 +281,11 @@ class HorseNeck(object):
         ctrl_grp = cmds.createNode("transform", n=f"{n}_neckControls_GRP")
 
         _, mid_ratio = self._build_surface(guide_pos, sys_grp)
-        self._build_drivers(guide_pos, sys_grp)
+        self._build_joints(guide_pos, jnt_grp)
         self._skin_surface(mid_ratio)
         tops = self._build_controls(ctrl_grp)
-        self._build_output_joints(jnt_grp)
+        if self.pin_joints:
+            self._build_pinned_joints(jnt_grp)
 
         # --- Organitzacio -----------------------------------------------------
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None
@@ -315,6 +307,7 @@ class HorseNeck(object):
             cmds.warning(f"[HorseNeck] No s ha trobat {self.parent_joint}: "
                          f"el coll no segueix l espina.")
 
-        print(f"[HorseNeck] Ribbon construit: NURBS {self.u_patches}x{self.v_patches} patches, "
-              f"{len(self.joints)} joints, 3 controls.")
+        print(f"[HorseNeck] Ribbon construit: NURBS {self.u_spans}x{self.v_spans} spans "
+              f"(grau {self.u_degree}/{self.v_degree}), {len(self.joints)} joints de skin, "
+              f"{len(self.pinned)} pinned, 3 controls.")
         return self

@@ -27,7 +27,39 @@ import horse_neck
 
 
 class BuildRig(object):
-    
+
+    # Superficie del torax per a l escapula (proximityPin).
+    # Canvia el nom pel de la teva NURBS/malla. Si no existeix a l escena,
+    # les cames de davant es construeixen sense la projeccio.
+    SCAPULA_SURFACE = "scapula_surface_NRB"
+
+    def build_scapula_surface(self):
+        """
+        Copia la guia de la superficie del torax dins del rig i l enganxa al
+        pit de l espina. Retorna el nom de la copia (o None si no hi ha guia).
+        """
+        guide = self.SCAPULA_SURFACE
+        if not guide or not cmds.objExists(guide):
+            cmds.warning(f"[Leg] No hi ha {guide}: l escapula no es projecta. "
+                         f"Torna a crear les guies.")
+            return None
+
+        surf = cmds.duplicate(guide, n="Character_scapulaSurface_NRB")[0]
+        if cmds.listRelatives(surf, p=True):
+            surf = cmds.parent(surf, world=True)[0]
+
+        rig_grp = f"{self.root_rig.rig_name}_rig_GRP"
+        if cmds.objExists(rig_grp):
+            surf = cmds.parent(surf, rig_grp)[0]
+        cmds.setAttr(f"{surf}.visibility", 0)
+
+        if self.spine_chest and cmds.objExists(self.spine_chest):
+            cmds.parentConstraint(self.spine_chest, surf, mo=True,
+                                  n=f"{surf}_PAC")
+            cmds.scaleConstraint(self.spine_chest, surf, mo=True,
+                                 n=f"{surf}_SCC")
+        return surf
+
     def build(self):
         """Este es el método que llama el botón BUILD de la UI"""
         print("Iniciando construcción del Rig...")
@@ -72,8 +104,10 @@ class BuildRig(object):
                 mid_guide="neck_mid",
                 end_guide="neck_end",
                 rig_name="Character",
-                v_patches=10,
-                u_patches=2,
+                v_spans=2,
+                v_degree=3,
+                u_spans=1,
+                u_degree=2,
                 parent_joint=self.spine_chest,
                 root_instance=self.root_rig
             )
@@ -130,13 +164,19 @@ class BuildRig(object):
         # Mateix LegModule per a les quatre potes, amb hoof=True.
         #   davant:   escapula  -> pit de l espina,    guies sense sufix
         #   darrere:  legRoot   -> pelvis de l espina, guies amb sufix _back
+        # Superficie del torax: se n fa una copia dins del rig, enganxada al
+        # pit de l espina, perque la guia original es pugui esborrar
+        scapula_surface = self.build_scapula_surface()
+
         leg_setups = [
-            # DAVANT: escapula flotant, IK de 2 segments
+            # DAVANT: escapula (opcionalment lliscant pel torax), IK de 2 segments
             {"rig_name": "Leg", "suffix": "", "spine_parent": self.spine_chest,
-             "clavicle": True, "scapula": True, "three_bone": False},
+             "clavicle": True, "scapula": True, "three_bone": False,
+             "scapula_surface": scapula_surface},
             # DARRERE: sense clavicula (pelvis de l espina), IK spring de 3 segments
             {"rig_name": "BackLeg", "suffix": "_back", "spine_parent": self.spine_pelvis,
-             "clavicle": False, "scapula": False, "three_bone": True},
+             "clavicle": False, "scapula": False, "three_bone": True,
+             "scapula_surface": None},
         ]
 
         self.leg_rigs = {}
@@ -174,6 +214,7 @@ class BuildRig(object):
                         bank_in_guide=guides["hoof_in"],
                         bank_out_guide=guides["hoof_out"],
                         scapula=setup["scapula"],
+                        scapula_surface=setup.get("scapula_surface"),
                         clavicle=setup["clavicle"],
                         three_bone=setup["three_bone"],
                         hock_guide=guides.get("hock")

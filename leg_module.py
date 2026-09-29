@@ -33,6 +33,7 @@ class LegModule(object):
                  bank_in_guide=None,
                  bank_out_guide=None,
                  scapula=False,
+                 scapula_surface=None,
                  clavicle=True,
                  three_bone=False,
                  hock_guide=None):
@@ -111,6 +112,9 @@ class LegModule(object):
         #   |- claviculeHip_CTRL      pivot a la clavicula, orientat al hip
         #                             -> legRoot_CTRL emparentat a sota + arrel del FK
         self.scapula = scapula
+        #Superficie del torax per projectar l escapula (proximityPin).
+        #Si es None, l escapula nomes segueix el seu control.
+        self.scapula_surface = scapula_surface
 
         self.bind_chain = []
         self.ik_chain = []
@@ -224,6 +228,41 @@ class LegModule(object):
                                  aimVector=aim, upVector=(0, 1, 0),
                                  worldUpType="vector", worldUpVector=(1, 0, 0))
         cmds.delete(tmp)
+
+    def build_scapula_pin(self, bind_joint):
+        """
+        Escapula projectada sobre el torax amb UN sol node: proximityPin.
+
+            superficie.worldSpace[0]   -> proximityPin.deformedGeometry
+            bind_joint.worldMatrix[0]  -> proximityPin.inputMatrix[0]
+            proximityPin.outputMatrix[0] -> projected.offsetParentMatrix
+
+        El projected es un duplicat del bind fora de la jerarquia.
+        """
+        p = self.prefix
+        shape = cmds.listRelatives(self.scapula_surface, s=True, f=True)
+        shape = shape[0] if shape else self.scapula_surface
+
+        projected = cmds.duplicate(bind_joint, po=True,
+                                   n=f"{p}_claviculeStartProjected_JNT")[0]
+        if cmds.listRelatives(projected, p=True):
+            projected = cmds.parent(projected, world=True)[0]
+        # canals a zero: l offsetParentMatrix ja porta tota la transformacio
+        for attr in ("translate", "rotate", "jointOrient"):
+            cmds.setAttr(f"{projected}.{attr}", 0, 0, 0)
+
+        pin = cmds.createNode("proximityPin", n=f"{p}_scapula_PXP")
+        cmds.connectAttr(f"{shape}.worldSpace[0]", f"{pin}.deformedGeometry")
+        cmds.connectAttr(f"{bind_joint}.worldMatrix[0]", f"{pin}.inputMatrix[0]")
+        cmds.connectAttr(f"{pin}.outputMatrix[0]", f"{projected}.offsetParentMatrix")
+        cmds.setAttr(f"{pin}.coordMode",1)
+        cmds.setAttr(f"{pin}.offsetTranslation", 0)
+        cmds.setAttr(f"{pin}.offsetOrientation", 0)
+
+
+        self.scapula_pin = pin
+        self.scapula_projected = projected
+        return pin
 
     def build_hoof_attrs(self, ik_ctrl, roll_ball_plug, ball_sdk, tip_sdk,
                          bank_in_sdk, bank_out_sdk, curl_sdk):
@@ -653,8 +692,10 @@ class LegModule(object):
         # ---- CONSTRAINTS IK ----
         # ---- CONSTRAINTS CLAVICULE ----
         if self.clavicle and self.scapula:
-            cmds.parentConstraint(clavicule_ctrl,       c_cl,       mo=True)   # arrel
+            cmds.parentConstraint(clavicule_ctrl, c_cl, mo=True)   # arrel
             cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)   # escapula
+            if self.scapula_surface and cmds.objExists(self.scapula_surface):
+                self.build_scapula_pin(b_cl_start)
         elif self.clavicle:
             cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)
             cmds.parentConstraint(clavicule_ctrl,       c_cl,       mo=True)

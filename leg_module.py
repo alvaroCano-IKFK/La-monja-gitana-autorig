@@ -276,7 +276,8 @@ class LegModule(object):
         cmds.connectAttr(f"{shape}.worldSpace[0]", f"{pin}.deformedGeometry")
         cmds.connectAttr(f"{bind_joint}.worldMatrix[0]", f"{pin}.inputMatrix[0]")
         cmds.connectAttr(f"{pin}.outputMatrix[0]", f"{projected}.offsetParentMatrix")
-
+        cmds.setAttr(f"{pin}.offsetTranslation",0)
+        cmds.setAttr(f"{pin}.offsetOrientation",0)
         self.scapula_pin = pin
         self.scapula_projected = projected
         return pin

@@ -471,23 +471,130 @@ def export_guides(filepath=None, root=GUIDES_ROOT, recipe=None):
 # ----------------------------------------------------------------------
 # IMPORT
 # ----------------------------------------------------------------------
+#: Nombre de forma que entiende cmds.surface para cada valor de formU/formV.
+_FORM_NAMES = {0: "open", 1: "closed", 2: "periodic"}
+
+
+def _uniform_knots(degree, spans, form):
+    """
+    Vector de nudos uniforme, con la convencion de Maya (numCV + degree - 1
+    nudos, sin los extremos duplicados de mas que usan otros programas).
+
+    - abierta:  [0]*d + [1..spans-1] + [spans]*d
+    - periodica: de -(d-1) hasta spans+d-1
+
+    Se generan en vez de exportarlos porque cmds no da acceso a los nudos de
+    una superficie, y todo lo que hay en las guias (revolve + rebuildSurface,
+    nurbsPlane) sale con parametrizacion uniforme. Si algun dia metes una
+    superficie con nudos irregulares, la forma se reconstruira aproximada.
+    """
+    if form == 0:
+        return ([0.0] * degree
+                + [float(i) for i in range(1, spans)]
+                + [float(spans)] * degree)
+
+    return [float(i) for i in range(-(degree - 1), spans + degree)]
+
+
+def _wrap_rows(rows, degree, form):
+    """
+    En periodica, la lista de puntos tiene que cerrar el bucle repitiendo los
+    primeros `degree` elementos al final. El export solo guarda los unicos.
+    """
+    if form == 0:
+        return rows
+
+    return list(rows) + list(rows[:degree])
+
+
 def _create_nurbs_surface(entry):
     """
-    Recrea el plano NURBS. Como despues se colocan TODOS los CVs uno a uno,
-    lo unico que tiene que coincidir es la topologia (grado y spans): la forma
-    de partida da igual.
+    Recrea la superficie con su FORMA real (abierta o periodica), no como un
+    plano.
+
+    Antes esto creaba siempre un nurbsPlane, que es abierto en U y V. Con una
+    superficie periodica, como la del craneo de las cejas (un revolve de 360),
+    el plano sale con `degree` filas de CVs de mas: el import rellenaba las
+    primeras y las sobrantes se quedaban donde las dejo el plano, cerca del
+    origen. Ese era el puñado de CVs que se iban al centro de la escena.
+
+    Los CVs van en la propia creacion, en espacio objeto, asi que no hace falta
+    recolocarlos despues.
     """
     shape_data = entry["shape"]
 
     degree_u = shape_data["degreeU"]
     degree_v = shape_data["degreeV"]
+    spans_u = shape_data["spansU"]
+    spans_v = shape_data["spansV"]
+    form_u = shape_data.get("formU", 0)
+    form_v = shape_data.get("formV", 0)
 
-    if degree_u != degree_v:
+    # La forma "closed" (1) no es periodica pero tampoco abierta, y no la usa
+    # ninguna guia actual. Antes de reconstruirla mal en silencio, se avisa y
+    # se cae al metodo viejo.
+    if 1 in (form_u, form_v):
         cmds.warning(
-            "La superficie '{0}' tiene grados distintos en U y V ({1}/{2}). "
-            "Se reconstruye con grado {1} en ambos.".format(
-                entry["name"], degree_u, degree_v)
-        )
+            "La superficie '{0}' es 'closed' y no se reconstruye exacta. "
+            "Revisa su forma despues de importar.".format(entry["name"]))
+
+        return _create_nurbs_surface_from_plane(entry)
+
+    rows = [list(row) for row in shape_data["cvs"]]
+
+    # Se cierra primero en V (dentro de cada fila) y luego en U (filas enteras)
+    rows = [_wrap_rows(row, degree_v, form_v) for row in rows]
+    rows = _wrap_rows(rows, degree_u, form_u)
+
+    points = [tuple(position) for row in rows for position in row]
+
+    node = cmds.surface(
+        du=degree_u,
+        dv=degree_v,
+        fu=_FORM_NAMES.get(form_u, "open"),
+        fv=_FORM_NAMES.get(form_v, "open"),
+        ku=_uniform_knots(degree_u, spans_u, form_u),
+        kv=_uniform_knots(degree_v, spans_v, form_v),
+        p=points,
+    )
+
+    return _tidy_new_surface(node)
+
+
+def _tidy_new_surface(node):
+    """
+    Deja la superficie recien creada como la dejaria cmds.nurbsPlane.
+
+    Dos diferencias de cmds.surface() que hay que corregir:
+
+    1. Devuelve la SHAPE, no el transform. El import empareja y renombra
+       transforms, asi que devolver la shape hace que 'parent' avise de que
+       solo opera con transforms y que el renombrado caiga en la shape.
+
+    2. No la conecta a ningun shading group. Una superficie sin shader se
+       dibuja en verde chillon en modo shaded; nurbsPlane si la conecta.
+    """
+    if cmds.nodeType(node) == "transform":
+        transform = node
+        shapes = cmds.listRelatives(node, shapes=True, fullPath=True) or []
+    else:
+        parents = cmds.listRelatives(node, parent=True, fullPath=True) or []
+        transform = parents[0] if parents else node
+        shapes = [node]
+
+    for shape in shapes:
+        try:
+            cmds.sets(shape, forceElement="initialShadingGroup", edit=True)
+        except Exception as error:
+            cmds.warning("No puedo asignar shader a {0}: {1}".format(shape, error))
+
+    return transform
+
+
+def _create_nurbs_surface_from_plane(entry):
+    """Metodo antiguo, solo para las formas que no se saben reconstruir."""
+    shape_data = entry["shape"]
+    degree_u = shape_data["degreeU"]
 
     node = cmds.nurbsPlane(
         ax=(0, 1, 0),
@@ -499,14 +606,12 @@ def _create_nurbs_surface(entry):
         ch=False,
     )[0]
 
-    return node
-
-
-def _apply_nurbs_surface_cvs(node, entry):
-    for i, row in enumerate(entry["shape"]["cvs"]):
+    for i, row in enumerate(shape_data["cvs"]):
         for j, position in enumerate(row):
-            cv = "{0}.cv[{1}][{2}]".format(node, i, j)
-            cmds.xform(cv, os=True, t=position)
+            cmds.xform("{0}.cv[{1}][{2}]".format(node, i, j),
+                       os=True, t=position)
+
+    return node
 
 
 def _create_nurbs_curve(entry):
@@ -733,8 +838,8 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
         _apply_transform(node, entry)
         _apply_user_attrs(node, entry)
 
-        if kind == "nurbsSurface":
-            _apply_nurbs_surface_cvs(node, entry)
+        # Los CVs de las superficies ya van puestos en la creacion
+        # (_create_nurbs_surface), asi que aqui no se tocan.
 
         created[entry["path"]] = node
 

@@ -842,9 +842,51 @@ class EyebrowSkullGuides(object):
         cmds.rebuildSurface(surface, ch=0, rpo=1, kr=0, kcp=0, kc=0,
                             su=8, du=3, sv=6, dv=3)
 
+        self._face_normals_outward(surface)
+
         self.guides_group = cmds.group(surface, n="eyebrowSkull_guides_GRP")
         cmds.select(clear=True)
         return self.guides_group
+
+    def _face_normals_outward(self, surface):
+        """
+        Deja las normales mirando hacia fuera del craneo.
+
+        El sentido de las normales de un revolve depende de en que direccion
+        recorre el perfil y de como barre el sweep: con este perfil salen hacia
+        dentro. En vez de invertir los puntos del perfil a ojo, se MIDE: se
+        coge un punto en medio de la superficie y se compara su normal con la
+        direccion que va del centro del craneo a ese punto. Si apuntan al
+        reves, se invierte.
+
+        Se hace asi para que siga saliendo bien si algun dia cambias el perfil
+        o el sentido del sweep.
+        """
+        u_min, u_max = cmds.getAttr(f"{surface}.minMaxRangeU")[0]
+        v_min, v_max = cmds.getAttr(f"{surface}.minMaxRangeV")[0]
+        u_mid = (u_min + u_max) * 0.5
+        v_mid = (v_min + v_max) * 0.5
+
+        try:
+            point = cmds.pointOnSurface(surface, u=u_mid, v=v_mid, position=True)
+            normal = cmds.pointOnSurface(surface, u=u_mid, v=v_mid, normal=True)
+        except Exception as error:
+            cmds.warning(f"[Guides] No puedo medir las normales de {surface}: "
+                         f"{error}")
+            return surface
+
+        outward = [point[i] - self.center[i] for i in range(3)]
+        dot = sum(outward[i] * normal[i] for i in range(3))
+
+        if dot >= 0:
+            return surface
+
+        # reverseSurface en U invierte la normal. rpo=1 la reemplaza en sitio,
+        # asi no queda una superficie nueva con otro nombre.
+        cmds.reverseSurface(surface, direction=0, ch=0, rpo=1)
+        print(f"[Guides] Normales de {surface} invertidas: miraban hacia dentro.")
+
+        return surface
 
 class NoseGuides(object):
     """
@@ -1163,19 +1205,42 @@ class CharacterGuides(object):
     # ------------------------------------------------------------------
     # AGRUPAR
     # ------------------------------------------------------------------
+    def _legacy_offset_on_root(self):
+        """
+        True si l escena ve de la versio antiga, on el desplacament estava al
+        propi guides_GRP i no als grups de dins.
+
+        No es mira el translateY del guides_GRP: si l usuari l ha mogut a ma,
+        semblaria una escena antiga. El que es mira es si algun fill ja porta
+        el desplacament. Si el porta, l escena es nova.
+        """
+        children = cmds.listRelatives(self.GUIDES_ROOT, children=True,
+                                      type="transform") or []
+
+        if not children:
+            return False
+
+        for child in children:
+            value = cmds.getAttr(f"{child}.translateY")
+            if abs(value - self.GUIDES_OFFSET_Y) < 1e-3:
+                return False
+
+        return True
+
     def _group_new_guides(self, groups):
         """
         Posa els grups nous sota guides_GRP.
 
-        Totes les guies es creen a les seves posicions "crues", pensades per
-        quedar al seu lloc quan guides_GRP puja GUIDES_OFFSET_Y.
+        Les guies es creen a les seves posicions "crues" (el turmell a Y = -30)
+        i despres pugen GUIDES_OFFSET_Y per deixar els peus a terra.
 
-        - Si guides_GRP no existeix, es crea amb els grups nous i es puja,
-          exactament com abans.
-        - Si ja existeix, els grups nous hi entren en RELATIU: conserven la
-          posicio local i per tant reben el mateix desplacament (i escala, si
-          l has escalat) que la resta de guies. En absolut quedarien
-          GUIDES_OFFSET_Y per sota de les altres.
+        Aquest desplacament el porta cada GRUP FILL, no el guides_GRP. Abans
+        anava al guides_GRP, i el deixava a (0, 32.5, 0): fora de l origen, i
+        escalant-lo escalava al voltant d un punt que no es el terra. Ara el
+        guides_GRP es queda en identitat i es pot moure i escalar net.
+
+        Escenes antigues: si el guides_GRP ja porta ell el desplacament, els
+        grups nous entren a zero perque no se sumi dues vegades.
         """
         groups = [g for g in groups if g and cmds.objExists(g)]
 
@@ -1186,12 +1251,30 @@ class CharacterGuides(object):
             #ja pengen d una guia existent: no hi ha res a agrupar.
             return self.all_guides_grp
 
-        if cmds.objExists(self.GUIDES_ROOT):
+        root_exists = cmds.objExists(self.GUIDES_ROOT)
+        offset = self.GUIDES_OFFSET_Y
+
+        if root_exists and self._legacy_offset_on_root():
+            offset = 0.0
+            print("[Guides] guides_GRP ve de la versio antiga (porta ell el "
+                  "desplacament). Els grups nous entren a zero.")
+
+        for group in groups:
+            cmds.setAttr(f"{group}.translateY", offset)
+
+        if root_exists:
+            #relative=True: conserven el translateY que acabem de posar i
+            #reben la transformacio del guides_GRP com la resta.
             cmds.parent(groups, self.GUIDES_ROOT, relative=True)
             self.all_guides_grp = self.GUIDES_ROOT
         else:
+            #El grup queda en identitat, al 0 del mon.
             self.all_guides_grp = cmds.group(groups, n=self.GUIDES_ROOT)
-            cmds.setAttr(f"{self.all_guides_grp}.translateY", self.GUIDES_OFFSET_Y)
+
+            #cmds.group posa el pivot al centre del bounding box del que
+            #agrupa, no a l origen: el translate marca 0 pero la manija surt a
+            #l altura del cap. S hi posa a ma, al 0 del mon, que es el terra.
+            cmds.xform(self.all_guides_grp, worldSpace=True, pivots=(0, 0, 0))
 
         return self.all_guides_grp
 

@@ -9,6 +9,7 @@ import guides_io_module
 import mirror_module
 import build_module
 import eyes_module
+import controlTools_module
 
 #Recarrega en calent: a Maya els moduls es queden a la cache i si no es
 #recarreguen, els canvis als specs no arriben mai a la finestra.
@@ -187,6 +188,30 @@ class Window(QtWidgets.QDialog):
             border=self.COLOR_BORDER,
             pressed_bg=self.COLOR_PRESSED_BG,
         ))
+
+    def checkbox_style(self, check):
+        """Estil de les checkbox, compartit per totes."""
+        check.setStyleSheet("""
+            QCheckBox {{
+                font-family: 'Georgia', serif;
+                font-size: 12px;
+                color: {accent};
+                background-color: transparent;
+                spacing: 6px;
+            }}
+            QCheckBox::indicator {{
+                width: 12px;
+                height: 12px;
+                border: 1px solid {border};
+                border-radius: 2px;
+                background-color: {panel_bg};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {accent};
+            }}
+        """.format(accent=self.COLOR_ACCENT,
+                   border=self.COLOR_BORDER,
+                   panel_bg=self.COLOR_PANEL_BG))
 
     def compact_button(self, button, width=90):
         """
@@ -441,27 +466,7 @@ class Window(QtWidgets.QDialog):
         self.all_modules_check.setToolTip(
             "Afegeix tots els moduls a l arbre amb les seves features per "
             "defecte. En desmarcar-la, buida l arbre.")
-        self.all_modules_check.setStyleSheet("""
-            QCheckBox {{
-                font-family: 'Georgia', serif;
-                font-size: 12px;
-                color: {accent};
-                background-color: transparent;
-                spacing: 6px;
-            }}
-            QCheckBox::indicator {{
-                width: 12px;
-                height: 12px;
-                border: 1px solid {border};
-                border-radius: 2px;
-                background-color: {panel_bg};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {accent};
-            }}
-        """.format(accent=self.COLOR_ACCENT,
-                   border=self.COLOR_BORDER,
-                   panel_bg=self.COLOR_PANEL_BG))
+        self.checkbox_style(self.all_modules_check)
 
         #Boto de guies, petit, sota l arbre. Crea nomes les guies dels moduls
         #que hi ha a l arbre (mira create_guides).
@@ -587,6 +592,72 @@ class Window(QtWidgets.QDialog):
         self.eye_lower_btn = QtWidgets.QPushButton("LOWER LOOP CURVE")
         self.general_style(self.eye_lower_btn)
 
+        #---- Tools > Control color ----
+        self.color_title = self.collapsible("Control color")
+
+        self.color_hierarchy_check = QtWidgets.QCheckBox("Tota la jerarquia")
+        self.checkbox_style(self.color_hierarchy_check)
+        self.color_hierarchy_check.setToolTip(
+            "Aplica tambe als controls que pengen del seleccionat. Els grups "
+            "(_GRP, _SPC, _OFF, _SDK) no es toquen: nomes transforms amb corba.")
+
+        #Un boto per index de color. El RGB es nomes per pintar el boto: el que
+        #es guarda al node es l index, que es com funcionen els drawing
+        #overrides de Maya.
+        self.color_buttons = []
+        for index in controlTools_module.COLOR_INDICES:
+            red, green, blue = controlTools_module.swatch_rgb(index)
+            btn = QtWidgets.QPushButton()
+            btn.setFixedSize(20, 20)
+            btn.setToolTip("Index {}".format(index))
+            btn.setStyleSheet("""
+                QPushButton {{
+                    background-color: rgb({r}, {g}, {b});
+                    border: 1px solid {border};
+                    border-radius: 2px;
+                }}
+                QPushButton:hover {{ border: 2px solid {accent}; }}
+            """.format(r=int(red * 255), g=int(green * 255), b=int(blue * 255),
+                       border=self.COLOR_BORDER, accent=self.COLOR_ACCENT))
+            self.color_buttons.append((btn, index))
+
+        self.color_default_btn = QtWidgets.QPushButton("DEFAULT COLOR")
+        self.general_style(self.color_default_btn)
+        self.color_default_btn.setToolTip("Treu l override i deixa el control "
+                                          "amb el seu color original.")
+
+        #---- Tools > Lock attributes ----
+        self.lock_title = self.collapsible("Lock attributes")
+
+        self.channel_checks = []
+        for attribute, label in controlTools_module.CHANNELS:
+            check = QtWidgets.QCheckBox(label)
+            self.checkbox_style(check)
+            self.channel_checks.append((check, attribute))
+
+        self.channels_all_btn = QtWidgets.QPushButton("ALL")
+        self.general_style(self.channels_all_btn)
+        self.compact_button(self.channels_all_btn, width=60)
+
+        self.channels_none_btn = QtWidgets.QPushButton("NONE")
+        self.general_style(self.channels_none_btn)
+        self.compact_button(self.channels_none_btn, width=60)
+
+        self.lock_hierarchy_check = QtWidgets.QCheckBox("Tota la jerarquia")
+        self.checkbox_style(self.lock_hierarchy_check)
+
+        self.lock_hide_check = QtWidgets.QCheckBox("Amagar del channel box")
+        self.checkbox_style(self.lock_hide_check)
+        self.lock_hide_check.setChecked(True)
+        self.lock_hide_check.setToolTip(
+            "Desmarcada: el canal queda bloquejat pero visible.")
+
+        self.lock_btn = QtWidgets.QPushButton("LOCK")
+        self.general_style(self.lock_btn)
+
+        self.unlock_btn = QtWidgets.QPushButton("UNLOCK")
+        self.general_style(self.unlock_btn)
+
         # ---- DESACTIVAT DE MOMENT ------------------------------------
         # Inner ref, check i diagnose. El codi es queda aqui perque funciona;
         # nomes esta comentat perque a la finestra fa nosa. Per tornar-ho a
@@ -694,6 +765,8 @@ class Window(QtWidgets.QDialog):
         tools_layout.setSpacing(8)
         tools_layout.addWidget(self.tools_title)
         tools_layout.addWidget(self.eyes_title[0])
+        tools_layout.addWidget(self.color_title[0])
+        tools_layout.addWidget(self.lock_title[0])
         tools_layout.addStretch()
 
         # ---- Tools > Eye loop curves ----
@@ -723,6 +796,43 @@ class Window(QtWidgets.QDialog):
         # eye_diag_layout.addWidget(self.eye_diag_lower_btn)
         # self.eyes_title[1].addLayout(eye_diag_layout)
         # --------------------------------------------------------------
+
+        # ---- Tools > Control color ----
+        self.color_title[1].addWidget(self.color_hierarchy_check)
+
+        #Graella de 8 columnes: 31 colors caben en 4 files dins del panell.
+        color_grid = QtWidgets.QGridLayout()
+        color_grid.setSpacing(3)
+        for position, (btn, _index) in enumerate(self.color_buttons):
+            color_grid.addWidget(btn, position // 8, position % 8)
+        color_grid.setColumnStretch(8, 1)
+        self.color_title[1].addLayout(color_grid)
+
+        self.color_title[1].addWidget(self.color_default_btn)
+
+        # ---- Tools > Lock attributes ----
+        #Els canals en graella de 3, que es com es llegeixen: TX TY TZ / RX RY RZ
+        channels_grid = QtWidgets.QGridLayout()
+        channels_grid.setSpacing(2)
+        for position, (check, _attribute) in enumerate(self.channel_checks):
+            channels_grid.addWidget(check, position // 3, position % 3)
+        self.lock_title[1].addLayout(channels_grid)
+
+        channels_btn_layout = QtWidgets.QHBoxLayout()
+        channels_btn_layout.setContentsMargins(0, 0, 0, 0)
+        channels_btn_layout.addWidget(self.channels_all_btn)
+        channels_btn_layout.addWidget(self.channels_none_btn)
+        channels_btn_layout.addStretch()
+        self.lock_title[1].addLayout(channels_btn_layout)
+
+        self.lock_title[1].addWidget(self.lock_hierarchy_check)
+        self.lock_title[1].addWidget(self.lock_hide_check)
+
+        lock_btn_layout = QtWidgets.QHBoxLayout()
+        lock_btn_layout.setContentsMargins(0, 0, 0, 0)
+        lock_btn_layout.addWidget(self.lock_btn)
+        lock_btn_layout.addWidget(self.unlock_btn)
+        self.lock_title[1].addLayout(lock_btn_layout)
 
         # ---- 3. Build rig ----
         self.build_title[1].addWidget(self.build_btn)
@@ -1151,6 +1261,44 @@ class Window(QtWidgets.QDialog):
                 QtCore.Qt.Checked if key in features else QtCore.Qt.Unchecked)
 
     # ------------------------------------------------------------------
+    # TOOLS: COLOR I BLOQUEIG
+    # ------------------------------------------------------------------
+    def apply_color(self, index):
+        """
+        Pinta els controls seleccionats amb un index de color de Maya.
+
+        index 0 = treure l override.
+        """
+        return controlTools_module.set_color(
+            index, hierarchy=self.color_hierarchy_check.isChecked())
+
+    def selected_channels(self):
+        """Canals marcats a la secció Lock attributes."""
+        return [attribute for check, attribute in self.channel_checks
+                if check.isChecked()]
+
+    def set_all_channels(self, checked):
+        for check, _attribute in self.channel_checks:
+            check.setChecked(checked)
+
+    def apply_lock(self, lock):
+        """
+        Bloqueja o desbloqueja els canals marcats.
+
+        En desbloquejar s ignora la casella d amagar: no tindria sentit
+        desbloquejar un canal i deixar-lo fora del channel box, l animador no
+        el veuria igualment.
+        """
+        hide = self.lock_hide_check.isChecked() if lock else False
+
+        return controlTools_module.set_attributes(
+            self.selected_channels(),
+            lock=lock,
+            hide=hide,
+            hierarchy=self.lock_hierarchy_check.isChecked(),
+        )
+
+    # ------------------------------------------------------------------
     # CORBES DE LOOP DELS ULLS
     # ------------------------------------------------------------------
     def _get_eye_naming(self):
@@ -1300,6 +1448,18 @@ class Window(QtWidgets.QDialog):
         for btn, module_type in self.module_type_buttons:
             btn.clicked.connect(
                 lambda checked=False, m=module_type: self.add_module(m))
+
+        for btn, index in self.color_buttons:
+            btn.clicked.connect(
+                lambda checked=False, i=index: self.apply_color(i))
+        self.color_default_btn.clicked.connect(lambda: self.apply_color(0))
+
+        self.channels_all_btn.clicked.connect(
+            lambda: self.set_all_channels(True))
+        self.channels_none_btn.clicked.connect(
+            lambda: self.set_all_channels(False))
+        self.lock_btn.clicked.connect(lambda: self.apply_lock(True))
+        self.unlock_btn.clicked.connect(lambda: self.apply_lock(False))
 
         self.eye_upper_btn.clicked.connect(
             lambda: self.build_loop_curve(upper=True))

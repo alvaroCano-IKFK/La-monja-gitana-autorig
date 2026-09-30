@@ -105,6 +105,33 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     # Ejes del aimMatrix, tal como los pide el documento: el primario alineado
     # con la tangente U de la superficie y el secundario con la V.
+    # ==================================================================
+    # DE DONDE SACAN LA ORIENTACION LAS DOS CADENAS
+    # ------------------------------------------------------------------
+    # Habia dos convenciones distintas conviviendo:
+    #
+    #   - Los joints conducidos (bezierCurve) apuntaban a su up_TRN, que va
+    #     sobre la upCurve. Y solo los dos primeros: del 03 en adelante solo
+    #     recibian translate, sin orientacion ninguna.
+    #   - Los proyectados (NURBS del craneo) sacaban la orientacion de las
+    #     tangentes U y V de la superficie, que no sabe nada de la upCurve.
+    #
+    # Por eso los proyectados no giraban al rotar un control y no coincidian
+    # con los de bind. Y por eso el parentConstraint del slide, al mezclar dos
+    # orientaciones que no coinciden, retorcia los joints a mitad de camino.
+    #
+    # Con las dos opciones a True las dos cadenas usan LA MISMA regla: apuntar
+    # al up_TRN con el eje chain_aim_vector. Lo unico que las diferencia es la
+    # posicion, que es de lo que va el slide.
+    UNIFORM_CHAIN_AIM = True      # todos los conducidos, no solo el 01 y el 02
+    SLIDE_ORIENT_FROM_UP_CURVE = True
+
+    # A True el proyectado usa ademas la normal de la NURBS como eje
+    # secundario, asi que se queda plano contra el craneo. Cuesta que deje de
+    # coincidir exactamente con el de bind, que no tiene secundario: eligelo
+    # segun quieras que el slide gire la ceja o no la gire.
+    SLIDE_SECONDARY_FROM_NORMAL = False
+
     SLIDE_PRIMARY_AXIS = (-1.0, 0.0, 0.0)
     SLIDE_SECONDARY_AXIS = (0.0, -1.0, 0.0)
     SLIDE_PRIMARY_MODE = 2      # 2 = align
@@ -149,8 +176,60 @@ class EyebrowsModule(object):
             "tangent_control_style", self.control_style
         )
 
+        # Giro y tamano de los CVs. Van en la SHAPE, nunca en el transform:
+        # girar o escalar el transform se lleva el pivote, y con el el joint
+        # que sigue al control y los constraints que lo usan de padre.
+        #
+        # 90 en X porque los controles de la libreria estan dibujados en el
+        # plano XZ, tumbados para el cuerpo, y en la cara tienen que mirar al
+        # frente.
+        self.cv_rotation = (90.0, 0.0, 0.0)
+
+        # Radio que tiene que medir un control de este modulo en el mundo,
+        # ya contando la escala del rig. Es EL numero a tocar si los ves
+        # grandes o pequenos.
+        #
+        # Va por radio y no por factor a proposito: el Main, los sub y las
+        # tangentes usan formas distintas de la libreria, y cada JSON esta
+        # dibujado a un tamano distinto. Multiplicarlas todas por 0.25 no las
+        # iguala, solo las encoge conservando la diferencia. Por eso el Main
+        # se quedaba grande. controlsLibrary.scale_for_radius mide cada forma
+        # y saca su factor.
+        self.control_radius_target = 0.5
+
+        # Multiplicadores sobre ese radio, por papel.
+        # Los sub a 1.0: quieres que midan como el Main.
+        # Las tangentes mas pequenas, como los sub del socket: van pegadas a
+        # su sub y si midieran igual no habria como pincharlas.
+        self.sub_cv_scale = 1.0
+        self.tangent_cv_scale = 0.6
+
         # Parametros configurables de la bezier / upCurve
         self.mid_tangent_scale = kwargs.get("mid_tangent_scale", 0.15)
+
+        # Hacia donde se separa la tangente de su esquina:
+        #   "mid"       -> hacia la guia del centro de la ceja
+        #   "neighbour" -> hacia la guia de al lado (comportamiento anterior)
+        #
+        # Con "neighbour" el factor era una fraccion de UN SOLO hueco entre
+        # guias, o sea un noveno de la ceja. Por eso la tangente salia pegada
+        # al CV de la punta y por eso subir el factor no se notaba: el 0.1 de
+        # diferencia se quedaba en un 1% de la ceja.
+        self.tangent_reference = kwargs.get("tangent_reference", "mid")
+
+        # Cuanto se separa la tangente de su esquina, en fraccion del LARGO
+        # TOTAL de la ceja (de la esquina In a la Out). 0.15 = un 15% de la
+        # ceja.
+        #
+        # Se mide contra el largo total y no contra el camino hasta el centro
+        # por simetria: el centro no cae justo en medio (con 10 guias esta en
+        # la 05, o sea a 4 huecos del In y a 5 del Out), asi que un mismo
+        # factor dejaba una tangente mas lejos que la otra. Midiendo contra el
+        # largo total, las dos quedan a la misma distancia de su esquina.
+        #
+        # La DIRECCION sigue siendo hacia el centro; lo que cambia es de donde
+        # sale la distancia.
+        self.tangent_control_factor = kwargs.get("tangent_control_factor", 0.15)
         self.up_curve_offset = kwargs.get("up_curve_offset", 0.5)
 
         self.up_curve_normal = kwargs.get("up_curve_normal", (0.0, 0.0, 1.0))
@@ -601,6 +680,78 @@ class EyebrowsModule(object):
     # ------------------------------------------------------------------
     # Motion paths i configuració d'aim
     # ------------------------------------------------------------------
+    def _brow_length(self, base_prefix):
+        """
+        Distancia en mundo entre las dos guias de esquina.
+
+        Es la medida que da sentido al factor de la tangente: separarla un 15%
+        significa un 15% de la ceja, no de un hueco entre guias ni del camino
+        hasta el centro, que no son iguales en los dos lados.
+        """
+        first = f"{self.side}_{base_prefix}_01"
+        last = f"{self.side}_{base_prefix}_{self.num_joints:02d}"
+
+        if not (cmds.objExists(first) and cmds.objExists(last)):
+            return 0.0
+
+        start = cmds.xform(first, q=True, ws=True, t=True)
+        end = cmds.xform(last, q=True, ws=True, t=True)
+
+        return math.sqrt(sum((a - b) ** 2 for a, b in zip(start, end)))
+
+    def _shape_scale(self, lib_name, factor=1.0):
+        """Factor de CVs para que 'lib_name' mida el radio objetivo."""
+        return controlsLibrary.scale_for_radius(
+            lib_name, self.control_radius_target * factor
+        )
+
+    def _aim_matrix_to_up(self, base_name, position_plug, up_trn):
+        """
+        Monta la pareja composeMatrix + aimMatrix que orienta un joint hacia su
+        up_TRN, y devuelve el plug de matriz resultante.
+
+        Es la misma receta que ya usaba el joint 01. Se saca aqui para poder
+        aplicarla igual a toda la cadena conducida y a los proyectados, que es
+        lo que hace que las dos cadenas acaben con la misma orientacion.
+
+        Args:
+            position_plug: plug que da la POSICION del joint (allCoordinates
+                del motionPath, o position del pointOnSurfaceInfo).
+        """
+        pos_cmm = self._ensure_node("composeMatrix", f"{base_name}Pos_CMM")
+        cmds.connectAttr(position_plug, f"{pos_cmm}.inputTranslate", force=True)
+
+        aim_cmm = self._ensure_node("composeMatrix", f"{base_name}Aim_CMM")
+        cmds.connectAttr(f"{up_trn}.translate", f"{aim_cmm}.inputTranslate",
+                         force=True)
+
+        amt = self._ensure_node("aimMatrix", f"{base_name}_AMT")
+        cmds.connectAttr(f"{pos_cmm}.outputMatrix", f"{amt}.inputMatrix",
+                         force=True)
+        cmds.connectAttr(f"{aim_cmm}.outputMatrix", f"{amt}.primaryTargetMatrix",
+                         force=True)
+        cmds.setAttr(f"{amt}.primaryInputAxis", *self.chain_aim_vector,
+                     type="double3")
+        cmds.setAttr(f"{amt}.primaryMode", 1)   # 1 = Aim (apunta a la posicion)
+
+        return amt
+
+    @staticmethod
+    def _zero_joint_channels(joint):
+        """
+        Deja un joint con los canales a cero para que solo mande su
+        offsetParentMatrix.
+
+        El offsetParentMatrix se compone ANTES que los canales locales: si el
+        translate conserva el valor con el que se creo el joint, la posicion se
+        aplica dos veces. Y el jointOrient se suma a la rotacion, cuando aqui
+        toda la orientacion ya viene dentro de la matriz.
+        """
+        cmds.setAttr(f"{joint}.translate", 0, 0, 0)
+        cmds.setAttr(f"{joint}.rotate", 0, 0, 0)
+        if cmds.attributeQuery("jointOrient", node=joint, exists=True):
+            cmds.setAttr(f"{joint}.jointOrient", 0, 0, 0)
+
     def _setup_motion_paths_and_aims(self):
         """Pas 9: crea els joints "driven" a la bezierCurve i els up
         transforms a la upCurve amb motionPath, i orienta els joints.
@@ -665,96 +816,56 @@ class EyebrowsModule(object):
 
         self.up_transforms = up_transforms
 
-        # 2) Primer joint (índex 0): composeMatrix (posició pròpia) +
-        #    aimMatrix (orientat cap al seu up_trn) -> offsetParentMatrix.
+        # 2) Orientacio de la cadena conduida.
+        #
+        #    Amb UNIFORM_CHAIN_AIM tots els joints segueixen la mateixa
+        #    receta que abans nomes feia servir el 01: composeMatrix amb la
+        #    seva posicio + aimMatrix cap al seu up_TRN -> offsetParentMatrix.
+        #
+        #    Abans nomes s'orientaven el 01 (aimMatrix) i el 02
+        #    (aimConstraint); del 03 endavant nomes rebien translate i es
+        #    quedaven sense orientacio. Aixi que la meitat de la cella no
+        #    girava gens, i els _ENV agafaven el gir del joint projectat, que
+        #    ve de la NURBS i no te res a veure amb la upCurve.
+        if self.UNIFORM_CHAIN_AIM:
+            for i in range(num_jnts):
+                idx_str = f"{i + 1:02d}"
+                amt = self._aim_matrix_to_up(
+                    f"{self.prefix}_{idx_str}",
+                    f"{curve_mp_nodes[i]}.allCoordinates",
+                    up_transforms[i],
+                )
+                cmds.connectAttr(f"{amt}.outputMatrix",
+                                 f"{self.rig_joints[i]}.offsetParentMatrix",
+                                 force=True)
+                self._zero_joint_channels(self.rig_joints[i])
+
+            return
+
+        # --- Comportament anterior ---
         first_jnt = self.rig_joints[0]
-        idx0_str = "01"
+        amt = self._aim_matrix_to_up(
+            f"{self.prefix}_01", f"{curve_mp_nodes[0]}.allCoordinates",
+            up_transforms[0],
+        )
+        cmds.connectAttr(f"{amt}.outputMatrix",
+                         f"{first_jnt}.offsetParentMatrix", force=True)
+        self._zero_joint_channels(first_jnt)
 
-        pos_cmm = cmds.createNode(
-            "composeMatrix", name=f"{self.prefix}_{idx0_str}Pos_CMM", ss=True
-        )
-        cmds.connectAttr(
-            f"{curve_mp_nodes[0]}.allCoordinates",
-            f"{pos_cmm}.inputTranslate",
-            force=True,
-        )
-
-        aim_cmm = cmds.createNode(
-            "composeMatrix", name=f"{self.prefix}_{idx0_str}Aim_CMM", ss=True
-        )
-        cmds.connectAttr(
-            f"{up_transforms[0]}.translate", f"{aim_cmm}.inputTranslate", force=True
-        )
-
-        amt = cmds.createNode(
-            "aimMatrix", name=f"{self.prefix}_{idx0_str}_AMT", ss=True
-        )
-        cmds.connectAttr(
-            f"{pos_cmm}.outputMatrix", f"{amt}.inputMatrix", force=True
-        )
-        cmds.connectAttr(
-            f"{aim_cmm}.outputMatrix", f"{amt}.primaryTargetMatrix", force=True
-        )
-        cmds.setAttr(
-            f"{amt}.primaryInputAxis", *self.chain_aim_vector, type="double3"
-        )
-        cmds.setAttr(f"{amt}.primaryMode", 1)  # 1 = Align
-
-        cmds.connectAttr(
-            f"{amt}.outputMatrix", f"{first_jnt}.offsetParentMatrix", force=True
-        )
-
-        # Canals a zero DESPRES de connectar la matriu.
-        #
-        # El joint es va crear amb cmds.joint(p=...), aixi que porta la posicio
-        # escrita al translate. L'offsetParentMatrix es composa ABANS que els
-        # canals locals, de manera que si el translate es queda amb el valor
-        # antic la posicio s'aplica DUES vegades i el joint acaba al doble de
-        # distancia. Es el que passava amb el bind_01: translate i aimMatrix
-        # donaven exactament la mateixa posicio.
-        #
-        # Tambe el jointOrient: als joints Maya el suma a la rotacio, i aqui
-        # tota l'orientacio ja ve dins de la matriu.
-        cmds.setAttr(f"{first_jnt}.translate", 0, 0, 0)
-        cmds.setAttr(f"{first_jnt}.rotate", 0, 0, 0)
-        if cmds.attributeQuery("jointOrient", node=first_jnt, exists=True):
-            cmds.setAttr(f"{first_jnt}.jointOrient", 0, 0, 0)
-
-        # 3) Segon joint (índex 1): l'ÚNIC que fa servir aimConstraint,
-        #    cap al seu up_trn, amb el joint SEGÜENT (índex 2) com a
-        #    worldUpObject.
         if num_jnts > 1:
-            second_jnt = self.rig_joints[1]
-            second_mp_node = curve_mp_nodes[1]
-            second_up_trn = up_transforms[1]
-
-            cmds.connectAttr(
-                f"{second_mp_node}.allCoordinates",
-                f"{second_jnt}.translate",
-                force=True,
-            )
-
+            cmds.connectAttr(f"{curve_mp_nodes[1]}.allCoordinates",
+                             f"{self.rig_joints[1]}.translate", force=True)
             up_object = self.rig_joints[2] if num_jnts > 2 else self.rig_joints[0]
-
             cmds.aimConstraint(
-                second_up_trn,
-                second_jnt,
+                up_transforms[1], self.rig_joints[1],
                 aimVector=self.chain_aim_vector,
                 upVector=self.chain_up_vector,
-                worldUpType="object",
-                worldUpObject=up_object,
-                mo=False,
+                worldUpType="object", worldUpObject=up_object, mo=False,
             )
 
-        # 4) Resta de joints (índex 2 en endavant): NOMÉS motionPath
-        #    (translate). Cap orientació, cap node addicional.
         for i in range(2, num_jnts):
-            jnt = self.rig_joints[i]
-            mp_node = curve_mp_nodes[i]
-
-            cmds.connectAttr(
-                f"{mp_node}.allCoordinates", f"{jnt}.translate", force=True
-            )
+            cmds.connectAttr(f"{curve_mp_nodes[i]}.allCoordinates",
+                             f"{self.rig_joints[i]}.translate", force=True)
 
     # ------------------------------------------------------------------
     # Organitzacio de l'outliner
@@ -914,8 +1025,12 @@ class EyebrowsModule(object):
 
             cps = self._ensure_node("closestPointOnSurface", f"{base}Slide_CPS")
             posi = self._ensure_node("pointOnSurfaceInfo", f"{base}Slide_POSI")
-            cmx = self._ensure_node("composeMatrix", f"{base}Slide_CMM")
-            amx = self._ensure_node("aimMatrix", f"{base}Slide_AMT")
+
+            # El composeMatrix y el aimMatrix de tangentes se crean solo en la
+            # rama que los usa. Antes se creaban siempre y la otra rama los
+            # borraba, y ese borrado se llevaba por delante el POSI: al borrar
+            # un nodo, Maya arrastra los de aguas arriba que se quedan sin
+            # ninguna otra salida.
 
             cmds.connectAttr(f"{shape}.worldSpace[0]", f"{cps}.inputSurface", f=True)
             cmds.connectAttr(f"{shape}.worldSpace[0]", f"{posi}.inputSurface", f=True)
@@ -933,18 +1048,45 @@ class EyebrowsModule(object):
             cmds.connectAttr(f"{dcm}.outputTranslate", f"{cps}.inPosition", f=True)
             cmds.connectAttr(f"{cps}.parameterU", f"{posi}.parameterU", f=True)
             cmds.connectAttr(f"{cps}.parameterV", f"{posi}.parameterV", f=True)
-            cmds.connectAttr(f"{posi}.position", f"{cmx}.inputTranslate", f=True)
+            up_trn = (self.up_transforms[index]
+                      if index < len(self.up_transforms) else None)
 
-            cmds.connectAttr(f"{cmx}.outputMatrix", f"{amx}.inputMatrix", f=True)
-            cmds.connectAttr(f"{posi}.normalizedTangentU",
-                             f"{amx}.primaryTargetVector", f=True)
-            cmds.connectAttr(f"{posi}.normalizedTangentV",
-                             f"{amx}.secondaryTargetVector", f=True)
+            if self.SLIDE_ORIENT_FROM_UP_CURVE and up_trn:
+                # La POSICION sigue saliendo de la NURBS (el joint se queda
+                # pegado al craneo) pero la ORIENTACION sale del up_TRN, igual
+                # que en la cadena de bind. Asi los dos giran con la upCurve y
+                # el slide solo mezcla posiciones.
+                amx = self._aim_matrix_to_up(
+                    f"{base}Slide", f"{posi}.position", up_trn
+                )
 
-            cmds.setAttr(f"{amx}.primaryInputAxis", *self.SLIDE_PRIMARY_AXIS)
-            cmds.setAttr(f"{amx}.secondaryInputAxis", *self.SLIDE_SECONDARY_AXIS)
-            cmds.setAttr(f"{amx}.primaryMode", self.SLIDE_PRIMARY_MODE)
-            cmds.setAttr(f"{amx}.secondaryMode", self.SLIDE_SECONDARY_MODE)
+                if self.SLIDE_SECONDARY_FROM_NORMAL:
+                    cmds.connectAttr(f"{posi}.normalizedNormal",
+                                     f"{amx}.secondaryTargetVector", f=True)
+                    cmds.setAttr(f"{amx}.secondaryInputAxis",
+                                 *self.SLIDE_SECONDARY_AXIS)
+                    cmds.setAttr(f"{amx}.secondaryMode", 2)   # align
+            else:
+                if self.SLIDE_ORIENT_FROM_UP_CURVE and not up_trn:
+                    cmds.warning(f"[EyebrowsModule] No hay up_TRN para {base}: "
+                                 f"el proyectado se orienta con la NURBS. "
+                                 f"_setup_motion_paths_and_aims tiene que "
+                                 f"correr antes que el slide.")
+
+                cmx = self._ensure_node("composeMatrix", f"{base}Slide_CMM")
+                amx = self._ensure_node("aimMatrix", f"{base}Slide_AMT")
+
+                cmds.connectAttr(f"{posi}.position", f"{cmx}.inputTranslate", f=True)
+                cmds.connectAttr(f"{cmx}.outputMatrix", f"{amx}.inputMatrix", f=True)
+                cmds.connectAttr(f"{posi}.normalizedTangentU",
+                                 f"{amx}.primaryTargetVector", f=True)
+                cmds.connectAttr(f"{posi}.normalizedTangentV",
+                                 f"{amx}.secondaryTargetVector", f=True)
+
+                cmds.setAttr(f"{amx}.primaryInputAxis", *self.SLIDE_PRIMARY_AXIS)
+                cmds.setAttr(f"{amx}.secondaryInputAxis", *self.SLIDE_SECONDARY_AXIS)
+                cmds.setAttr(f"{amx}.primaryMode", self.SLIDE_PRIMARY_MODE)
+                cmds.setAttr(f"{amx}.secondaryMode", self.SLIDE_SECONDARY_MODE)
 
             projected = f"{base}Projected_JNT"
             if not cmds.objExists(projected):
@@ -1184,6 +1326,10 @@ class EyebrowsModule(object):
             lib_name=self.main_control_style,
             final_name=f"{self.prefix}_Main_CTRL",
         )
+        controlsLibrary.transform_shape(
+            main_ctl, rotate=self.cv_rotation,
+            scale=self._shape_scale(self.main_control_style)
+        )
         main_ctl_gen = self.group_maker.create_rig_hierarchy(
             main_ctl, mid_guide_name
         )
@@ -1235,6 +1381,11 @@ class EyebrowsModule(object):
             sub_ctrl = controlsLibrary.create_control_from_lib(
                 lib_name=self.corner_control_style, final_name=sub_ctrl_name
             )
+            controlsLibrary.transform_shape(
+                sub_ctrl, rotate=self.cv_rotation,
+                scale=self._shape_scale(self.corner_control_style,
+                                        self.sub_cv_scale)
+            )
             sub_ctl_gen = self.group_maker.create_rig_hierarchy(
                 sub_ctrl, sub_guide_name
             )
@@ -1275,7 +1426,13 @@ class EyebrowsModule(object):
 
             # Controls de tangent per a les cantonades
             if label in corner_labels:
-                neighbour_idx = 2 if label == "In" else self.num_joints - 1
+                if self.tangent_reference == "neighbour":
+                    neighbour_idx = (2 if label == "In"
+                                     else self.num_joints - 1)
+                else:
+                    # La guia del centro, la misma que usa el control Main.
+                    neighbour_idx = mid_idx
+
                 neighbour_guide = (
                     f"{self.side}_{base_prefix}_{neighbour_idx:02d}"
                 )
@@ -1288,17 +1445,39 @@ class EyebrowsModule(object):
                 else:
                     nb_pos = sub_pos
 
-                tangent_factor = 0.3
-                tangent_pos = [
-                    sub_pos[0] + (nb_pos[0] - sub_pos[0]) * tangent_factor,
-                    sub_pos[1] + (nb_pos[1] - sub_pos[1]) * tangent_factor,
-                    sub_pos[2] + (nb_pos[2] - sub_pos[2]) * tangent_factor,
-                ]
+                # El CV de la bezier sale del joint local de esta tangente, y
+                # ese joint cuelga del control: moviendo el control se mueve
+                # el CV. Por eso basta con tocar el factor aqui, no hay que
+                # recolocar la curva por separado.
+                # Direccion hacia la referencia, normalizada, y distancia
+                # sacada del largo de la ceja. Asi el factor significa lo
+                # mismo en los dos lados.
+                direction = [nb_pos[axis] - sub_pos[axis] for axis in range(3)]
+                length = math.sqrt(sum(value * value for value in direction))
+
+                brow_length = self._brow_length(base_prefix)
+                distance = brow_length * self.tangent_control_factor
+
+                if length > 1e-6 and distance > 0.0:
+                    tangent_pos = [
+                        sub_pos[axis] + direction[axis] / length * distance
+                        for axis in range(3)
+                    ]
+                else:
+                    cmds.warning(f"[EyebrowsModule] No puedo separar la "
+                                 f"tangente de '{label}': la guia de "
+                                 f"referencia coincide con la esquina.")
+                    tangent_pos = list(sub_pos)
 
                 tangent_ctl_name = f"{self.prefix}_{label}Tan_CTRL"
                 tangent_ctl = controlsLibrary.create_control_from_lib(
                     lib_name=self.tangent_control_style,
                     final_name=tangent_ctl_name,
+                )
+                controlsLibrary.transform_shape(
+                    tangent_ctl, rotate=self.cv_rotation,
+                    scale=self._shape_scale(self.tangent_control_style,
+                                            self.tangent_cv_scale)
                 )
 
                 tangent_ctl_gen = self.group_maker.create_rig_hierarchy(

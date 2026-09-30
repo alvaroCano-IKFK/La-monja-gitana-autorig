@@ -316,6 +316,89 @@ def ControladorUI():
 if __name__ == "__main__":
     ControladorUI()
     
+def scale_for_radius(lib_name, target_radius):
+    """
+    Factor que hay que pasarle a transform_shape para que una forma de la
+    libreria acabe midiendo 'target_radius' en el mundo.
+
+    Existe porque multiplicar todas las formas por el mismo numero NO las deja
+    del mismo tamano: cada JSON esta dibujado a un radio distinto (para verlo,
+    report_library_sizes). Si una forma esta dibujada al doble que otra,
+    escalarlas a las dos por 0.25 mantiene el doble de diferencia.
+
+    Tiene en cuenta la escala global del rig, que create_control_from_lib ya
+    aplica a los CVs al crear el control.
+
+    Devuelve 1.0 si la forma no esta en la libreria, o sea si el control ha
+    caido al circulo por defecto.
+    """
+    radius = control_radius(lib_name)
+
+    if not radius:
+        return 1.0
+
+    current = radius * get_rig_scale()
+
+    if current <= 1e-9:
+        return 1.0
+
+    return target_radius / current
+
+
+def transform_shape(control, rotate=None, scale=None, translate=None):
+    """
+    Mueve, gira o escala los CVs de un control SIN tocar su transform.
+
+    Es la diferencia que importa: si giras o escalas el transform, te llevas
+    el pivote, y con el se van el joint que sigue al control y los constraints
+    que lo usan de padre; ademas queda un scale distinto de 1 en el channel
+    box que cualquier freeze transform se cargaria. Tocando solo los CVs
+    cambia unicamente el dibujo.
+
+    Todo se hace alrededor del origen del objeto (el pivote del control) y en
+    espacio de objeto, asi que el resultado sigue la orientacion del control y
+    no la del mundo.
+
+    El orden es escala, rotacion y traslacion: escalar despues de mover
+    multiplicaria tambien la distancia al pivote y el control se iria de sitio.
+
+    Args:
+        control (str): transform del control.
+        rotate (tuple): grados en X, Y, Z.
+        scale (float | tuple): factor unico o uno por eje.
+        translate (tuple): desplazamiento en unidades.
+
+    Returns:
+        int: numero de shapes tocadas.
+    """
+    if not cmds.objExists(control):
+        cmds.warning(f"[controlsLibrary] No existe '{control}'.")
+        return 0
+
+    shapes = cmds.listRelatives(control, shapes=True, type="nurbsCurve") or []
+    if not shapes:
+        cmds.warning(f"[controlsLibrary] '{control}' no tiene shapes de curva.")
+        return 0
+
+    for shape in shapes:
+        cvs = f"{shape}.cv[*]"
+
+        if scale is not None:
+            factors = (scale, scale, scale) if isinstance(scale, (int, float)) else scale
+            cmds.scale(factors[0], factors[1], factors[2], cvs,
+                       relative=True, objectSpace=True, pivot=(0, 0, 0))
+
+        if rotate is not None:
+            cmds.rotate(rotate[0], rotate[1], rotate[2], cvs,
+                        relative=True, objectSpace=True, pivot=(0, 0, 0))
+
+        if translate is not None:
+            cmds.move(translate[0], translate[1], translate[2], cvs,
+                      relative=True, objectSpace=True)
+
+    return len(shapes)
+
+
 def create_control_from_lib(lib_name, final_name, scale=1.0):
     """
     Crea un controlador desde la libreria sin usar la UI.

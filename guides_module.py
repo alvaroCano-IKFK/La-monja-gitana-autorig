@@ -652,6 +652,83 @@ class EyeGuides(object):
         cmds.select(clear=True)
 
 #########################################################################
+#SOCKETS
+#########################################################################
+
+class SocketGuides(object):
+    """
+    Guias del socket del ojo: 8 joints alrededor del parpado.
+
+    Cuatro en los ejes (up, low, in, out) y cuatro en las diagonales
+    (upIn, upOut, lowIn, lowOut). Las diagonales tienen su propia guia y no
+    se calculan como punto medio de las otras dos: el borde del parpado es
+    una curva, y el punto medio de la recta entre 'up' e 'in' se queda por
+    dentro del ojo.
+
+    Las 8 son joints sueltos (select clear entre medias) para que MIRROR las
+    trate como raices independientes, igual que las del ojo.
+
+    Solo se crean en el lado +X; el lado R sale de MIRROR.
+    """
+
+    # Nombre -> (X, Y) relativo al centro del ojo. Z se queda en el del ojo.
+    # Las diagonales van a 0.7 de cada eje, no a 1.0: quedan sobre el borde
+    # del parpado y no en la esquina de un cuadrado.
+    OFFSETS = {
+        "up":      (0.0,  1.0),
+        "low":     (0.0, -1.0),
+        "in":      (-1.0, 0.0),
+        "out":     (1.0,  0.0),
+        "upIn":    (-0.7,  0.7),
+        "upOut":   (0.7,   0.7),
+        "lowIn":   (-0.7, -0.7),
+        "lowOut":  (0.7,  -0.7),
+    }
+
+    # Orden de las diagonales: (diagonal, main_a, main_b). Lo lee el modulo
+    # para saber entre que dos controles va cada sub del medio.
+    BETWEEN = (
+        ("upIn", "up", "in"),
+        ("upOut", "up", "out"),
+        ("lowIn", "low", "in"),
+        ("lowOut", "low", "out"),
+    )
+
+    def __init__(self, prefix="L_socket", center=(2, 26, 9),
+                 width=1.3, height=0.9):
+        self.prefix = prefix
+        self.center = center
+
+        # Ancho y alto del ojo. Se separan porque un ojo es mas ancho que
+        # alto: con un solo radio las guias de arriba y abajo se irian lejos.
+        self.width = width
+        self.height = height
+
+        self.guides_group = None
+
+    def guide_name(self, key):
+        return f"{self.prefix}_{key}"
+
+    def socket_guides(self):
+        created = []
+
+        for key, (offset_x, offset_y) in self.OFFSETS.items():
+            position = (
+                self.center[0] + offset_x * self.width,
+                self.center[1] + offset_y * self.height,
+                self.center[2],
+            )
+
+            cmds.select(clear=True)
+            created.append(cmds.joint(p=position, name=self.guide_name(key)))
+
+        self.guides_group = cmds.group(created, n=f"{self.prefix}_guides_GRP")
+        cmds.select(clear=True)
+
+        return self.guides_group
+
+
+#########################################################################
 #EYEBROWS
 #########################################################################
 
@@ -842,6 +919,7 @@ class CharacterGuides(object):
         "mouth":   "C_lip_mid",
         "jaw":     "jaw_root",
         "eye":     "L_eye_mid",
+        "socket":  "L_socket_up",
         "eyebrow": "L_eyebrow_root_01",
         "skull":   "eyebrow_skull_NRB",
         "nose":    "nose_root",
@@ -873,7 +951,7 @@ class CharacterGuides(object):
         """
         if recipe is None:
             return ["spine", "neck", "arm", "finger", "leg", "toes",
-                    "mouth", "jaw", "eye", "eyebrow", "skull"]
+                    "mouth", "jaw", "eye", "socket", "eyebrow", "skull"]
 
         types = {entry["type"] for entry in recipe}
 
@@ -905,6 +983,11 @@ class CharacterGuides(object):
             blocks.append("jaw")
         if "eye" in types:
             blocks.append("eye")
+        # El socket rodea el ojo, asi que sus guias se colocan a partir del
+        # centro del ojo. Si hay socket pero no ojo, se crean igual: no se
+        # hereda nada del modulo del ojo, solo la posicion de referencia.
+        if "socket" in types:
+            blocks.append("socket")
         if "eyebrow" in types:
             blocks += ["eyebrow", "skull"]
         if "nose" in types:
@@ -1039,6 +1122,12 @@ class CharacterGuides(object):
                 )
                 eye_instance.eye_guides()
                 new_groups.append(eye_instance.guides_group)
+
+            elif block == "socket":
+                #Crea les guies del socket, al voltant del centre de l'ull
+                socket_instance = SocketGuides("L_socket", center=(2, 26, 9))
+                socket_instance.socket_guides()
+                new_groups.append(socket_instance.guides_group)
 
             elif block == "eyebrow":
                 #Crea les guies de les celles

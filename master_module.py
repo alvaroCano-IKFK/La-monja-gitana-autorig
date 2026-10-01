@@ -26,6 +26,7 @@ import soft_module
 import curvature_module
 import horse_neck
 import back_legs_module
+import horse_tail
 
 
 def run():
@@ -57,6 +58,7 @@ def run():
     importlib.reload(curvature_module)
     importlib.reload(horse_neck)
     importlib.reload(back_legs_module)
+    importlib.reload(horse_tail)
     
     ui = ui_module.UI()
     ui.main_UI()

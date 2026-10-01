@@ -278,6 +278,7 @@ class LegModule(object):
         cmds.connectAttr(f"{pin}.outputMatrix[0]", f"{projected}.offsetParentMatrix")
         cmds.setAttr(f"{pin}.offsetTranslation",0)
         cmds.setAttr(f"{pin}.offsetOrientation",0)
+        cmds.setAttr(f"{pin}.coordMode",1)
         self.scapula_pin = pin
         self.scapula_projected = projected
         return pin

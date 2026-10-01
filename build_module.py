@@ -23,6 +23,7 @@ import headSpace_module
 import curvature_module
 import back_legs_module
 import horse_neck
+import horse_tail
 
 
 
@@ -157,6 +158,15 @@ class BuildRig(object):
         # self.spine_rig.attach_control(spine_ctrls["chest"]["ctrl"], "Character_chestFix_CTL")
         # self.spine_rig.attach_control(spine_ctrls["hip"]["ctrl"], "Character_localHip_CTL")
             
+
+        # 3. CONSTRUIR CUA (FK). L arrel segueix la pelvis de l espina
+        self.horse_tail_rig = horse_tail.HorseTail(
+                guides=[f"tail_{k + 1:02d}" for k in range(5)],
+                rig_name="Character",
+                parent_joint=self.spine_pelvis,
+                root_instance=self.root_rig
+            )
+        self.horse_tail_rig.build()
 
         # =========================================================================
         # CAMES DE DAVANT I PATES DEL DARRERE (amb casc)

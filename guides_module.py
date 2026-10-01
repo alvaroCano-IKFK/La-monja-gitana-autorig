@@ -143,6 +143,39 @@ class HorseNeckGuides(object):
         return self.guides_group
 
 ########################################################################
+#TAIL
+########################################################################
+
+class HorseTailGuides(object):
+    """
+    Guies de la cua: cadena de 5 joints des de la gropa cap enrere i avall.
+    Col.loca-les sobre el model abans del BUILD.
+    """
+    def __init__(self, names=None, positions=None):
+        self.names = names or [f"tail_{i + 1:02d}" for i in range(5)]
+        #Rectes: mateixa alcada i repartides per Z (de la gropa cap enrere)
+        self.positions = positions or [
+            (0, 2.5, -17),
+            (0, 2.5, -19.5),
+            (0, 2.5, -22),
+            (0, 2.5, -24.5),
+            (0, 2.5, -27),
+        ]
+        self.guides_group = None
+
+    def tail_guides(self):
+        cmds.select(clear=True)
+        joints = [cmds.joint(p=pos, n=name)
+                  for name, pos in zip(self.names, self.positions)]   #en cadena
+
+        cmds.joint(joints[0], e=True, oj="xyz", sao="yup", ch=True, zso=True)
+        cmds.setAttr(f"{joints[-1]}.jointOrient", 0, 0, 0)
+
+        self.guides_group = cmds.group(joints[0], n="tail_guides_GRP")
+        cmds.select(clear=True)
+        return self.guides_group
+
+########################################################################
 #LIMB
 ########################################################################
         
@@ -476,6 +509,10 @@ class CharacterGuides(object):
         spine_instance = HorseSpineGuides()
         spine_instance.spine_guides()
 
+        #Crea les guies de la cua
+        tail_instance = HorseTailGuides()
+        tail_instance.tail_guides()
+
         #Crea les guies del coll
         neck_instance = HorseNeckGuides()   #neck_root -> neck_mid -> neck_end
         neck_instance.neck_guides()
@@ -531,6 +568,7 @@ class CharacterGuides(object):
         guide_groups = [
             spine_instance.guides_group,
             neck_instance.guides_group,
+            tail_instance.guides_group,
             leg_instance.guides_group,
             back_leg_instance.guides_group,
             scapula_surface.surface,

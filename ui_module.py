@@ -501,6 +501,16 @@ class Window(QtWidgets.QDialog):
         """.format(accent=self.COLOR_ACCENT))
         panel_layout.addWidget(panel_title)
 
+        #Selector de plantilla: filtra quins moduls es veuen. El biped i el
+        #cuadrupede no comparteixen espina ni coll, i les seves guies xoquen de
+        #nom, aixi que no te sentit veure els dos jocs de botons alhora.
+        self.template_combo = QtWidgets.QComboBox()
+        for template in module_specs.TEMPLATES:
+            self.template_combo.addItem(
+                module_specs.TEMPLATE_LABELS.get(template, template), template)
+        self.field_style(self.template_combo)
+        panel_layout.addWidget(self.template_combo)
+
         #Els botons van dins d un scroll vertical. Amb deu moduls (i els que
         #vinguin), deu botons de 32 px empenyien la finestra cap avall: el
         #panell forcava l alcada de tota la seccio de moduls. Ara el panell fa
@@ -511,15 +521,10 @@ class Window(QtWidgets.QDialog):
         buttons_layout.setContentsMargins(0, 0, 4, 0)   #lloc per la barra
         buttons_layout.setSpacing(5)
 
-        #Crea un boto per cada tipus de modul declarat als specs
+        #Els botons es creen a rebuild_module_buttons(), que es torna a cridar
+        #cada cop que canvia la plantilla.
+        self.module_buttons_layout = buttons_layout
         self.module_type_buttons = []
-        for module_type in module_specs.module_types():
-            btn = QtWidgets.QPushButton(module_specs.module_label(module_type).upper())
-            self.general_style(btn)
-            buttons_layout.addWidget(btn)
-            self.module_type_buttons.append((btn, module_type))
-
-        buttons_layout.addStretch()
 
         self.module_buttons_scroll = QtWidgets.QScrollArea()
         self.module_buttons_scroll.setWidget(buttons_widget)
@@ -1054,6 +1059,67 @@ class Window(QtWidgets.QDialog):
         self._sync_all_modules_check()
         print("Modul afegit: {}".format(module_specs.module_label(module_type)))
 
+    # ------------------------------------------------------------------
+    # PLANTILLA
+    # ------------------------------------------------------------------
+    def current_template(self):
+        return (self.template_combo.currentData()
+                or module_specs.DEFAULT_TEMPLATE)
+
+    def rebuild_module_buttons(self):
+        """Refa els botons del panell amb els moduls de la plantilla actual."""
+        for btn, _module_type in self.module_type_buttons:
+            self.module_buttons_layout.removeWidget(btn)
+            btn.deleteLater()
+        self.module_type_buttons = []
+
+        #L stretch del final es treu i es torna a posar, per que els botons
+        #nous no quedin per sota d ell.
+        while self.module_buttons_layout.count():
+            item = self.module_buttons_layout.takeAt(0)
+            if item.widget() is None:
+                break
+
+        for module_type in module_specs.module_types(self.current_template()):
+            btn = QtWidgets.QPushButton(
+                module_specs.module_label(module_type).upper())
+            self.general_style(btn)
+            self.module_buttons_layout.addWidget(btn)
+            btn.clicked.connect(
+                lambda checked=False, m=module_type: self.add_module(m))
+            self.module_type_buttons.append((btn, module_type))
+
+        self.module_buttons_layout.addStretch()
+
+    def change_template(self, _index=None):
+        """
+        Canvia la plantilla i refa els botons.
+
+        Els moduls exclusius de l altra plantilla es treuen de l arbre. No es
+        una comoditat: les guies xoquen de nom (el coll del biped i el del
+        caball es diuen tots dos neck_root), aixi que tenir les dues espines o
+        els dos colls a la recepta no construeix be de cap manera.
+
+        La cara (boca, jaw, celles, ulls, nas) val per a les dues plantilles i
+        es queda tal com estigui.
+        """
+        template = self.current_template()
+        self.rebuild_module_buttons()
+
+        removed = []
+        for row in list(self.module_rows):
+            if template in module_specs.module_templates(row["type"]):
+                continue
+            removed.append(module_specs.module_label(row["type"]))
+            self.remove_module_item(row["item"])
+
+        if removed:
+            print("[UI] Canvi a {}: s han tret {}.".format(
+                module_specs.TEMPLATE_LABELS.get(template, template),
+                ", ".join(sorted(set(removed)))))
+
+        self._sync_all_modules_check()
+
     def toggle_all_modules(self, checked):
         """
         Marcada: posa tots els moduls a l arbre amb les features per defecte.
@@ -1071,7 +1137,7 @@ class Window(QtWidgets.QDialog):
 
         present = {row["type"] for row in self.module_rows}
 
-        for module_type in module_specs.module_types():
+        for module_type in module_specs.module_types(self.current_template()):
             if module_type not in present:
                 self.add_module(module_type)
 
@@ -1088,7 +1154,7 @@ class Window(QtWidgets.QDialog):
         demanat l usuari.
         """
         present = {row["type"] for row in self.module_rows}
-        complete = present == set(module_specs.module_types())
+        complete = present == set(module_specs.module_types(self.current_template()))
 
         self.all_modules_check.blockSignals(True)
         self.all_modules_check.setChecked(complete)
@@ -1217,6 +1283,13 @@ class Window(QtWidgets.QDialog):
 
             self._apply_row_sides(row, sides)
             self._apply_row_features(row, features)
+
+        #El JSON pot ser d una altra plantilla: s ajusta el combo abans de
+        #res, perque rebuild_module_buttons deixi els botons que toquen.
+        template = module_specs.infer_template(recipe)
+        index = self.template_combo.findData(template)
+        if index >= 0 and index != self.template_combo.currentIndex():
+            self.template_combo.setCurrentIndex(index)
 
         self._sync_all_modules_check()
 
@@ -1397,7 +1470,8 @@ class Window(QtWidgets.QDialog):
         #Es normalitza per dos motius: afegeix el spine obligatori (el chest, el
         #hip i el coll en llegeixen les guies) i resol les features, que es
         #d on surt si la cama porta dits del peu o no.
-        recipe, warnings = module_specs.normalize_recipe(raw_recipe)
+        recipe, warnings = module_specs.normalize_recipe(
+            raw_recipe, template=self.current_template())
         for text in warnings:
             cmds.warning("[Recepta] {}".format(text))
 
@@ -1420,7 +1494,8 @@ class Window(QtWidgets.QDialog):
             print("No hi ha cap modul afegit per construir el rig.")
             return
 
-        recipe, warnings = module_specs.normalize_recipe(self.collect_recipe())
+        recipe, warnings = module_specs.normalize_recipe(
+            self.collect_recipe(), template=self.current_template())
 
         for text in warnings:
             cmds.warning("[Recepta] {}".format(text))
@@ -1444,10 +1519,10 @@ class Window(QtWidgets.QDialog):
         self.add_panel_tab_btn.clicked.connect(self.toggle_add_panel)
         self.tools_tab_btn.clicked.connect(self.toggle_tools_panel)
 
-        #Connecta cada boto del panell amb el tipus de modul que afegeix
-        for btn, module_type in self.module_type_buttons:
-            btn.clicked.connect(
-                lambda checked=False, m=module_type: self.add_module(m))
+        #Els botons del panell es connecten a rebuild_module_buttons(), que es
+        #qui els crea. Aqui nomes el selector de plantilla.
+        self.template_combo.currentIndexChanged.connect(self.change_template)
+        self.rebuild_module_buttons()
 
         for btn, index in self.color_buttons:
             btn.clicked.connect(

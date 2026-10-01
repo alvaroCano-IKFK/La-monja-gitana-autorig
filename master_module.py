@@ -39,6 +39,11 @@ import nose_module
 import toes_module
 import socket_module
 import controlTools_module
+import horse_spine
+import horse_neck
+import horse_chest_module
+import horse_leg_module
+import back_legs_module
 
 window_instance = None
 
@@ -85,6 +90,11 @@ def run():
     importlib.reload(toes_module)
     importlib.reload(socket_module)
     importlib.reload(controlTools_module)
+    importlib.reload(horse_chest_module)
+    importlib.reload(horse_neck)
+    importlib.reload(horse_spine)
+    importlib.reload(back_legs_module)
+    importlib.reload(horse_leg_module)
     
     global window_instance
 

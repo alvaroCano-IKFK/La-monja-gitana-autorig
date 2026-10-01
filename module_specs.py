@@ -50,12 +50,24 @@ class Feature(object):
 # sides  -> lados posibles. "C" = centro, sin mirror.
 # always -> features que van siempre. Se muestran marcadas y bloqueadas.
 # optional -> lo que el usuario elige.
+# templates -> en que plantillas aparece el modulo. Si no esta, vale para
+#           todas. El biped y el cuadrupedo comparten muchas piezas (la cara,
+#           el skinning) pero no la columna ni el cuello, que son modulos
+#           distintos con guias distintas.
 # ---------------------------------------------------------------------------
+
+#: Plantillas disponibles. La ventana muestra solo los modulos de la que este
+#: seleccionada.
+TEMPLATES = ("biped", "quadruped")
+TEMPLATE_LABELS = {"biped": "Biped", "quadruped": "Quadruped"}
+DEFAULT_TEMPLATE = "biped"
+
 MODULE_SPECS = {
 
     "spine": {
         "label": "Spine",
         "order": 10,
+        "templates": ("biped",),
         "sides": ["C"],
         "mirror_roots": [],
         "always": [
@@ -78,6 +90,7 @@ MODULE_SPECS = {
     "neck": {
         "label": "Neck",
         "order": 12,
+        "templates": ("biped",),
         "sides": ["C"],
         "mirror_roots": [],
         "always": [
@@ -90,6 +103,7 @@ MODULE_SPECS = {
     "arm": {
         "label": "Arm",
         "order": 20,
+        "templates": ("biped",),
         "sides": ["L", "R"],
         # Raiz de la cadena de guias que hay que espejar para tener el lado R.
         # Solo la raiz: mirrorJoint ya se lleva toda la jerarquia de debajo.
@@ -121,6 +135,7 @@ MODULE_SPECS = {
     "finger": {
         "label": "Finger",
         "order": 30,
+        "templates": ("biped",),
         "sides": ["L", "R"],
         # Vacio a proposito: las guias de los dedos cuelgan de la muneca, asi
         # que ya vienen espejadas dentro de la jerarquia de L_clavicule.
@@ -144,6 +159,7 @@ MODULE_SPECS = {
     "leg": {
         "label": "Leg",
         "order": 40,
+        "templates": ("biped",),
         "sides": ["L", "R"],
         "mirror_roots": ["L_hip"],
         "always": [
@@ -173,6 +189,7 @@ MODULE_SPECS = {
     "toe": {
         "label": "Toes",
         "order": 45,
+        "templates": ("biped",),
         "sides": ["L", "R"],
         # Vacio a proposito: las guias de los dedos del pie cuelgan de L_ball,
         # que esta dentro de la jerarquia de L_hip. Se espejan con la pierna.
@@ -183,6 +200,106 @@ MODULE_SPECS = {
         "optional": [
             Feature("ik", "IK", default=True),
         ],
+    },
+
+    # -----------------------------------------------------------------------
+    # CUADRUPEDO (caballo)
+    #
+    # La columna y el cuello del caballo son modulos propios, no variantes de
+    # los del biped: tienen otras guias y otro setup. Por eso van con
+    # templates=("quadruped",) y el biped no los ve.
+    #
+    # order 15: DESPUES del hip (13), porque HorseSpine cuelga sus controles
+    # del body_CTL (el COG) que crea hip_module, y lo lee de root_instance.
+    # -----------------------------------------------------------------------
+    "horse_spine": {
+        "label": "Horse Spine",
+        "order": 15,
+        "templates": ("quadruped",),
+        "sides": ["C"],
+        "mirror_roots": [],
+        "always": [
+            Feature("ik_spline", "IK Spline"),
+            Feature("cog", "COG"),
+        ],
+        "optional": [],
+    },
+
+    # order 20: la base del coll es constreny al chest de l espina.
+    "horse_neck": {
+        "label": "Horse Neck",
+        "order": 20,
+        "templates": ("quadruped",),
+        "sides": ["C"],
+        "mirror_roots": [],
+        "always": [
+            Feature("ribbon", "Ribbon"),
+        ],
+        "optional": [
+            # pin_joints del modulo: joints extra enganchados al ribbon con un
+            # uvPin. Marcada por defecto: sin ellos el ribbon deforma la NURBS
+            # pero no hay nada enganchado a la superficie.
+            Feature("pin_joints", "UV Pin Joints", default=True),
+        ],
+    },
+
+    # Pata DELANTERA. horse_leg_module.LegModule con clavicle=True y hoof=True.
+    #
+    # order 25: despues de la espina (15), porque el legRoot se constrine a un
+    # control del pecho.
+    "horse_leg": {
+        "label": "Horse Front Leg",
+        "order": 25,
+        "templates": ("quadruped",),
+        "sides": ["L", "R"],
+        "mirror_roots": ["L_clavicule"],
+        "always": [
+            Feature("ik", "IK"),
+            Feature("fk", "FK"),
+            Feature("ikfk_switch", "IK/FK Switch"),
+            Feature("pole_vector", "Pole Vector"),
+            Feature("clavicle", "Clavicle"),
+            Feature("hoof", "Hoof"),
+            # La escapula va siempre: sin ella la pata delantera pierde la
+            # proyeccion sobre la NURBS del torax (el proximityPin), que es la
+            # mitad de su comportamiento.
+            Feature("scapula", "Scapula"),
+        ],
+        "optional": [],
+    },
+
+    # Pata TRASERA: el mismo modulo con three_bone=True (maluc, babilla,
+    # garro, menudillo), IK con ikSpringSolver y sin clavicula: el legRoot
+    # cuelga directamente de la pelvis.
+    "horse_back_leg": {
+        "label": "Horse Back Leg",
+        "order": 30,
+        "templates": ("quadruped",),
+        "sides": ["L", "R"],
+        "mirror_roots": ["L_hip_back"],
+        "always": [
+            Feature("ik_spring", "IK Spring"),
+            Feature("fk", "FK"),
+            Feature("ikfk_switch", "IK/FK Switch"),
+            Feature("pole_vector", "Pole Vector"),
+            Feature("three_bone", "Three Bone"),
+            Feature("hoof", "Hoof"),
+        ],
+        "optional": [],
+    },
+
+    # Cua: cadena FK. order 35, despres de les potes, perque segueix la
+    # pelvis de l espina i no depen de res mes.
+    "horse_tail": {
+        "label": "Horse Tail",
+        "order": 35,
+        "templates": ("quadruped",),
+        "sides": ["C"],
+        "mirror_roots": [],
+        "always": [
+            Feature("fk", "FK"),
+        ],
+        "optional": [],
     },
 
     # -----------------------------------------------------------------------
@@ -364,6 +481,22 @@ MODULE_SPECS = {
 
 #: Que se pierde cuando falta un modulo recomendado. Lo usa normalize_recipe
 #: para que el aviso diga la consecuencia real y no una generica.
+#: El mismo papel con otro modulo segun la plantilla. La cara recomienda
+#: "neck" porque necesita un head_CTRL; en el cuadrupedo ese papel lo hace
+#: "horse_neck". Sin esto, el aviso de "no hay Neck" salta siempre en el
+#: caballo aunque tengas el cuello puesto.
+TEMPLATE_EQUIVALENTS = {
+    "neck": {"quadruped": "horse_neck"},
+    "spine": {"quadruped": "horse_spine"},
+    "leg": {"quadruped": "horse_leg"},
+}
+
+
+def resolve_for_template(module_type, template):
+    """Modulo que hace ese papel en esa plantilla."""
+    return TEMPLATE_EQUIVALENTS.get(module_type, {}).get(template, module_type)
+
+
 RECOMMEND_REASONS = {
     "neck": "sin seguir a la cabeza",
     "jaw": "sin seguir a la mandibula",
@@ -376,15 +509,55 @@ FACE_MODULES = tuple(key for key, spec in MODULE_SPECS.items() if spec.get("face
 # Modulos sin los que el rig no se sostiene. Si no estan en la receta se
 # meten solos con un aviso: el chest cuelga de la espina, y la clavicula del
 # brazo se constrainea al chest.
-REQUIRED_MODULES = ("spine",)
+REQUIRED_MODULES = {
+    "biped": ("spine",),
+    "quadruped": ("horse_spine",),
+}
 
 
 # ---------------------------------------------------------------------------
 # CONSULTAS (las usa la UI para pintar el arbol)
 # ---------------------------------------------------------------------------
-def module_types():
-    """Tipos de modulo, ya en orden de construccion."""
-    return sorted(MODULE_SPECS.keys(), key=lambda key: MODULE_SPECS[key]["order"])
+def module_templates(module_type):
+    """Plantillas en las que aparece el modulo. Sin declarar = todas."""
+    return tuple(MODULE_SPECS[module_type].get("templates", TEMPLATES))
+
+
+def module_types(template=None):
+    """
+    Tipos de modulo, ya en orden de construccion.
+
+    Con template, solo los de esa plantilla. Sin template, todos: asi sigue
+    valiendo para quien recorra la tabla entera.
+    """
+    types = [key for key in MODULE_SPECS
+             if template is None or template in module_templates(key)]
+
+    return sorted(types, key=lambda key: MODULE_SPECS[key]["order"])
+
+
+def infer_template(recipe):
+    """
+    De que plantilla es una receta.
+
+    Se mira si hay algun modulo exclusivo de una plantilla. Los que valen para
+    las dos (la cara) no deciden nada. Sin pistas, se devuelve la de por
+    defecto, que es como se comportaba todo antes de que hubiera plantillas.
+    """
+    for entry in recipe or []:
+        module_type = entry.get("type")
+        if module_type not in MODULE_SPECS:
+            continue
+
+        templates = module_templates(module_type)
+        if len(templates) == 1:
+            return templates[0]
+
+    return DEFAULT_TEMPLATE
+
+
+def required_modules(template):
+    return tuple(REQUIRED_MODULES.get(template, ()))
 
 
 def module_label(module_type):
@@ -527,7 +700,7 @@ def _migrate_legacy_entries(recipe):
     return migrated
 
 
-def normalize_recipe(recipe):
+def normalize_recipe(recipe, template=None):
     """
     Deja la receta que viene de la UI lista para el build:
       - quita entradas duplicadas (mismo tipo + mismo lado)
@@ -546,6 +719,12 @@ def normalize_recipe(recipe):
     seen = set()
 
     recipe = _migrate_legacy_entries(list(recipe or []))
+
+    # La plantilla decide que modulos son obligatorios: el biped necesita
+    # "spine" y el cuadrupedo "horse_spine". Si no la pasan, se deduce de la
+    # propia receta, asi que las llamadas antiguas siguen funcionando.
+    if template is None:
+        template = infer_template(recipe)
 
     for entry in recipe:
         module_type = entry.get("type")
@@ -567,6 +746,17 @@ def normalize_recipe(recipe):
             continue
         seen.add(identity)
 
+        # Un modulo de otra plantilla en la receta casi siempre es que se ha
+        # cambiado de plantilla con el arbol lleno. Se construye igual (puede
+        # ser a proposito), pero se avisa.
+        if template not in module_templates(module_type):
+            warnings.append(
+                "'{}' no es de la plantilla {}: es de {}.".format(
+                    module_label(module_type),
+                    TEMPLATE_LABELS.get(template, template),
+                    ", ".join(TEMPLATE_LABELS.get(t, t)
+                              for t in module_templates(module_type))))
+
         features, feature_warnings = resolve_features(module_type, entry.get("features"))
         warnings.extend("[{} {}] {}".format(module_type, side, text)
                         for text in feature_warnings)
@@ -581,6 +771,9 @@ def normalize_recipe(recipe):
     missing_recommended = {}
     for module_type in sorted(present_types):
         for wanted in MODULE_SPECS[module_type].get("recommends", []):
+            # El recomendado se traduce a la plantilla: en el caballo, "neck"
+            # es "horse_neck".
+            wanted = resolve_for_template(wanted, template)
             if wanted not in present_types:
                 missing_recommended.setdefault(wanted, []).append(module_label(module_type))
     for wanted, needers in sorted(missing_recommended.items()):
@@ -588,7 +781,7 @@ def normalize_recipe(recipe):
             "No hay '{}' en la lista: {} se construira(n) igual, pero {}.".format(
                 module_label(wanted), ", ".join(needers),
                 RECOMMEND_REASONS.get(wanted, "le(s) falta ese modulo")))
-    for module_type in REQUIRED_MODULES:
+    for module_type in required_modules(template):
         if module_type not in present_types:
             side = module_sides(module_type)[0]
             features, _ = resolve_features(module_type, default_feature_keys(module_type))

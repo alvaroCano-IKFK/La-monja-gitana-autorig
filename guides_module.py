@@ -1,4 +1,5 @@
 import maya.cmds as cmds
+import module_specs
 from functools import partial 
 import os
 import math
@@ -933,6 +934,265 @@ class NoseGuides(object):
 
 ##### INSTANCIAS #####
 
+class HorseSpineGuides(object):
+    """
+    Guies de l espina del caball: nomes arrel i final.
+
+    horse_spine.HorseSpine agafa aquests dos punts, hi fa una corba i hi
+    reparteix els num_joints que li demanis. Les guies intermedies no calen:
+    la forma de l espina es decideix movent els controls, no les guies.
+
+    Noms SENSE sufix _JNT: skinning_module duplica qualsevol joint de l escena
+    que acabi en JNT.
+    """
+
+    def __init__(self, spine_root="spine_root", spine_end="spine_end",
+                 root_pos=(0, 0, -40), end_pos=(0, 4, 40)):
+        self.spine_root = spine_root
+        self.spine_end = spine_end
+        self.root_pos = root_pos
+        self.end_pos = end_pos
+        self.guides_group = None
+
+    def spine_guides(self):
+        #Cadena, no dos joints solts: igual que SpineGuides del biped. Sense
+        #el select(clear) entremig, cmds.joint penja el nou del que esta
+        #seleccionat, i aixi moure l arrel s emporta el final.
+        cmds.select(clear=True)
+        root = cmds.joint(p=self.root_pos, name=self.spine_root)
+        cmds.joint(p=self.end_pos, name=self.spine_end)
+        cmds.select(clear=True)
+
+        #Nomes l arrel al grup: el final ja hi entra com a fill.
+        self.guides_group = cmds.group(root, n="horseSpine_guides_GRP")
+
+        return self.guides_group
+
+
+class HorseNeckGuides(object):
+    """
+    Guies del coll del caball: arrel, mig i final.
+
+    Les tres fan falta: horse_neck.HorseNeck hi passa una corba de grau 3 i en
+    treu el ribbon, i el punt del mig es el que li dona la corbatura.
+    """
+
+    def __init__(self, neck_root="neck_root", neck_mid="neck_mid",
+                 neck_end="neck_end",
+                 root_pos=(0, 6, 40), mid_pos=(0, 20, 52), end_pos=(0, 30, 62)):
+        self.neck_root = neck_root
+        self.neck_mid = neck_mid
+        self.neck_end = neck_end
+        self.positions = [root_pos, mid_pos, end_pos]
+        self.guides_group = None
+
+    def neck_guides(self):
+        names = [self.neck_root, self.neck_mid, self.neck_end]
+
+        #Cadena arrel > mig > final, com l espina: moure la base s emporta la
+        #resta del coll.
+        cmds.select(clear=True)
+        root = None
+        for name, position in zip(names, self.positions):
+            joint = cmds.joint(p=position, name=name)
+            if root is None:
+                root = joint
+
+        cmds.select(clear=True)
+        self.guides_group = cmds.group(root, n="horseNeck_guides_GRP")
+
+        return self.guides_group
+
+
+class HorseTailGuides(object):
+    """
+    Guies de la cua: cinc joints en CADENA i en LINIA RECTA.
+
+    Rectes a proposito. horse_tail.HorseTail orienta la cadena amb
+    joint(oj="xyz", sao="yup"): amb les guies desalineades, cada joint
+    s orienta mirant al seguent i la cua surt amb els eixos girats entre si,
+    de manera que rotar un control no gira al voltant de l eix que esperes.
+
+    Posa-les al seu lloc movent-les despres, pero mantenint-les alineades:
+    la corbatura de la cua es fa amb els controls, no amb les guies.
+    """
+
+    def __init__(self, name="tail", count=5,
+                 start=(0, 2, -42), step=(0, 0, -5)):
+        self.name = name
+        self.count = count
+        self.start = start
+        self.step = step
+        self.guides_group = None
+
+    def tail_guides(self):
+        #Sense select(clear) entremig: cada joint penja de l anterior.
+        cmds.select(clear=True)
+
+        root = None
+        for i in range(self.count):
+            position = [self.start[axis] + self.step[axis] * i
+                        for axis in range(3)]
+            joint = cmds.joint(p=position,
+                               name="{}_{:02d}".format(self.name, i + 1))
+            if root is None:
+                root = joint
+
+        cmds.select(clear=True)
+        self.guides_group = cmds.group(root, n="horseTail_guides_GRP")
+
+        return self.guides_group
+
+
+class HorseThoraxGuides(object):
+    """
+    NURBS del torax del caball.
+
+    No es una guia de posicio: es la superficie sobre la qual
+    horse_leg_module projecta l escapula amb un proximityPin. Sense ella,
+    l escapula nomes segueix el seu control i es perd el lliscament sobre les
+    costelles.
+
+    Un cilindre i no un pla perque el proximityPin busca el punt mes proper:
+    amb un pla d un costat, l escapula del costat R no tindria on projectar-se.
+
+    Cal ajustar-la a la malla com qualsevol altra guia.
+    """
+
+    def __init__(self, name="thorax_NRB", center=(0, -4, 10), radius=12.0,
+                 height_ratio=3.0):
+        self.name = name
+        self.center = center
+        self.radius = radius
+        self.height_ratio = height_ratio
+        self.guides_group = None
+
+    def create_thorax(self):
+        surface = cmds.cylinder(name=self.name,
+                                axis=(0, 0, 1),
+                                radius=self.radius,
+                                heightRatio=self.height_ratio,
+                                spans=8,
+                                degree=3,
+                                ch=False)[0]
+
+        cmds.xform(surface, ws=True, t=self.center)
+
+        self.guides_group = cmds.group(surface, n="horseThorax_guides_GRP")
+        cmds.select(clear=True)
+
+        return self.guides_group
+
+
+class HorseLegGuides(object):
+    """
+    Guies d una pota del caball, davant o darrere.
+
+    Els noms i la jerarquia no son inventats: son els que espera
+    horse_leg_module.LegModule i els que recorre el mirror del cuadrupede
+    (arrel de la cadena + casc penjant del menudillo).
+
+    DAVANT (suffix "")            DARRERE (suffix "_back")
+      L_clavicule  <- arrel         L_hip_back  <- arrel
+        L_clavicule_start             L_knee_back
+        L_hip                           L_hock_back
+          L_knee                          L_ankle_back
+            L_ankle                         L_ball_back
+              L_ball                          L_toe_tip_back
+                L_toe_tip                   L_heel_back
+              L_heel                        L_hoof_in_back
+              L_hoof_in                     L_hoof_out_back
+              L_hoof_out
+
+    El toe_tip penja del ball i la resta del casc penja del menudillo
+    (ankle), que es com ho llegeix el modul: ankle = menudillo, ball =
+    corona, toe_tip = lumbre, heel = talons.
+
+    Les posicions son orientatives: col.loca-les sobre la malla.
+    """
+
+    #Pota de davant: (nom sense costat, posicio per al costat L)
+    FRONT = [
+        ("clavicule",       (8,   0,   25)),
+        ("clavicule_start", (8,   8,   20)),
+        ("hip",             (8,  -2,   24)),
+        ("knee",            (8, -14,   26)),
+        ("ankle",           (8, -26,   24)),
+        ("ball",            (8, -30,   25)),
+        ("toe_tip",         (8, -32.5, 28)),
+        ("heel",            (8, -32.5, 22)),
+        ("hoof_in",         (6, -32.5, 25)),
+        ("hoof_out",        (10, -32.5, 25)),
+    ]
+
+    #Pota del darrere: tres ossos abans del menudillo i sense clavicula
+    BACK = [
+        ("hip_back",        (9,   0,  -25)),
+        ("knee_back",       (9, -10,  -20)),
+        ("hock_back",       (9, -20,  -28)),
+        ("ankle_back",      (9, -27,  -25)),
+        ("ball_back",       (9, -30,  -24)),
+        ("toe_tip_back",    (9, -32.5, -21)),
+        ("heel_back",       (9, -32.5, -27)),
+        ("hoof_in_back",    (7, -32.5, -24)),
+        ("hoof_out_back",   (11, -32.5, -24)),
+    ]
+
+    def __init__(self, side="L", back=False):
+        self.side = side
+        self.back = back
+        self.guides_group = None
+
+    def _name(self, base):
+        return "{}_{}".format(self.side, base)
+
+    def _position(self, position):
+        #Les guies del costat R son les mateixes amb la X canviada de signe.
+        x, y, z = position
+        return (-x if self.side == "R" else x, y, z)
+
+    def leg_guides(self):
+        table = self.BACK if self.back else self.FRONT
+        suffix = "_back" if self.back else ""
+
+        created = {}
+        for base, position in table:
+            cmds.select(clear=True)
+            created[base] = cmds.joint(p=self._position(position),
+                                       name=self._name(base))
+        cmds.select(clear=True)
+
+        #Jerarquia. El mirror puja fins a l arrel de la cadena, aixi que ha de
+        #quedar ben encadenada i no com a joints solts.
+        if self.back:
+            chain = ["hip_back", "knee_back", "hock_back", "ankle_back"]
+        else:
+            chain = ["clavicule", "hip", "knee", "ankle"]
+
+        for child, parent in zip(chain[1:], chain[:-1]):
+            cmds.parent(created[child], created[parent])
+
+        if not self.back:
+            cmds.parent(created["clavicule_start"], created["clavicule"])
+
+        ankle = created["ankle_back" if self.back else "ankle"]
+        ball = created["ball" + suffix]
+
+        cmds.parent(ball, ankle)
+        cmds.parent(created["toe_tip" + suffix], ball)
+        for base in ("heel", "hoof_in", "hoof_out"):
+            cmds.parent(created[base + suffix], ankle)
+
+        root = created["hip_back" if self.back else "clavicule"]
+        group_name = "{}_horse{}Leg_guides_GRP".format(
+            self.side, "Back" if self.back else "Front")
+        self.guides_group = cmds.group(root, n=group_name)
+
+        cmds.select(clear=True)
+
+        return self.guides_group
+
+
 class CharacterGuides(object):
     """
     Crea les guies del personatge i les agrupa sota "guides_GRP".
@@ -965,6 +1225,14 @@ class CharacterGuides(object):
         "eyebrow": "L_eyebrow_root_01",
         "skull":   "eyebrow_skull_NRB",
         "nose":    "nose_root",
+        #El coll del biped tambe crea "neck_root": el que distingeix el del
+        #caball es la guia del mig, que el biped no te.
+        "horse_spine": "spine_root",
+        "horse_neck":  "neck_mid",
+        "horse_leg":      "L_clavicule_start",
+        "thorax":         "thorax_NRB",
+        "horse_back_leg": "L_hip_back",
+        "horse_tail":     "tail_01",
     }
 
     def __init__(self):
@@ -992,18 +1260,36 @@ class CharacterGuides(object):
         recipe=None vol dir "totes", que es com funcionava abans.
         """
         if recipe is None:
+            #Nomes els del biped: les guies del caball xoquen de nom amb les
+            #del coll del biped, no poden conviure a la mateixa escena.
             return ["spine", "neck", "arm", "finger", "leg", "toes",
-                    "mouth", "jaw", "eye", "socket", "eyebrow", "skull"]
+                    "mouth", "jaw", "eye", "socket", "eyebrow", "skull", "nose"]
 
         types = {entry["type"] for entry in recipe}
 
         blocks = []
 
-        #El spine va sempre: el chest i el hip del build son passos fixos que
-        #en llegeixen les guies. El coll ja no: ara es un modul opcional.
-        blocks.append("spine")
-        if "neck" in types:
-            blocks.append("neck")
+        #Plantilla del cuadrupede: l espina i el coll son altres moduls, amb
+        #altres guies. No es barregen amb les del biped.
+        if module_specs.infer_template(recipe) == "quadruped":
+            blocks.append("horse_spine")
+            if "horse_neck" in types:
+                blocks.append("horse_neck")
+            if "horse_leg" in types:
+                #La NURBS del torax va amb la pota de davant: es on hi projecta
+                #l escapula.
+                blocks.append("thorax")
+                blocks.append("horse_leg")
+            if "horse_back_leg" in types:
+                blocks.append("horse_back_leg")
+            if "horse_tail" in types:
+                blocks.append("horse_tail")
+        else:
+            #El spine va sempre: el chest i el hip del build son passos fixos
+            #que en llegeixen les guies. El coll ja no: es un modul opcional.
+            blocks.append("spine")
+            if "neck" in types:
+                blocks.append("neck")
 
         #Els dits pengen del canell: sense les guies del brac no tenen d on
         #penjar. Si l usuari ha posat dits sense brac, es crea el brac igual.
@@ -1177,6 +1463,44 @@ class CharacterGuides(object):
                                                    root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
                 eyebrows_instance.eyebrows_guides()
                 new_groups.append(eyebrows_instance.guides_group)
+
+            elif block == "horse_spine":
+                #Crea les guies de l espina del caball
+                horse_spine_instance = HorseSpineGuides("spine_root", "spine_end")
+                horse_spine_instance.spine_guides()
+                new_groups.append(horse_spine_instance.guides_group)
+
+            elif block == "horse_tail":
+                #Guies de la cua, en linia recta
+                horse_tail_instance = HorseTailGuides()
+                horse_tail_instance.tail_guides()
+                new_groups.append(horse_tail_instance.guides_group)
+
+            elif block == "thorax":
+                #NURBS del torax per a la projeccio de l escapula
+                thorax_instance = HorseThoraxGuides()
+                thorax_instance.create_thorax()
+                new_groups.append(thorax_instance.guides_group)
+
+            elif block == "horse_leg":
+                #Guies de la pota de davant (nomes el costat L: la R surt del
+                #MIRROR, com al biped)
+                horse_leg_instance = HorseLegGuides(side="L", back=False)
+                horse_leg_instance.leg_guides()
+                new_groups.append(horse_leg_instance.guides_group)
+
+            elif block == "horse_back_leg":
+                #Guies de la pota del darrere
+                horse_back_instance = HorseLegGuides(side="L", back=True)
+                horse_back_instance.leg_guides()
+                new_groups.append(horse_back_instance.guides_group)
+
+            elif block == "horse_neck":
+                #Crea les guies del coll del caball
+                horse_neck_instance = HorseNeckGuides("neck_root", "neck_mid",
+                                                      "neck_end")
+                horse_neck_instance.neck_guides()
+                new_groups.append(horse_neck_instance.guides_group)
 
             elif block == "nose":
                 #Crea les guies del nas

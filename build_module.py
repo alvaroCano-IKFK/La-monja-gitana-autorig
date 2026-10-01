@@ -29,6 +29,21 @@ import jaw_module
 import eyebrowsModule
 import eyes_module
 import nose_module
+import horse_spine
+import horse_neck
+import horse_leg_module
+import horse_tail
+
+# El hip del caballo es un modulo aparte: el del biped no crea el body, lo lee
+# de root_instance.body_ctl, que publica body_module en el paso _core_body. Ese
+# paso no se ejecuta en cuadrupedo, asi que el del biped alli peta.
+#
+# El import va protegido para que el biped siga funcionando aunque el archivo
+# del caballo no este en la carpeta.
+try:
+    import horse_hip_module
+except ImportError:
+    horse_hip_module = None
 import socket_module
 import progress_module
 import controlsLibrary
@@ -62,14 +77,22 @@ class BuildRig(object):
     # Se mezclan con los modulos de la receta por el numero de orden, que es el
     # mismo que usa module_specs (spine=10, arm=20, finger=30, leg=40).
     # ------------------------------------------------------------------
+    #: (orden, metodo, etiqueta, plantillas). Sin plantillas = en todas.
+    #:
+    #: El chest es solo del biped: chest_module hace un aimConstraint contra
+    #: {rig}_spine_3_JNT, que es un nombre de spine_module. HorseSpine llama a
+    #: los suyos spine01_JNT, spine_pelvis_JNT y spine_chest_JNT.
     CORE_STEPS = [
-        (0,  "_core_root",      "Root rig"),
-        (1,  "_core_body",      "Body"),
-        (11, "_core_chest",     "Chest"),
-        (13, "_core_hip",       "Hip"),
-        (70, "_core_skinning",  "Skinning"),
-        (80, "_core_post",      "Soft IK y pole vector pins"),
-        (90, "_core_spaces",    "Space switching"),
+        (0,  "_core_root",      "Root rig",      None),
+        (1,  "_core_body",      "Body",          ("biped",)),
+        (11, "_core_chest",     "Chest",         ("biped",)),
+        # El hip va en las DOS plantillas: es quien monta el body (el COG con
+        # pivote movible) y el localHip_CTL. Lo unico que cambia es de que
+        # guia sale, porque el caballo no tiene "root".
+        (13, "_core_hip",       "Hip",           None),
+        (70, "_core_skinning",  "Skinning",      None),
+        (80, "_core_post",      "Soft IK y pole vector pins", None),
+        (90, "_core_spaces",    "Space switching", None),
     ]
 
     # ------------------------------------------------------------------
@@ -78,6 +101,7 @@ class BuildRig(object):
         self.recipe = []
         self.root_rig = None
         self.hip_rig = None
+        self.template = module_specs.DEFAULT_TEMPLATE
         self.skip_core = set()
 
     # ------------------------------------------------------------------
@@ -121,8 +145,15 @@ class BuildRig(object):
 
         # El total de pasos ya no es una constante que haya que acordarse de
         # actualizar a mano: sale de la propia receta.
+        # La plantilla sale de la receta: con modulos del caballo, los pasos
+        # fijos del biped (body, chest, hip) no se ejecutan.
+        self.template = module_specs.infer_template(recipe)
+
         core_steps = [step for step in self.CORE_STEPS
-                      if step[1] not in self.skip_core]
+                      if step[1] not in self.skip_core
+                      and (step[3] is None or self.template in step[3])]
+
+        print(f"[Build] Plantilla: {self.template}")
         total = len(recipe) + len(core_steps)
 
         if not show_progress:
@@ -139,10 +170,18 @@ class BuildRig(object):
         print("Rig construido.")
 
     @staticmethod
-    def default_recipe():
-        """El biped entero con las features por defecto de cada modulo."""
+    def default_recipe(template=None):
+        """
+        Una plantilla entera con las features por defecto de cada modulo.
+
+        Sin template se usa la de por defecto (biped). Antes recorria TODOS los
+        modulos de la tabla, y ahora eso mezclaria el biped con el caballo:
+        dos espinas, dos cuellos y guias que chocan de nombre.
+        """
+        template = template or module_specs.DEFAULT_TEMPLATE
+
         recipe = []
-        for module_type in module_specs.module_types():
+        for module_type in module_specs.module_types(template):
             for side in module_specs.module_sides(module_type):
                 recipe.append({
                     "type": module_type,
@@ -169,7 +208,7 @@ class BuildRig(object):
 
         timeline = []   # (orden, etiqueta, callable)
 
-        for order, method_name, label in core_steps:
+        for order, method_name, label, _templates in core_steps:
             timeline.append((order, label, getattr(self, method_name)))
 
         for entry in recipe:
@@ -218,6 +257,11 @@ class BuildRig(object):
 
         builders = {
             "spine":  self._build_spine,
+            "horse_spine": self._build_horse_spine,
+            "horse_neck":  self._build_horse_neck,
+            "horse_leg":      self._build_horse_leg,
+            "horse_back_leg": self._build_horse_back_leg,
+            "horse_tail":     self._build_horse_tail,
             "neck":   self._build_neck,
             "arm":    self._build_arm,
             "finger": self._build_finger,
@@ -388,6 +432,280 @@ class BuildRig(object):
         )
         self.chest_rig.build()
 
+    # ==================================================================
+    # CUADRUPEDO
+    # ==================================================================
+    def _build_horse_spine(self, side, features):
+        """
+        Espina del caballo.
+
+        El COG NO lo crea este modulo: lo monta hip_module (paso 13, antes que
+        la espina), que es el que hace el body_CTL con el pivote movible
+        (translationFromMatrix -> rotatePivot y scalePivot) y el localHip_CTL.
+
+        HorseSpine tiene su propio _build_body, pero es la version reducida
+        para usar la espina suelta fuera del autorig. Con build_body=False
+        coge el body_ctl que hip_module ha publicado en root_instance, que es
+        de donde cuelgan sus controles.
+        """
+        missing = [guide for guide in horse_spine.HorseSpine.DEFAULT_GUIDES
+                   if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Horse Spine] Faltan guias ({', '.join(missing)}). "
+                         f"Se salta la espina.")
+            return None
+
+        if not getattr(self.root_rig, "body_ctl", None):
+            cmds.warning("[Horse Spine] No hay body_CTL: los controles de la "
+                         "espina no colgaran del COG. Revisa el paso Hip.")
+
+        spine = horse_spine.HorseSpine(
+            name="spine",
+            root_instance=self.root_rig,
+            build_body=False,
+        )
+        spine.build()
+
+        self.horse_spine_rig = spine
+
+        return spine
+
+    def _build_horse_neck(self, side, features):
+        """
+        Cuello del caballo (ribbon).
+
+        La base del cuello se constrine al joint del pecho de la espina, que
+        se le pide a la instancia ya construida en vez de escribir el nombre a
+        mano: si HorseSpine cambia su convencion, esto sigue valiendo.
+        """
+        missing = [guide for guide in ("neck_root", "neck_mid", "neck_end")
+                   if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Horse Neck] Faltan guias ({', '.join(missing)}). "
+                         f"Se salta el cuello.")
+            return None
+
+        spine = self.get_module("horse_spine", "C")
+        parent_joint = None
+        if spine is not None:
+            parent_joint = (getattr(spine, "data", None) or {}).get("chest_jnt")
+
+        if not parent_joint:
+            cmds.warning("[Horse Neck] No encuentro el joint del pecho de la "
+                         "espina: el cuello no la seguira.")
+
+        # pin_joints: el modulo no crea ninguno por defecto. Con la feature
+        # marcada se piden los 5 que reparte por la V del ribbon.
+        neck = horse_neck.HorseNeck(
+            rig_name=self.RIG_NAME,
+            root_instance=self.root_rig,
+            parent_joint=parent_joint,
+            pin_joints=5 if "pin_joints" in features else 0,
+        )
+        neck.build()
+
+        self.horse_neck_rig = neck
+
+        return neck
+
+    def _horse_spine_control(self, key, fallback=None):
+        """
+        Un control de la espina del caballo, pedido a la instancia construida.
+
+        key es "chest" para las patas de delante y "hip" para las de detras.
+        Se lee de spine.data en vez de escribir "spine_chest_CTRL" a mano: si
+        HorseSpine cambia su convencion de nombres, esto sigue valiendo.
+        """
+        spine = self.get_module("horse_spine", "C")
+        data = getattr(spine, "data", None) or {}
+        control = (data.get("controls", {}).get(key) or {}).get("ctrl")
+
+        if control and cmds.objExists(control):
+            return control
+
+        cmds.warning(f"[Horse] No encuentro el control '{key}' de la espina. "
+                     f"Se usa {fallback}.")
+
+        return fallback
+
+    #: NURBS sobre la que se proyecta la escapula. Se buscan varios nombres
+    #: porque la superficie puede venir de las guias o estar puesta a mano.
+    THORAX_CANDIDATES = ("thorax_NRB", "Character_thorax_NRB", "thorax_surface")
+
+    def _horse_thorax_surface(self):
+        for name in self.THORAX_CANDIDATES:
+            if cmds.objExists(name):
+                return name
+
+        cmds.warning("[Horse Front Leg] No encuentro la NURBS del torax "
+                     f"({', '.join(self.THORAX_CANDIDATES)}). La escapula se "
+                     f"construye sin proyeccion sobre las costillas.")
+
+        return None
+
+    def _build_horse_leg(self, side, features):
+        """Pata delantera: con clavicula y casco."""
+        required = [f"{side}_clavicule", f"{side}_clavicule_start",
+                    f"{side}_hip", f"{side}_knee", f"{side}_ankle",
+                    f"{side}_ball", f"{side}_toe_tip", f"{side}_heel",
+                    f"{side}_hoof_in", f"{side}_hoof_out"]
+        missing = [guide for guide in required if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Horse Front Leg {side}] Faltan guias "
+                         f"({', '.join(missing)}). Se salta la pata.")
+            return None
+
+        leg = horse_leg_module.LegModule(
+            clavicule_start_guide=f"{side}_clavicule_start",
+            clavicule_guide=f"{side}_clavicule",
+            thigh_guide=f"{side}_hip",
+            knee_guide=f"{side}_knee",
+            ankle_guide=f"{side}_ankle",
+            ball_guide=f"{side}_ball",
+            tip_guide=f"{side}_toe_tip",
+            heel_guide=f"{side}_heel",
+            bank_in_guide=f"{side}_hoof_in",
+            bank_out_guide=f"{side}_hoof_out",
+            rig_name="Leg",
+            side=side,
+            root_instance=self.root_rig,
+            # La clavicula de la pata de delante sigue al pecho de la espina.
+            clavicule_parent=self._horse_spine_control(
+                "chest", f"{self.RIG_NAME}_chestFix_CTL"),
+            clavicle=True,
+            hoof=True,
+            scapula="scapula" in features,
+            # La NURBS del torax. Sin ella el modulo construye la escapula
+            # igual, pero sin el proximityPin: solo sigue a su control, sin
+            # deslizarse sobre las costillas.
+            scapula_surface=self._horse_thorax_surface(),
+        )
+        leg.build()
+
+        return leg
+
+    def _build_horse_back_leg(self, side, features):
+        """
+        Pata trasera: tres huesos (maluc, babilla, garro, menudillo), IK de
+        muelle y sin clavicula. El legRoot cuelga de la pelvis.
+        """
+        required = [f"{side}_hip_back", f"{side}_knee_back",
+                    f"{side}_hock_back", f"{side}_ankle_back",
+                    f"{side}_ball_back", f"{side}_toe_tip_back",
+                    f"{side}_heel_back",
+                    f"{side}_hoof_in_back", f"{side}_hoof_out_back"]
+        missing = [guide for guide in required if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Horse Back Leg {side}] Faltan guias "
+                         f"({', '.join(missing)}). Se salta la pata.")
+            return None
+
+        leg = horse_leg_module.LegModule(
+            thigh_guide=f"{side}_hip_back",
+            knee_guide=f"{side}_knee_back",
+            hock_guide=f"{side}_hock_back",
+            ankle_guide=f"{side}_ankle_back",
+            ball_guide=f"{side}_ball_back",
+            tip_guide=f"{side}_toe_tip_back",
+            heel_guide=f"{side}_heel_back",
+            bank_in_guide=f"{side}_hoof_in_back",
+            bank_out_guide=f"{side}_hoof_out_back",
+            rig_name="BackLeg",
+            side=side,
+            root_instance=self.root_rig,
+            # Sin clavicula, clavicule_parent es de quien cuelga el legRoot:
+            # el control de la cadera de la espina.
+            clavicule_parent=self._horse_spine_control(
+                "hip", f"{self.RIG_NAME}_localHip_CTL"),
+            clavicle=False,
+            three_bone=True,
+            hoof=True,
+        )
+        leg.build()
+
+        return leg
+
+    def _horse_leg_post_build(self, leg, entry):
+        """
+        Soft IK de las patas del caballo.
+
+        horse_leg_module anade el canal .Soft al legIk_CTRL pero no monta la
+        red: en el biped eso lo hace el post_build() del modulo, y el del
+        caballo no lo tiene. Sin esto, el atributo existe y no hace nada.
+
+        TODO: lo limpio seria darle un post_build() a horse_leg_module, como
+        tienen LimbModule y LegModule del biped, y borrar este metodo.
+        """
+        import soft_module
+
+        side = entry["side"]
+        prefix = f"{side}_{leg.rig_name}"
+
+        ik_chain = getattr(leg, "ik_chain", None)
+        if not ik_chain:
+            cmds.warning(f"[{prefix}] Sin cadena IK: no se monta el soft.")
+            return None
+
+        # i_ankle es el indice del menudillo: 2 en la pata delantera y 3 en la
+        # trasera, que tiene un hueso mas.
+        ankle_index = getattr(leg, "i_ankle", 2)
+
+        if ankle_index > 2:
+            cmds.warning(f"[{prefix}] Pata de tres huesos: el soft mide la "
+                         f"cadena con dos segmentos, asi que la distancia "
+                         f"maxima se queda corta. Revisalo al animar.")
+
+        goal_ctrl = f"{prefix}_footBall_CTRL"
+
+        leg.soft_result = soft_module.SoftIkModule(
+            side=side, prefix=leg.rig_name
+        ).apply_soft_ik(
+            ik_ctrl=f"{prefix}_legIk_CTRL",
+            ik_handle=f"{prefix}_IKH",
+            ik_hdl=f"{prefix}_IKH",
+            root_ctrl=f"{prefix}_legRoot_CTRL",
+            root_jnt=ik_chain[0],
+            mid_jnt=ik_chain[1],
+            low_jnt=ik_chain[ankle_index],
+            global_ctrl=f"{self.RIG_NAME}_global_CTL",
+            # Quien manda sobre el ik handle es la cadena del reverse foot, no
+            # el ik_ctrl: el goal es el control de la bola.
+            goal_ctrl=goal_ctrl if cmds.objExists(goal_ctrl) else None,
+        )
+
+        return leg.soft_result
+
+    def _build_horse_tail(self, side, features):
+        """
+        Cua FK. La base sigue a la pelvis de la espina.
+
+        El joint se pide a la instancia (spine.data["pelvis"]) en vez de
+        escribir "spine_pelvis_JNT" a mano.
+        """
+        guides = [f"tail_{i + 1:02d}" for i in range(5)]
+        missing = [guide for guide in guides if not cmds.objExists(guide)]
+        if missing:
+            cmds.warning(f"[Horse Tail] Faltan guias ({', '.join(missing)}). "
+                         f"Se salta la cola.")
+            return None
+
+        spine = self.get_module("horse_spine", "C")
+        pelvis = (getattr(spine, "data", None) or {}).get("pelvis")
+
+        if not pelvis:
+            cmds.warning("[Horse Tail] No encuentro la pelvis de la espina: "
+                         "la cola no la seguira.")
+
+        tail = horse_tail.HorseTail(
+            guides=guides,
+            rig_name=self.RIG_NAME,
+            parent_joint=pelvis,
+            root_instance=self.root_rig,
+        )
+        tail.build()
+
+        return tail
+
     def _build_neck(self, side, features):
         """
         Cuello y cabeza. Antes era un paso fijo; ahora es un modulo de la
@@ -411,12 +729,43 @@ class BuildRig(object):
 
         return self.neck_rig
 
+    #: Guia de la que sale el hip/COG en cada plantilla.
+    HIP_GUIDE = {"biped": "root", "quadruped": "spine_root"}
+
     def _core_hip(self):
-        self.hip_rig = hip_module.HipModule(
-            root_guide="root",
+        """
+        Hip local + body (el COG con pivote movible).
+
+        Es quien publica root_instance.body_ctl, del que cuelgan los controles
+        de la espina en las dos plantillas. Por eso va antes que ella: hip es
+        el paso 13 y la espina del caballo el 15.
+        """
+        guide = self.HIP_GUIDE.get(self.template, "root")
+
+        if not cmds.objExists(guide):
+            cmds.warning(f"[Hip] No existe la guia '{guide}'. Sin ella no hay "
+                         f"body_CTL ni COG_CTRL. Se salta el hip.")
+            return None
+
+        # El del caballo monta el body entero (el COG con pivote movible); el
+        # del biped espera que body_module ya lo haya creado.
+        module = hip_module
+        if self.template == "quadruped":
+            if horse_hip_module is None:
+                cmds.warning(
+                    "[Hip] Falta horse_hip_module.py. Guarda ahi el hip del "
+                    "caballo (el que crea el body con build_body) y vuelve a "
+                    "cargar. Con el del biped no habra COG.")
+                return None
+            module = horse_hip_module
+
+        self.hip_rig = module.HipModule(
+            root_guide=guide,
             root_instance=self.root_rig,
         )
         self.hip_rig.build()
+
+        return self.hip_rig
 
     # ==================================================================
     # CARA
@@ -592,10 +941,14 @@ class BuildRig(object):
         for entry in self.recipe:
             instance = self.get_module(entry["type"], entry["side"])
 
-            if instance is None or not hasattr(instance, "post_build"):
+            if instance is None:
                 continue
 
-            instance.post_build()
+            if hasattr(instance, "post_build"):
+                instance.post_build()
+            elif entry["type"] in ("horse_leg", "horse_back_leg"):
+                # horse_leg_module no tiene post_build: su soft se monta aqui.
+                self._horse_leg_post_build(instance, entry)
 
     # ------------------------------------------------------------------
     def _existing_spaces(self, space_dict, target_control):

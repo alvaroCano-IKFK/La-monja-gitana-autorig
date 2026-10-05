@@ -553,7 +553,18 @@ class LegModule(module_specs.FeaturesMixin):
                 up_axis        = "zneg",
                 front_axis_idx = 0,
                 up_axis_idx    = 2,
-                source_curve   = source_curve
+                source_curve   = source_curve,
+                # El muslo cuelga de leg_GRP, un grupo vacio bajo rig_GRP que
+                # NO rota con el rig (rig_GRP solo recibe un scaleConstraint).
+                # Si dejamos que twist_module deduzca la referencia de roll del
+                # padre de bind_chain[0], el non roll queda anclado al mundo y
+                # rueda el mismo angulo que gires el global, el local o el body,
+                # llevandose por delante el twist, las bendies y la piel.
+                #
+                # El legRoot_CTRL es el equivalente de la clavicula en el brazo:
+                # esta en el muslo y su grupo va parentConstraint al control de
+                # cadera, asi que si gira con el personaje.
+                nonroll_ref    = self.ik_root_ctrl,
             )
         else:
             print(f"[{self.prefix}] Twist desactivado en la receta.")

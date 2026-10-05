@@ -36,7 +36,52 @@ class TwistModule(object):
         self.upper_motion_paths = []
         self.lower_motion_paths = []
 
-    def basic_twist_setup(self, start_joint, mid_joint, end_joint):
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_rotation_driver(node):
+        """True si algo conduce la rotacion de este nodo."""
+        for plug in ("rotate", "rotateX", "rotateY", "rotateZ", "offsetParentMatrix"):
+            if cmds.listConnections(f"{node}.{plug}", source=True, destination=False):
+                return True
+        return False
+
+    def _follows_rig(self, node):
+        """
+        Heuristica: comprueba si 'node' rota de verdad con el personaje.
+
+        Sube por la jerarquia buscando o bien un driver de rotacion (un
+        constraint, una conexion) o bien un control. Si no encuentra ninguna
+        de las dos cosas, el nodo esta colgando de grupos inertes y su
+        orientacion esta anclada al mundo.
+
+        Es exactamente el caso de leg_GRP bajo rig_GRP: rig_GRP solo tiene un
+        scaleConstraint, que conecta escala y no rotacion, asi que nada de esa
+        rama gira con el rig.
+        """
+        current = node
+        while current:
+            if current.endswith("_CTL") or current.endswith("_CTRL"):
+                return True
+            if self._has_rotation_driver(current):
+                return True
+            current = (cmds.listRelatives(current, parent=True) or [None])[0]
+        return False
+
+    def basic_twist_setup(self, start_joint, mid_joint, end_joint, nonroll_ref=None):
+        """
+        Monta la cadena non roll y las dos cadenas de twist del segmento.
+
+        Args:
+            nonroll_ref (str): Nodo que da la REFERENCIA DE ROLL al non roll.
+                Si no se pasa, se usa el padre de start_joint (la clavicula en
+                el brazo, la cadera en la pierna), que es lo correcto en el
+                99% de los casos. Ver el comentario largo junto al
+                orientConstraint de ik_hdl_upper para entender por que esto no
+                es opcional.
+        """
         # NON ROLL
         self.nonroll_upper_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperNonRollStart_JNT")[0]
         if cmds.listRelatives(self.nonroll_upper_start, parent=True):
@@ -55,6 +100,53 @@ class TwistModule(object):
 
         ik_hdl_upper = cmds.ikHandle(sj=self.nonroll_upper_start, ee=self.nonroll_upper_end, sol="ikSCsolver", name=f"{self.side}_{self.name}UpperNonRollIk_HDL")[0]
         cmds.pointConstraint(mid_joint, ik_hdl_upper, mo=False)
+
+        # ------------------------------------------------------------------
+        # REFERENCIA DE ROLL DEL NON ROLL  (no quitar: aqui estaba el bug)
+        # ------------------------------------------------------------------
+        # El ikSCsolver no solo apunta la cadena al handle: tambien le pasa la
+        # ROTACION del handle, y eso es lo que fija el roll de la cadena.
+        #
+        # Con solo el pointConstraint de arriba esa rotacion no la conduce
+        # nadie: se queda con el valor del momento de la creacion, congelada en
+        # el espacio local del handle. Y el handle acaba colgando de
+        # twist_GRP > C_twist_GRP > <rig>_rig_GRP, que en rigRoot_module solo
+        # recibe un scaleConstraint. O sea que rig_GRP NO rota con el rig, y el
+        # roll del non roll queda anclado al MUNDO.
+        #
+        # Consecuencia: al girar el global, el local o el body, el solver lee
+        # esa diferencia como twist y hace rodar la cadena non roll el mismo
+        # angulo que has girado. Y como de nonroll_upper_start cuelga el
+        # upper_twist_start, y de el sale el worldUpMatrix de los motionPath
+        # del segmento upper, se lleva por delante el twist, las bendies y la
+        # piel. Pasaba en brazos y piernas, en IK y en FK.
+        #
+        # La referencia correcta es el PADRE del segmento (clavicula / cadera):
+        # ese si rota con el personaje, y el non roll sigue sin heredar el
+        # twist del propio hombro, que es lo unico que debe ignorar.
+        if nonroll_ref is None:
+            nonroll_ref = (cmds.listRelatives(start_joint, parent=True) or [None])[0]
+
+        if nonroll_ref and cmds.objExists(nonroll_ref):
+            if not self._follows_rig(nonroll_ref):
+                # Le paso esto al brazo y funciona, a la pierna y no: el muslo
+                # cuelga de leg_GRP, un grupo vacio bajo rig_GRP. Si la
+                # referencia no gira con el personaje, el arreglo no arregla
+                # nada, asi que mejor cantarlo aqui que descubrirlo girando el
+                # master.
+                cmds.warning(f"[{self.side}_{self.name}] '{nonroll_ref}' no parece seguir al "
+                             "rig: ningun control ni driver de rotacion en su jerarquia. El "
+                             "non roll seguira rodando al girar el personaje. Pasa un "
+                             "nonroll_ref explicito (el control raiz del segmento).")
+
+            cmds.orientConstraint(nonroll_ref, ik_hdl_upper, mo=True)
+            print(f"[TwistModule] {self.side}_{self.name}: non roll referenciado a "
+                  f"'{nonroll_ref}'.")
+        else:
+            cmds.warning(f"[{self.side}_{self.name}] El non roll se queda sin referencia de "
+                         f"roll ({start_joint} no tiene padre y no se paso nonroll_ref). "
+                         "Rodara al girar el rig: pasale un nodo que siga al personaje.")
+        # ------------------------------------------------------------------
 
         # TWIST
         self.upper_twist_start = cmds.duplicate(start_joint, po=True, n=f"{self.side}_{self.name}_upperTwistStart_JNT")[0]
@@ -122,13 +214,16 @@ class TwistModule(object):
     def create_basic_curve(self, start_joint, mid_joint, end_joint,
                         aim_axis="x", up_axis="y",
                         front_axis_idx=None, up_axis_idx=None,
-                        source_curve=None):   # ← parámetros nuevos
+                        source_curve=None, nonroll_ref=None):   # ← parámetros nuevos
         
         self.start_joint = start_joint
         self.mid_joint   = mid_joint
         self.end_joint   = end_joint
 
-        base_twist = self.basic_twist_setup(start_joint, mid_joint, end_joint)
+        # nonroll_ref viaja tal cual hasta el orientConstraint del handle del
+        # non roll. None = se deduce del padre de start_joint.
+        base_twist = self.basic_twist_setup(start_joint, mid_joint, end_joint,
+                                            nonroll_ref=nonroll_ref)
 
         # ==============================================================
         # CURVAS DE SEGMENTO

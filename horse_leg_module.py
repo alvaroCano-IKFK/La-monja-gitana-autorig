@@ -35,6 +35,8 @@ class LegModule(object):
                  scapula=False,
                  pv_mult=1.0,
                  scapula_surface=None,
+                 auto_scapula_driver=None,
+                 auto_scapula_axis="X",
                  clavicle=True,
                  three_bone=False,
                  hock_guide=None):
@@ -119,6 +121,11 @@ class LegModule(object):
         #Superficie del torax per projectar l escapula (proximityPin).
         #Si es None, l escapula nomes segueix el seu control.
         self.scapula_surface = scapula_surface
+
+        #AUTO ESCAPULA: control del pit (o el que sigui) que, en rotar, fa que
+        #la clavicula vagi una mica endavant. Si es None, no es crea.
+        self.auto_scapula_driver = auto_scapula_driver
+        self.auto_scapula_axis = auto_scapula_axis.upper()
 
         self.bind_chain = []
         self.ik_chain = []
@@ -249,6 +256,62 @@ class LegModule(object):
                                  aimVector=aim, upVector=(0, 1, 0),
                                  worldUpType="vector", worldUpVector=(1, 0, 0))
         cmds.delete(tmp)
+
+    def build_auto_scapula(self, clavicule_ctrl, clavicule_gen):
+        """
+        Auto escapula: quan el pit rota, la clavicula va una mica endavant.
+
+            pit.rotate<eix> * Factor * AutoScapula  ->  clamp(Min, Max)
+                                                    ->  SDK del clavicule_GRP
+
+        El clamp evita que amb rotacions grans del pit la clavicula es passi de
+        frenada. L animador pot corregir a sobre amb el control, perque l auto
+        entra per l SDK i no pel canal del control.
+
+        Atributs al clavicule_CTRL:
+            AutoScapula        0-1, quant actua (1 per defecte)
+            AutoScapulaFactor  graus de clavicula per grau de pit
+            AutoScapulaMin/Max limits en graus
+        """
+        p = self.prefix
+        driver = self.auto_scapula_driver
+        axis = self.auto_scapula_axis
+
+        sdk = clavicule_gen.replace("_GRP", "_SDK")
+        if not cmds.objExists(sdk):
+            cmds.warning(f"[{p}] No existeix {sdk}: auto escapula no connectada.")
+            return None
+
+        cmds.addAttr(clavicule_ctrl, ln="autoScapulaSep", nn="AUTO SCAPULA",
+                     at="enum", en="------", k=False)
+        cmds.setAttr(f"{clavicule_ctrl}.autoScapulaSep", cb=True)
+        cmds.setAttr(f"{clavicule_ctrl}.autoScapulaSep", l=True)
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapula", at="float", min=0, max=1, dv=1, k=True)
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaFactor", at="float", dv=0.5, k=True)
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaMin", at="float", dv=-15, k=True)
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaMax", at="float", dv=15, k=True)
+
+        # rotacio del pit * factor
+        factor = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaFactor_MDL")
+        cmds.connectAttr(f"{driver}.rotate{axis}", f"{factor}.input1")
+        cmds.connectAttr(f"{clavicule_ctrl}.AutoScapulaFactor", f"{factor}.input2")
+
+        # ... * quant actua
+        amount = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaAmount_MDL")
+        cmds.connectAttr(f"{factor}.output", f"{amount}.input1")
+        cmds.connectAttr(f"{clavicule_ctrl}.AutoScapula", f"{amount}.input2")
+
+        # ... limitat entre Min i Max
+        clp = cmds.createNode("clamp", n=f"{p}_autoScapula_CLP")
+        cmds.connectAttr(f"{amount}.output", f"{clp}.inputR")
+        cmds.connectAttr(f"{clavicule_ctrl}.AutoScapulaMin", f"{clp}.minR")
+        cmds.connectAttr(f"{clavicule_ctrl}.AutoScapulaMax", f"{clp}.maxR")
+
+        cmds.connectAttr(f"{clp}.outputR", f"{sdk}.rotate{axis}")
+
+        self.auto_scapula_clamp = clp
+        print(f"[{p}] Auto escapula connectada a {driver}.rotate{axis}")
+        return clp
 
     def build_scapula_pin(self, bind_joint):
         """
@@ -714,6 +777,13 @@ class LegModule(object):
         if self.clavicle and self.scapula:
             cmds.parentConstraint(clavicule_ctrl, c_cl, mo=True)   # arrel
             cmds.parentConstraint(clavicule_start_ctrl, b_cl_start, mo=True)   # escapula
+
+            # Auto escapula: la clavicula acompanya la rotacio del pit
+            if self.auto_scapula_driver and cmds.objExists(self.auto_scapula_driver):
+                self.build_auto_scapula(clavicule_ctrl, clavicule_gen)
+            elif self.auto_scapula_driver:
+                cmds.warning(f"[{self.prefix}] No existeix {self.auto_scapula_driver}: "
+                             f"auto escapula no creada.")
             if self.scapula_surface and cmds.objExists(self.scapula_surface):
                 self.build_scapula_pin(b_cl_start)
         elif self.clavicle:

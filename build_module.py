@@ -579,6 +579,10 @@ class BuildRig(object):
             # igual, pero sin el proximityPin: solo sigue a su control, sin
             # deslizarse sobre las costillas.
             scapula_surface=self._horse_thorax_surface(),
+            # Auto escapula: al rotar el pecho, la clavicula acompana un poco.
+            # Se lee el control de la espina, cuyo rotate parte de cero.
+            auto_scapula_driver=self._horse_spine_control("chest"),
+            auto_scapula_axis="X",
         )
         leg.build()
 

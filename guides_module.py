@@ -463,7 +463,11 @@ class BocaGuides(object):
     """
     def __init__(self, lips_NRB, lip_mid, lip_end,
                  lip_in01="L_lip_in01", lip_in02="L_lip_in02",
-                 make_surface=True):
+                 make_surface=True, offset=(0, 0, 0)):
+        #Desplacament de tot el bloc (el cap del caball no es al mateix lloc
+        #que el del biped). Veure CharacterGuides.FACIAL_OFFSET.
+        self.offset = offset
+
         self.boca_surface = lips_NRB
         self.lip_mid = lip_mid
         self.lip_end = lip_end
@@ -488,6 +492,10 @@ class BocaGuides(object):
     END_POSITION = (2.5, 24, 9)
     END_ROTATE_Y = 45
 
+    def moved(self, position):
+        """La posicio base mes l offset del bloc."""
+        return [position[i] + self.offset[i] for i in range(3)]
+
     def _create_surface(self):
         """
         La NURBS de la boca. Solo la usa el sistema viejo (closestPointOnSurface
@@ -496,8 +504,8 @@ class BocaGuides(object):
         """
         surface = cmds.nurbsPlane(n=self.boca_surface, ax=(0, 1, 0),
                                   w=10, lr=1, d=1, u=4, v=4)[0]
-        cmds.setAttr(f"{surface}.translateY", 24)
-        cmds.setAttr(f"{surface}.translateZ", 10)
+        cmds.setAttr(f"{surface}.translateY", 24 + self.offset[1])
+        cmds.setAttr(f"{surface}.translateZ", 10 + self.offset[2])
         cmds.setAttr(f"{surface}.rotateX", 90)
 
         #Dar una posicion base a la forma de la nurbs
@@ -520,9 +528,12 @@ class BocaGuides(object):
 
         #Crea els joints de la boca
         cmds.select(clear=True)
-        lip_mid_joint = cmds.joint(n=self.lip_mid, p=self.MID_POSITION)
+        mid_position = self.moved(self.MID_POSITION)
+        end_position = self.moved(self.END_POSITION)
+
+        lip_mid_joint = cmds.joint(n=self.lip_mid, p=mid_position)
         cmds.select(clear=True)
-        lip_end_joint = cmds.joint(n=self.lip_end, p=self.END_POSITION)
+        lip_end_joint = cmds.joint(n=self.lip_end, p=end_position)
         cmds.setAttr(f"{lip_end_joint}.rotateY", self.END_ROTATE_Y)
 
         # Las dos intermedias: repartidas a 1/3 y 2/3 entre el mid y la
@@ -532,7 +543,7 @@ class BocaGuides(object):
         for name, fraction in ((self.lip_in01, 1.0 / 3.0),
                                (self.lip_in02, 2.0 / 3.0)):
             position = [start + (end - start) * fraction
-                        for start, end in zip(self.MID_POSITION, self.END_POSITION)]
+                        for start, end in zip(mid_position, end_position)]
 
             cmds.select(clear=True)
             joint = cmds.joint(n=name, p=position)
@@ -947,7 +958,7 @@ class HorseSpineGuides(object):
     """
 
     def __init__(self, spine_root="spine_root", spine_end="spine_end",
-                 root_pos=(0, 0, -40), end_pos=(0, 4, 40)):
+                 root_pos=(0, 0, -25), end_pos=(0, 0, 30)):
         self.spine_root = spine_root
         self.spine_end = spine_end
         self.root_pos = root_pos
@@ -1206,6 +1217,12 @@ class CharacterGuides(object):
     GUIDES_ROOT = "guides_GRP"
     GUIDES_OFFSET_Y = 32.5
 
+    #: Les guies facials estan pensades per al cap del biped. Al quadrupede el
+    #: cap va molt mes endavant i una mica mes amunt, aixi que tot el bloc
+    #: facial es desplaca aquest offset (X, Y, Z).
+    FACIAL_OFFSET = (0, 0, 0)
+    FACIAL_OFFSET_QUADRUPED = (0, 5, 70)
+
     #: Guia que demostra que un bloc de guies ja existeix a l escena. Si hi es,
     #: aquell bloc no es torna a crear: aixi es pot afegir un modul a l arbre,
     #: tornar a donar a GUIDES, i nomes apareixen les guies noves.
@@ -1243,6 +1260,13 @@ class CharacterGuides(object):
         #Resultat de l ultima crida, per poder-lo consultar
         self.created = []
         self.skipped = []
+
+        #Offset del bloc facial: el fixa create_guides segons la plantilla
+        self.facial_offset = self.FACIAL_OFFSET
+
+    def moved(self, position):
+        """La posicio base d una guia facial mes l offset de la plantilla."""
+        return tuple(position[i] + self.facial_offset[i] for i in range(3))
 
     # ------------------------------------------------------------------
     # QUE CAL CREAR
@@ -1341,6 +1365,12 @@ class CharacterGuides(object):
 
         blocks = self._blocks_from_recipe(recipe)
 
+        #El cap del caball no es al mateix lloc que el del biped
+        quadruped = (recipe is not None
+                     and module_specs.infer_template(recipe) == "quadruped")
+        self.facial_offset = (self.FACIAL_OFFSET_QUADRUPED if quadruped
+                              else self.FACIAL_OFFSET)
+
         if recipe is not None:
             types = {entry["type"] for entry in recipe}
             if "finger" in types and "arm" not in types:
@@ -1428,13 +1458,15 @@ class CharacterGuides(object):
             elif block == "mouth":
                 #Crea les guies de la boca
                 boca_instance = BocaGuides("boca_surface", "C_lip_mid", "L_lip_end",
-                                           lip_in01="L_lip_in01", lip_in02="L_lip_in02")
+                                           lip_in01="L_lip_in01", lip_in02="L_lip_in02",
+                                           offset=self.facial_offset)
                 boca_instance.create_boca()
                 new_groups.append(boca_instance.guides_group)
 
             elif block == "jaw":
                 #Crea les guies de la jaw
-                jaw_instance = JawGuides("jaw_root", "jaw_end", (0, 21, 5), (0, 19, 9))
+                jaw_instance = JawGuides("jaw_root", "jaw_end",
+                                         self.moved((0, 21, 5)), self.moved((0, 19, 9)))
                 jaw_instance.jaw_guides()
                 new_groups.append(jaw_instance.guides_group)
 
@@ -1444,23 +1476,24 @@ class CharacterGuides(object):
                     "L_eye_mid",
                     "L_eye_mid_end",
                     "L_eye_direct",
-                    (2, 26, 9),
-                    (2, 26, 10),
-                    (2, 26, 20)
+                    self.moved((2, 26, 9)),
+                    self.moved((2, 26, 10)),
+                    self.moved((2, 26, 20))
                 )
                 eye_instance.eye_guides()
                 new_groups.append(eye_instance.guides_group)
 
             elif block == "socket":
                 #Crea les guies del socket, al voltant del centre de l'ull
-                socket_instance = SocketGuides("L_socket", center=(2, 26, 9))
+                socket_instance = SocketGuides("L_socket", center=self.moved((2, 26, 9)))
                 socket_instance.socket_guides()
                 new_groups.append(socket_instance.guides_group)
 
             elif block == "eyebrow":
                 #Crea les guies de les celles
                 eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end",
-                                                   root_pos=(0, 34, 10), end_pos=(2.5, 34, 9))
+                                                   root_pos=self.moved((0, 34, 10)),
+                                                   end_pos=self.moved((2.5, 34, 9)))
                 eyebrows_instance.eyebrows_guides()
                 new_groups.append(eyebrows_instance.guides_group)
 
@@ -1505,7 +1538,8 @@ class CharacterGuides(object):
             elif block == "nose":
                 #Crea les guies del nas
                 nose_instance = NoseGuides("nose_root", "nose_tip",
-                                           root_pos=(0, 27, 10), tip_pos=(0, 25, 12))
+                                           root_pos=self.moved((0, 27, 10)),
+                                           tip_pos=self.moved((0, 25, 12)))
                 nose_instance.nose_guides()
                 new_groups.append(nose_instance.guides_group)
 
@@ -1513,7 +1547,8 @@ class CharacterGuides(object):
                 #Crea la NURBS del crani per la que llisquen les celles.
                 #El centre va a l'altura de les guies de les celles (Y = 34) perque
                 #despres tot el guides_GRP es mou junt.
-                skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB", center=(0, 34, 0))
+                skull_instance = EyebrowSkullGuides("eyebrow_skull_NRB",
+                                                    center=self.moved((0, 34, 0)))
                 skull_instance.create_skull()
                 new_groups.append(skull_instance.guides_group)
 

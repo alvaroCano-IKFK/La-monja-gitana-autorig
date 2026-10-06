@@ -980,8 +980,24 @@ class LegModule(object):
 
         print(f"Build {self.prefix} completo.")        
         # =========================================================
-        # CURVATURA
+        # CURVATURA + TWIST
         # =========================================================
+        # Quins tres joints porten curvature i twist:
+        #   2 segments (biped i pota de davant): thigh -> knee -> ankle
+        #   3 segments (pota del darrere): un tram mes avall, knee (babilla) ->
+        #     hock (garro) -> ankle (menudillo). Aixi el non roll queda a la
+        #     babilla i el twist a la canya, no al maluc.
+        # Els dos moduls han de fer servir ELS MATEIXOS joints: el twist detacha
+        # la corba del curvature, i si van desplacats els joints de twist surten
+        # per una linia que no segueix la pota.
+        if self.three_bone:
+            segment_joints = (self.bind_chain[1],
+                              self.bind_chain[2],
+                              self.bind_chain[self.i_ankle])
+        else:
+            segment_joints = (self.bind_chain[0],
+                              self.bind_chain[1],
+                              self.bind_chain[2])
 
         leg_curvature = curvature_module.CurvatureModule(
             name=f"{self.prefix}_Leg_Curvature",
@@ -990,9 +1006,9 @@ class LegModule(object):
             root_instance=self.root_instance
         )
         leg_curvature.create_basic_curve(
-            start_joint    = self.bind_chain[0],
-            mid_joint      = self.bind_chain[1],
-            end_joint      = self.bind_chain[2],
+            start_joint    = segment_joints[0],
+            mid_joint      = segment_joints[1],
+            end_joint      = segment_joints[2],
             switch_control = f"{self.prefix}_switch_CTRL"
         )
 
@@ -1009,9 +1025,9 @@ class LegModule(object):
             root_instance=self.root_instance
         )
         leg_twist.create_basic_curve(
-            self.bind_chain[0],
-            self.bind_chain[1],
-            self.bind_chain[2],
+            segment_joints[0],
+            segment_joints[1],
+            segment_joints[2],
             aim_axis      = "x",
             up_axis       = "zneg",
             front_axis_idx= 0,

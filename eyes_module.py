@@ -205,6 +205,13 @@ class EyesModule(module_specs.FeaturesMixin):
         # frente.
         self.cv_rotation = (90.0, 0.0, 0.0)
 
+        # Aim del ojo. El up va contra un OBJETO, no contra el mundo: ver
+        # _aim_eye_mid_to_direct. A None lo busca solo (head_CTRL y detras
+        # dos alternativas).
+        self.aim_up_object = None
+        self.aim_vector = (1.0, 0.0, 0.0)
+        self.aim_up_vector = (0.0, 1.0, 0.0)
+
         # Los sub comparten sitio con su principal, asi que si midieran lo
         # mismo quedarian uno encima de otro y no habria como pincharlos.
         self.sub_cv_scale = 0.6
@@ -730,16 +737,50 @@ class EyesModule(module_specs.FeaturesMixin):
 
         return ctrl, ctrl_grp
 
+    def _resolve_aim_up_object(self):
+        """
+        Nodo cuyo giro define el up vector del aim del ojo.
+
+        Se busca el control de la cabeza, que es lo que de verdad orienta la
+        cara. Si no esta, se cae al grupo de controles de cara (que va
+        constreñido a ese mismo control) y por ultimo al local_CTL.
+        """
+        if self.aim_up_object and cmds.objExists(self.aim_up_object):
+            return self.aim_up_object
+
+        candidates = [
+            f"{self.rig_name}_head_CTRL",
+            f"C_{self.rig_name}_faceControls_GRP",
+            f"{self.rig_name}_local_CTL",
+        ]
+
+        for node in candidates:
+            if cmds.objExists(node):
+                return node
+
+        return None
+
     def _aim_eye_mid_to_direct(self):
         """
         El _GRP del control de eye_mid apunta al control de eye_direct.
 
-        Opciones del constraint, tal cual las de la ventana:
-          - maintainOffset activado
-          - aimVector (1, 0, 0)
-          - upVector  (0, 1, 0)
-          - worldUpType 'scene' (Scene up)
-          - peso 1, sin ejes bloqueados
+        EL FLIP DE LOS 90 GRADOS
+        ------------------------
+        Antes esto iba con worldUpType 'scene', o sea con la Y del MUNDO como
+        up vector. Un aimConstraint saca el tercer eje del producto vectorial
+        entre la direccion de aim y el up: cuando las dos se acercan a ser
+        paralelas, el producto tiende a cero, la orientacion queda indefinida
+        y al cruzar ese punto los ejes se dan la vuelta de golpe.
+
+        Con la cabeza girada mas de 90 grados en cualquier direccion, la
+        mirada acaba alineandose con la Y del mundo. Y pasaba igual al rotar
+        el global o el local, porque para el constraint es lo mismo: el ojo
+        gira en el mundo y el up sigue clavado.
+
+        Ahora el up es 'objectrotation' contra el control de la cabeza: el up
+        vector gira CON la cara, asi que nunca llega a alinearse con la
+        mirada y no hay angulo malo. Es la misma correccion que la del
+        motionPath de los labios.
 
         Se constriñe el _GRP y no el control para dejarle al animador los
         canales del control libres por encima del aim.
@@ -758,14 +799,32 @@ class EyesModule(module_specs.FeaturesMixin):
         if old:
             cmds.delete(old)
 
-        self.eye_mid_aim_constraint = cmds.aimConstraint(
-            direct_ctrl, mid_grp,
-            maintainOffset=True,
-            aimVector=(1.0, 0.0, 0.0),
-            upVector=(0.0, 1.0, 0.0),
-            worldUpType="scene",
-            weight=1.0
-        )[0]
+        up_object = self._resolve_aim_up_object()
+
+        if up_object:
+            self.eye_mid_aim_constraint = cmds.aimConstraint(
+                direct_ctrl, mid_grp,
+                maintainOffset=True,
+                aimVector=self.aim_vector,
+                upVector=self.aim_up_vector,
+                worldUpType="objectrotation",
+                worldUpObject=up_object,
+                worldUpVector=self.aim_up_vector,
+                weight=1.0
+            )[0]
+            print(f"[EyesModule] Aim del ojo {self.side}: up desde {up_object}")
+        else:
+            cmds.warning("[EyesModule] No encuentro el control de la cabeza. "
+                         "El aim del ojo se queda con el up del mundo y va a "
+                         "flipar al girar la cabeza mas de 90 grados.")
+            self.eye_mid_aim_constraint = cmds.aimConstraint(
+                direct_ctrl, mid_grp,
+                maintainOffset=True,
+                aimVector=self.aim_vector,
+                upVector=self.aim_up_vector,
+                worldUpType="scene",
+                weight=1.0
+            )[0]
 
         return self.eye_mid_aim_constraint
 

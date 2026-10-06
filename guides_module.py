@@ -1537,9 +1537,13 @@ class CharacterGuides(object):
 
             elif block == "nose":
                 #Crea les guies del nas
+                #Les aletes tambe passen per moved(): si no, es quedaven al
+                #lloc del biped quan el bloc facial va desplacat.
                 nose_instance = NoseGuides("nose_root", "nose_tip",
                                            root_pos=self.moved((0, 27, 10)),
-                                           tip_pos=self.moved((0, 25, 12)))
+                                           tip_pos=self.moved((0, 25, 12)),
+                                           nostril_base_pos=self.moved((0, 24, 11)),
+                                           nostril_pos=self.moved((0.6, 24, 11)))
                 nose_instance.nose_guides()
                 new_groups.append(nose_instance.guides_group)
 

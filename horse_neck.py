@@ -31,7 +31,9 @@ class HorseNeck(object):
 
          control -> joint -> skinCluster -> NURBS
 
-      4. Opcional (pin_joints > 0): joints extra enganxats a la superficie amb
+      4. Cap: un joint i un control al final del coll (head=True), penjat del
+         neckEnd_CTRL. El joint del cap es un joint de skin mes.
+      5. Opcional (pin_joints > 0): joints extra enganxats a la superficie amb
          un uvPin, repartits per la V. Per defecte no se n creen.
     """
 
@@ -45,6 +47,8 @@ class HorseNeck(object):
                  u_spans=1,
                  u_degree=2,
                  pin_joints=0,
+                 head=True,
+                 head_guide=None,
                  width=None,
                  parent_joint=None,
                  root_instance=None,
@@ -56,6 +60,10 @@ class HorseNeck(object):
         self.u_spans = u_spans
         self.u_degree = u_degree
         self.pin_joints = pin_joints
+        #Cap: joint i control al final del coll. head_guide=None -> la guia
+        #del final del coll (neck_end)
+        self.head = head
+        self.head_guide = head_guide
         self.width = width            # None -> 10% de la llargada del coll
         self.parent_joint = parent_joint
         self.root_instance = root_instance
@@ -70,6 +78,8 @@ class HorseNeck(object):
         self.controls = []
         self.pinned = []        # joints extra enganxats amb uvPin (opcional)
         self.uv_pin = None
+        self.head_joint = None
+        self.head_ctrl = None
 
     # ------------------------------------------------------------------ #
     # HELPERS
@@ -213,7 +223,43 @@ class HorseNeck(object):
         return tops
 
     # ------------------------------------------------------------------ #
-    # 4. UVPIN (opcional)
+    # 4. CAP
+    # ------------------------------------------------------------------ #
+    def _build_head(self, parent_ctrl, jnt_parent):
+        """
+        Joint i control del cap, al final del coll.
+
+        El control penja del neckEnd_CTRL, aixi que el cap acompanya el coll i
+        a sobre es pot orientar a part. El joint es de skin, com els del coll.
+        """
+        n = self.rig_name
+        guide = self.head_guide if self.head_guide else self.guides[-1]
+        if not cmds.objExists(guide):
+            cmds.warning(f"[HorseNeck] No existeix {guide}: cap no creat.")
+            return None
+
+        cmds.select(clear=True)
+        head_jnt = cmds.joint(n=f"{n}_head_JNT",
+                              p=cmds.xform(guide, q=True, ws=True, t=True))
+        cmds.matchTransform(head_jnt, self.joints[-1], pos=False, rot=True)
+        cmds.makeIdentity(head_jnt, apply=True, t=0, r=1, s=0, n=0)
+        head_jnt = cmds.parent(head_jnt, jnt_parent)[0]
+        cmds.select(clear=True)
+
+        head_ctrl = controlsLibrary.create_control_from_lib(
+            lib_name=self.ctrl_style,
+            final_name=f"{n}_head_CTRL"
+        )
+        top = self.group_maker.create_rig_hierarchy(head_ctrl, head_jnt)
+        cmds.parent(top, parent_ctrl)
+        cmds.parentConstraint(head_ctrl, head_jnt, mo=True, n=f"{head_jnt}_PAC")
+
+        self.head_joint = head_jnt
+        self.head_ctrl = head_ctrl
+        return head_ctrl
+
+    # ------------------------------------------------------------------ #
+    # 5. UVPIN (opcional)
     # ------------------------------------------------------------------ #
     def _build_pinned_joints(self, parent):
         n = self.rig_name
@@ -284,6 +330,8 @@ class HorseNeck(object):
         self._build_joints(guide_pos, jnt_grp)
         self._skin_surface(mid_ratio)
         tops = self._build_controls(ctrl_grp)
+        if self.head:
+            self._build_head(self.controls[-1], jnt_grp)
         if self.pin_joints:
             self._build_pinned_joints(jnt_grp)
 
@@ -309,5 +357,6 @@ class HorseNeck(object):
 
         print(f"[HorseNeck] Ribbon construit: NURBS {self.u_spans}x{self.v_spans} spans "
               f"(grau {self.u_degree}/{self.v_degree}), {len(self.joints)} joints de skin, "
-              f"{len(self.pinned)} pinned, 3 controls.")
+              f"{len(self.pinned)} pinned, 3 controls"
+              f"{' + cap' if self.head_ctrl else ''}.")
         return self

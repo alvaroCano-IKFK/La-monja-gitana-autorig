@@ -951,131 +951,131 @@ class BuildRig(object):
                 self._horse_leg_post_build(instance, entry)
 
     # ------------------------------------------------------------------
-    # def _existing_spaces(self, space_dict, target_control):
-    #     """
-    #     Quita del diccionario de espacios los que no existen en la escena.
+    def _existing_spaces(self, space_dict, target_control):
+        """
+        Quita del diccionario de espacios los que no existen en la escena.
 
-    #     Antes todos los espacios se daban por hechos. Con modulos opcionales ya
-    #     no: sin cuello no hay head_CTRL, y pasarle a SpaceModule un nodo que no
-    #     existe tumbaria el build en el ultimo paso, con todo lo demas ya
-    #     construido. Se avisa de cada espacio que se quita.
-    #     """
-    #     kept = {}
-    #     for space_name, driver in space_dict.items():
-    #         if cmds.objExists(driver):
-    #             kept[space_name] = driver
-    #         else:
-    #             print(f"[Spaces] {target_control}: sin espacio '{space_name}' "
-    #                   f"({driver} no existe).")
-    #     return kept
+        Antes todos los espacios se daban por hechos. Con modulos opcionales ya
+        no: sin cuello no hay head_CTRL, y pasarle a SpaceModule un nodo que no
+        existe tumbaria el build en el ultimo paso, con todo lo demas ya
+        construido. Se avisa de cada espacio que se quita.
+        """
+        kept = {}
+        for space_name, driver in space_dict.items():
+            if cmds.objExists(driver):
+                kept[space_name] = driver
+            else:
+                print(f"[Spaces] {target_control}: sin espacio '{space_name}' "
+                      f"({driver} no existe).")
+        return kept
 
-    # def _core_spaces(self):
-    #     """
-    #     Dynamic parents. Esta parte ya era tolerante a que faltasen modulos
-    #     gracias a los objExists, asi que sigue funcionando tal cual si el
-    #     usuario construye un rig sin piernas o sin brazos.
-    #     """
-    #     print("[Spaces] Iniciando la creación de sistemas Dynamic Parent (_SPC)...")
+    def _core_spaces(self):
+        """
+        Dynamic parents. Esta parte ya era tolerante a que faltasen modulos
+        gracias a los objExists, asi que sigue funcionando tal cual si el
+        usuario construye un rig sin piernas o sin brazos.
+        """
+        print("[Spaces] Iniciando la creación de sistemas Dynamic Parent (_SPC)...")
 
-    #     for side in ["L", "R"]:
-    #         arm_ik_ctrl = f"{side}_Arm_armIk_CTRL"
-    #         leg_ik_ctrl = f"{side}_Leg_legIk_CTRL"
-    #         arm_pv_ctrl = f"{side}_Arm_poleVector_CTRL"
-    #         leg_pv_ctrl = f"{side}_Leg_poleVector_CTRL"
-    #         arm_fk_ctrl = f"{side}_Arm_shoulder_fk_CTRL"
-    #         leg_fk_ctrl = f"{side}_Leg_thigh_fk_CTRL"
+        for side in ["L", "R"]:
+            arm_ik_ctrl = f"{side}_Arm_armIk_CTRL"
+            leg_ik_ctrl = f"{side}_Leg_legIk_CTRL"
+            arm_pv_ctrl = f"{side}_Arm_poleVector_CTRL"
+            leg_pv_ctrl = f"{side}_Leg_poleVector_CTRL"
+            arm_fk_ctrl = f"{side}_Arm_shoulder_fk_CTRL"
+            leg_fk_ctrl = f"{side}_Leg_thigh_fk_CTRL"
 
-    #         if cmds.objExists(arm_ik_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=arm_ik_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "MasterWalk": f"{self.RIG_NAME}_global_CTL",
-    #                     "Chest": f"{self.RIG_NAME}_chestFix_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                     "Hip": f"{self.RIG_NAME}_localHip_CTL",
-    #                     "Head": f"{self.RIG_NAME}_head_CTRL",
-    #                 }, arm_ik_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
-    #         else:
-    #             print(f"[Spaces] ADVERTENCIA: No se encontró el control {arm_ik_ctrl}.")
+            if cmds.objExists(arm_ik_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=arm_ik_ctrl,
+                    space_dict=self._existing_spaces({
+                        "MasterWalk": f"{self.RIG_NAME}_global_CTL",
+                        "Chest": f"{self.RIG_NAME}_chestFix_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                        "Hip": f"{self.RIG_NAME}_localHip_CTL",
+                        "Head": f"{self.RIG_NAME}_head_CTRL",
+                    }, arm_ik_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
+            else:
+                print(f"[Spaces] ADVERTENCIA: No se encontró el control {arm_ik_ctrl}.")
 
-    #         if cmds.objExists(leg_ik_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=leg_ik_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "MasterWalk": f"{self.RIG_NAME}_global_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                     "Hip": f"{self.RIG_NAME}_localHip_CTL",
-    #                 }, leg_ik_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
+            if cmds.objExists(leg_ik_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=leg_ik_ctrl,
+                    space_dict=self._existing_spaces({
+                        "MasterWalk": f"{self.RIG_NAME}_global_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                        "Hip": f"{self.RIG_NAME}_localHip_CTL",
+                    }, leg_ik_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
 
-    #         if cmds.objExists(arm_pv_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=arm_pv_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "MasterWalk": f"{self.RIG_NAME}_global_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                     "Chest": f"{self.RIG_NAME}_chestFix_CTL",
-    #                     "ArmIk": f"{side}_Arm_armIk_CTRL",
-    #                     "Clavicule": f"{side}_Arm_clavicule_CTRL",
-    #                 }, arm_pv_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
+            if cmds.objExists(arm_pv_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=arm_pv_ctrl,
+                    space_dict=self._existing_spaces({
+                        "MasterWalk": f"{self.RIG_NAME}_global_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                        "Chest": f"{self.RIG_NAME}_chestFix_CTL",
+                        "ArmIk": f"{side}_Arm_armIk_CTRL",
+                        "Clavicule": f"{side}_Arm_clavicule_CTRL",
+                    }, arm_pv_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
 
-    #         if cmds.objExists(leg_pv_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=leg_pv_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "MasterWalk": f"{self.RIG_NAME}_global_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                     "LegIk": f"{side}_Leg_legIk_CTRL",
-    #                 }, leg_pv_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
+            if cmds.objExists(leg_pv_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=leg_pv_ctrl,
+                    space_dict=self._existing_spaces({
+                        "MasterWalk": f"{self.RIG_NAME}_global_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                        "LegIk": f"{side}_Leg_legIk_CTRL",
+                    }, leg_pv_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
 
-    #         if cmds.objExists(arm_fk_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=arm_fk_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "Clavicule": f"{side}_Arm_clavicule_CTRL",
-    #                     "Chest": f"{self.RIG_NAME}_chestFix_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                 }, arm_fk_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
+            if cmds.objExists(arm_fk_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=arm_fk_ctrl,
+                    space_dict=self._existing_spaces({
+                        "Clavicule": f"{side}_Arm_clavicule_CTRL",
+                        "Chest": f"{self.RIG_NAME}_chestFix_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                    }, arm_fk_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
 
-    #         if cmds.objExists(leg_fk_ctrl):
-    #             spaceSwitching_module.SpaceModule(
-    #                 target_control=leg_fk_ctrl,
-    #                 space_dict=self._existing_spaces({
-    #                     "MasterWalk": f"{self.RIG_NAME}_global_CTL",
-    #                     "Hip": f"{self.RIG_NAME}_localHip_CTL",
-    #                     "Body": f"{self.RIG_NAME}_body_CTL",
-    #                 }, leg_fk_ctrl),
-    #                 attr_name="Space_Switch",
-    #                 rig_name=self.RIG_NAME,
-    #             ).build()
+            if cmds.objExists(leg_fk_ctrl):
+                spaceSwitching_module.SpaceModule(
+                    target_control=leg_fk_ctrl,
+                    space_dict=self._existing_spaces({
+                        "MasterWalk": f"{self.RIG_NAME}_global_CTL",
+                        "Hip": f"{self.RIG_NAME}_localHip_CTL",
+                        "Body": f"{self.RIG_NAME}_body_CTL",
+                    }, leg_fk_ctrl),
+                    attr_name="Space_Switch",
+                    rig_name=self.RIG_NAME,
+                ).build()
 
-    #     # Los espacios de la cabeza solo tienen sentido si hay cabeza.
-    #     if not cmds.objExists(f"{self.RIG_NAME}_head_CTRL"):
-    #         print("[Spaces] No hay cuello en el rig: se saltan los espacios de "
-    #               "la cabeza.")
-    #         return
+        # Los espacios de la cabeza solo tienen sentido si hay cabeza.
+        if not cmds.objExists(f"{self.RIG_NAME}_head_CTRL"):
+            print("[Spaces] No hay cuello en el rig: se saltan los espacios de "
+                  "la cabeza.")
+            return
 
-        # self.head_spaces = headSpace_module.HeadSpacesModule(
-        #     rig_name=self.RIG_NAME,
-        #     head_ctrl=f"{self.RIG_NAME}_head_CTRL",
-        #     neck_ctrl=f"{self.RIG_NAME}_neck_CTRL",
-        #     chest_ctrl=f"{self.RIG_NAME}_chestFix_CTL",
-        #     body_ctrl=f"{self.RIG_NAME}_body_CTL",
-        #     master_walk_ctrl=f"{self.RIG_NAME}_global_CTL",
-        #     root_instance=self.root_rig,
-        # )
-        # self.head_spaces.build()
+        self.head_spaces = headSpace_module.HeadSpacesModule(
+            rig_name=self.RIG_NAME,
+            head_ctrl=f"{self.RIG_NAME}_head_CTRL",
+            neck_ctrl=f"{self.RIG_NAME}_neck_CTRL",
+            chest_ctrl=f"{self.RIG_NAME}_chestFix_CTL",
+            body_ctrl=f"{self.RIG_NAME}_body_CTL",
+            master_walk_ctrl=f"{self.RIG_NAME}_global_CTL",
+            root_instance=self.root_rig,
+        )
+        self.head_spaces.build()

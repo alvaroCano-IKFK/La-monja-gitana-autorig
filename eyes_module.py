@@ -1247,6 +1247,30 @@ class EyesModule(module_specs.FeaturesMixin):
 
         return f"{ctrl}.{long_name}"
 
+    def _build_fleshy_rest(self, joint):
+        """
+        Transform en la pose de reposo del ojo, colgado de la cabeza.
+
+        Es la referencia contra la que se mide cuanto ha girado el ojo. Como
+        cuelga del grupo de controles de cara, se mueve exactamente igual que
+        la cabeza, asi que al restar, la cabeza desaparece de la cuenta.
+
+        No lleva constraint ni conexiones: se coloca una vez y se queda ahi.
+        """
+        name = f"{self.prefix}_eyeFleshyRest_TRN"
+
+        if cmds.objExists(name):
+            cmds.delete(name)
+
+        parent = self._face_controls_root()
+        if not parent or not cmds.objExists(parent):
+            return None
+
+        rest = cmds.group(em=True, n=name, parent=parent)
+        cmds.matchTransform(rest, joint, position=True, rotation=True)
+
+        return rest
+
     def _build_fleshy_delta(self, joint):
         """
         Devuelve el decomposeMatrix que da cuanto ha girado el ojo DESDE SU
@@ -1284,10 +1308,32 @@ class EyesModule(module_specs.FeaturesMixin):
         multiply = cmds.createNode("multMatrix", n=multiply_name)
         cmds.connectAttr(f"{joint}.worldMatrix[0]", f"{multiply}.matrixIn[0]")
 
-        # Inversa del reposo, congelada como valor: el aim del ojo ya esta
-        # montado y el direct en su sitio, asi que esta es la pose de partida.
-        rest_inverse = cmds.getAttr(f"{joint}.worldInverseMatrix[0]")
-        cmds.setAttr(f"{multiply}.matrixIn[1]", *rest_inverse, type="matrix")
+        # Inversa del reposo. Tiene que ser VIVA y seguir a la cabeza, no un
+        # valor congelado.
+        #
+        # Congelada, la cuenta queda asi al girar la cabeza:
+        #     delta = (cabeza x ojo) x inversa_de_reposo_sin_cabeza
+        #           = giro de cabeza + giro de ojo
+        # El fleshy se comia el giro de la cabeza entero, arrastraba los
+        # controles del parpado y, pasados unos 90 grados, el decomposeMatrix
+        # tenia que partir una rotacion grande en angulos de Euler y saltaba.
+        # Eso era el flip y las curvas disparadas.
+        #
+        # Con un transform de reposo colgado del grupo de controles de cara
+        # (que sigue al head_CTRL), la cabeza aparece en los dos lados de la
+        # multiplicacion y se cancela sola. Lo que queda es solo el giro del
+        # ojo respecto a su reposo: siempre angulos pequenos, lejos del salto.
+        rest = self._build_fleshy_rest(joint)
+
+        if rest:
+            cmds.connectAttr(f"{rest}.worldInverseMatrix[0]",
+                             f"{multiply}.matrixIn[1]", force=True)
+        else:
+            cmds.warning("[EyesModule] Sin grupo de controles de cara: el "
+                         "reposo del fleshy se congela y el ojo volvera a "
+                         "reventar al girar mucho la cabeza.")
+            rest_inverse = cmds.getAttr(f"{joint}.worldInverseMatrix[0]")
+            cmds.setAttr(f"{multiply}.matrixIn[1]", *rest_inverse, type="matrix")
 
         decompose = cmds.createNode("decomposeMatrix", n=decompose_name)
         cmds.connectAttr(f"{multiply}.matrixSum", f"{decompose}.inputMatrix")

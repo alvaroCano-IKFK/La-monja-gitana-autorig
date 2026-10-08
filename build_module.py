@@ -92,7 +92,7 @@ class BuildRig(object):
         (13, "_core_hip",       "Hip",           None),
         (70, "_core_skinning",  "Skinning",      None),
         (80, "_core_post",      "Soft IK y pole vector pins", None),
-        #(90, "_core_spaces",    "Space switching", None),
+        (90, "_core_spaces",    "Space switching", None),
     ]
 
     # ------------------------------------------------------------------

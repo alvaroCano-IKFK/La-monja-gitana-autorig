@@ -1,5 +1,3 @@
-import math
-
 import maya.cmds as cmds
 
 
@@ -14,7 +12,8 @@ class FingersExtraModule(object):
         fist    -> cierra el puño entero, todos los controles de todos los dedos
 
     fan y spread se saltan el metacarpo y excluyen al pulgar. fist sí incluye al
-    pulgar, con su propio eje de curvatura y su propia escala.
+    pulgar, con su propia escala. Todos los controles de todos los dedos cierran
+    en rotateZ (pulgar incluido); el signo se puede invertir por dedo.
 
     Los SDK NO se hacen sobre el control, se hacen sobre su grupo _SDK, para que
     el animador siga teniendo los controles libres para animar encima.
@@ -84,10 +83,11 @@ class FingersExtraModule(object):
         self.fan_axis    = "rotateZ"
         self.spread_axis = "rotateY"
 
-        # Eje de curvatura para el fist. None = detectarlo por geometría (recomendado,
-        # es lo que hace que el pulgar cierre bien). Si lo fuerzas: "z", "-z", "y"...
-        self.curl_axis = None
-        self.curl_axis_override = {}      # {"thumb": "-z"}
+        # Eje de curvatura para el fist: rotateZ en todos los controles. Si la mano
+        # entera cierra hacia atrás, pon "-z". Si solo un dedo sale al revés,
+        # inviértelo en curl_axis_override, p.ej. {"thumb": "-z"}.
+        self.curl_axis = "z"
+        self.curl_axis_override = {}
 
         # Cuánto cierra cada falange respecto a fist_angle (proximal, media, distal...)
         self.fist_profile = [0.7, 1.0, 0.9]
@@ -110,40 +110,8 @@ class FingersExtraModule(object):
         self.driven = []                  # [(nodo, atributo), ...]
 
     # ------------------------------------------------------------------ #
-    #  MATEMÁTICAS (para detectar el eje de curvatura, igual que en fingers_module)
+    #  EJES
     # ------------------------------------------------------------------ #
-    @staticmethod
-    def _sub(a, b):
-        return [a[i] - b[i] for i in range(3)]
-
-    @staticmethod
-    def _dot(a, b):
-        return sum(a[i] * b[i] for i in range(3))
-
-    @staticmethod
-    def _cross(a, b):
-        return [a[1] * b[2] - a[2] * b[1],
-                a[2] * b[0] - a[0] * b[2],
-                a[0] * b[1] - a[1] * b[0]]
-
-    @staticmethod
-    def _mag(a):
-        return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
-
-    @classmethod
-    def _norm(cls, a):
-        m = cls._mag(a)
-        if m < 1e-9:
-            return [0.0, 0.0, 0.0]
-        return [a[0] / m, a[1] / m, a[2] / m]
-
-    @classmethod
-    def _local_axes(cls, node):
-        m = cmds.getAttr(f"{node}.worldMatrix[0]")
-        return [cls._norm([m[0], m[1], m[2]]),
-                cls._norm([m[4], m[5], m[6]]),
-                cls._norm([m[8], m[9], m[10]])]
-
     @staticmethod
     def _parse_axis(token):
         """'-z' -> ('rotateZ', -1.0)"""
@@ -253,55 +221,16 @@ class FingersExtraModule(object):
     # ------------------------------------------------------------------ #
     #  EJE DE CURVATURA PARA EL FIST
     # ------------------------------------------------------------------ #
-    def detect_curl_normal(self, nodes):
-        """Normal del plano en el que ya está doblada la cadena de controles."""
-        pts = [cmds.xform(n, q=True, ws=True, t=True) for n in nodes]
-        best_n, best_mag = None, 0.0
-        for i in range(len(pts) - 2):
-            v1 = self._norm(self._sub(pts[i + 1], pts[i]))
-            v2 = self._norm(self._sub(pts[i + 2], pts[i + 1]))
-            n = self._cross(v1, v2)
-            m = self._mag(n)
-            if m > best_mag:
-                best_mag, best_n = m, n
-        if best_n is not None and best_mag > 1e-3:
-            return self._norm(best_n)
-        return None
-
     def get_curl_axes(self, finger_name, ctrls):
-        """[(atributo, signo), ...] para cada control del dedo."""
-        # 1. Override explícito
-        if finger_name in self.curl_axis_override:
-            attr, sign = self._parse_axis(self.curl_axis_override[finger_name])
-            return [(attr, sign)] * len(ctrls)
+        """[(atributo, signo), ...] para cada control del dedo.
 
-        # 2. Eje fijo para toda la mano
-        if self.curl_axis:
-            attr, sign = self._parse_axis(self.curl_axis)
-            return [(attr, sign)] * len(ctrls)
-
-        # 3. Detección por geometría (es lo que hace que el pulgar cierre bien)
-        chain = list(ctrls)
-        last_jnt = ctrls[-1].split("|")[-1].replace("_CTRL", "_JNT")
-        if cmds.objExists(last_jnt):
-            tip = cmds.listRelatives(last_jnt, c=True, type="joint") or []
-            if tip:
-                chain = chain + [tip[0]]
-
-        normal = self.detect_curl_normal(chain) if len(chain) >= 3 else None
-        if normal is None:
-            cmds.warning(f"[fingersExtra] '{finger_name}' está recto: uso rotateZ para "
-                         f"el fist. Si cierra al revés, usa curl_axis_override.")
-            return [("rotateZ", 1.0)] * len(ctrls)
-
-        out = []
-        attrs = ("rotateX", "rotateY", "rotateZ")
-        for ctrl in ctrls:
-            axes = self._local_axes(ctrl)
-            dots = [self._dot(normal, a) for a in axes]
-            idx = max(range(3), key=lambda i: abs(dots[i]))
-            out.append((attrs[idx], 1.0 if dots[idx] > 0 else -1.0))
-        return out
+        Siempre el mismo eje para todos los controles del dedo. Antes se
+        detectaba por geometría y en el pulgar elegía X o Y, que es lo que lo
+        hacía girar del revés.
+        """
+        token = self.curl_axis_override.get(finger_name, self.curl_axis or "z")
+        attr, sign = self._parse_axis(token)
+        return [(attr, sign)] * len(ctrls)
 
     # ------------------------------------------------------------------ #
     #  SET DRIVEN KEYS

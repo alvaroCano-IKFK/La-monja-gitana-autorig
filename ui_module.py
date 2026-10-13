@@ -10,6 +10,7 @@ import mirror_module
 import build_module
 import eyes_module
 import controlTools_module
+import faceBlendshape_module
 
 #Recarrega en calent: a Maya els moduls es queden a la cache i si no es
 #recarreguen, els canvis als specs no arriben mai a la finestra.
@@ -597,6 +598,29 @@ class Window(QtWidgets.QDialog):
         self.eye_lower_btn = QtWidgets.QPushButton("LOWER LOOP CURVE")
         self.general_style(self.eye_lower_btn)
 
+        #---- Tools > Eyebrow curve ----
+        #Mateixa mecanica que els ulls: es selecciona l edge de la cella sobre
+        #la malla i es fa la corba. D aquesta corba surten TOTES les guies de
+        #la cella, una per CV, aixi que es el model el que diu quants joints
+        #te la cella i no una constant del codi.
+        self.brow_title = self.collapsible("Eyebrow curve")
+
+        self.brow_side_combo = QtWidgets.QComboBox()
+        self.brow_side_combo.addItems(["L", "R"])
+        self.field_style(self.brow_side_combo)
+
+        self.brow_curve_btn = QtWidgets.QPushButton("EYEBROW CURVE")
+        self.general_style(self.brow_curve_btn)
+        self.brow_curve_btn.setToolTip(
+            "Fa la corba de la cella des de l edge seleccionat. Despues dona a "
+            "GUIDES: surt una guia per CV de la corba.")
+
+        self.brow_guides_btn = QtWidgets.QPushButton("GUIDES FROM CURVE")
+        self.general_style(self.brow_guides_btn)
+        self.brow_guides_btn.setToolTip(
+            "Torna a fer les guies de la cella a partir de la corba, sense "
+            "passar per GUIDES. Esborra les que hi havia.")
+
         #---- Tools > Control color ----
         self.color_title = self.collapsible("Control color")
 
@@ -662,6 +686,41 @@ class Window(QtWidgets.QDialog):
 
         self.unlock_btn = QtWidgets.QPushButton("UNLOCK")
         self.general_style(self.unlock_btn)
+
+        #---- Tools > Face blendshape ----
+        #Muntatge de dues malles: la facial passa el delta d expressio a la de
+        #body amb una blendShape davant del skin. Va despres del build i del
+        #skinning (que es quan existeixen les malles i els seus skinCluster),
+        #per aixo es una tool i no un pas del build.
+        self.face_bls_title = self.collapsible("Face blendshape")
+
+        self.face_mesh_field = QtWidgets.QLineEdit("")
+        self.face_mesh_field.setPlaceholderText("malla facial")
+        self.field_style(self.face_mesh_field)
+
+        self.body_mesh_field = QtWidgets.QLineEdit("")
+        self.body_mesh_field.setPlaceholderText("malla de body")
+        self.field_style(self.body_mesh_field)
+
+        self.face_mesh_sel_btn = QtWidgets.QPushButton("<< SEL")
+        self.general_style(self.face_mesh_sel_btn)
+        self.compact_button(self.face_mesh_sel_btn, width=60)
+
+        self.body_mesh_sel_btn = QtWidgets.QPushButton("<< SEL")
+        self.general_style(self.body_mesh_sel_btn)
+        self.compact_button(self.body_mesh_sel_btn, width=60)
+
+        self.face_bls_create_btn = QtWidgets.QPushButton("CREATE BLENDSHAPE")
+        self.general_style(self.face_bls_create_btn)
+        self.face_bls_create_btn.setToolTip(
+            "Crea la blendShape de la facial al body, sempre davant del skin. "
+            "Si ja existeix, no la duplica.")
+
+        self.face_bls_validate_btn = QtWidgets.QPushButton("VALIDATE")
+        self.general_style(self.face_bls_validate_btn)
+        self.face_bls_validate_btn.setToolTip(
+            "Comprova l ordre dels deformers, els espais de skin i que la "
+            "facial no es mogui en escalar el global. No canvia res.")
 
         # ---- DESACTIVAT DE MOMENT ------------------------------------
         # Inner ref, check i diagnose. El codi es queda aqui perque funciona;
@@ -770,8 +829,10 @@ class Window(QtWidgets.QDialog):
         tools_layout.setSpacing(8)
         tools_layout.addWidget(self.tools_title)
         tools_layout.addWidget(self.eyes_title[0])
+        tools_layout.addWidget(self.brow_title[0])
         tools_layout.addWidget(self.color_title[0])
         tools_layout.addWidget(self.lock_title[0])
+        tools_layout.addWidget(self.face_bls_title[0])
         tools_layout.addStretch()
 
         # ---- Tools > Eye loop curves ----
@@ -801,6 +862,18 @@ class Window(QtWidgets.QDialog):
         # eye_diag_layout.addWidget(self.eye_diag_lower_btn)
         # self.eyes_title[1].addLayout(eye_diag_layout)
         # --------------------------------------------------------------
+
+        # ---- Tools > Eyebrow curve ----
+        brow_naming_layout = QtWidgets.QHBoxLayout()
+        brow_naming_layout.addWidget(self.hint_label("Side"))
+        brow_naming_layout.addWidget(self.brow_side_combo)
+        brow_naming_layout.addStretch()
+        self.brow_title[1].addLayout(brow_naming_layout)
+
+        self.brow_title[1].addWidget(
+            self.hint_label("Selecciona l edge de la cella i crea la corba:"))
+        self.brow_title[1].addWidget(self.brow_curve_btn)
+        self.brow_title[1].addWidget(self.brow_guides_btn)
 
         # ---- Tools > Control color ----
         self.color_title[1].addWidget(self.color_hierarchy_check)
@@ -838,6 +911,21 @@ class Window(QtWidgets.QDialog):
         lock_btn_layout.addWidget(self.lock_btn)
         lock_btn_layout.addWidget(self.unlock_btn)
         self.lock_title[1].addLayout(lock_btn_layout)
+
+        # ---- Tools > Face blendshape ----
+        #Una fila per malla: etiqueta, camp i << SEL per omplir-lo amb la
+        #seleccio en comptes d escriure el nom.
+        for label, field, btn in (("Facial", self.face_mesh_field, self.face_mesh_sel_btn),
+                                  ("Body", self.body_mesh_field, self.body_mesh_sel_btn)):
+            row = QtWidgets.QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(self.hint_label(label))
+            row.addWidget(field, 1)
+            row.addWidget(btn)
+            self.face_bls_title[1].addLayout(row)
+
+        self.face_bls_title[1].addWidget(self.face_bls_create_btn)
+        self.face_bls_title[1].addWidget(self.face_bls_validate_btn)
 
         # ---- 3. Build rig ----
         self.build_title[1].addWidget(self.build_btn)
@@ -1372,6 +1460,35 @@ class Window(QtWidgets.QDialog):
         )
 
     # ------------------------------------------------------------------
+    # TOOLS: FACE BLENDSHAPE
+    # ------------------------------------------------------------------
+    def _field_from_selection(self, field):
+        """Posa al camp el primer transform seleccionat, per no escriure el nom."""
+        selection = [node for node in cmds.ls(selection=True) or [] if "." not in node]
+        if not selection:
+            cmds.warning("[UI] Selecciona una malla.")
+            return None
+
+        field.setText(selection[0])
+        return selection[0]
+
+    def create_face_blendshape(self):
+        """BlendShape de la facial al body, davant del skin."""
+        return faceBlendshape_module.create_face_blendshape(
+            self.face_mesh_field.text().strip(),
+            self.body_mesh_field.text().strip())
+
+    def validate_face_setup(self):
+        """
+        Comprova el muntatge de dues malles. No canvia res de l escena: la
+        prova d escala torna el Global_Scale al seu valor encara que falli.
+        """
+        return faceBlendshape_module.validate(
+            self.face_mesh_field.text().strip(),
+            self.body_mesh_field.text().strip(),
+            rig_name=build_module.BuildRig.RIG_NAME)
+
+    # ------------------------------------------------------------------
     # CORBES DE LOOP DELS ULLS
     # ------------------------------------------------------------------
     def _get_eye_naming(self):
@@ -1451,6 +1568,74 @@ class Window(QtWidgets.QDialog):
     #
     #     return eyes_module.EyesModule.diagnose_loop_curve(side, rig_name, upper=upper)
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # CORBA DE LA CELLA
+    # ------------------------------------------------------------------
+    def _get_brow_side(self):
+        """Lado que hi ha posat a la finestra per a la corba de la cella."""
+        return self.brow_side_combo.currentText() or "L"
+
+    def build_eyebrow_curve(self):
+        """
+        Crea la corba de la cella a partir de l edge seleccionat, amb el nom de
+        convencio per que les guies la trobin soles.
+
+        Igual que amb els ulls, inner_reference=None vol dir que l extrem
+        intern es decideix comparant contra la X de mon 0: nomes val si el
+        personatge esta centrat a l origen.
+        """
+        side = self._get_brow_side()
+
+        return guides_module.EyebrowsGuides.build_curve_from_selection(
+            side, inner_reference=None
+        )
+
+    def rebuild_eyebrow_guides(self):
+        """
+        Torna a fer les guies de la cella des de la corba, sense passar per
+        GUIDES. Serveix per quan canvies la corba i vols les guies noves sense
+        tocar la resta de moduls.
+
+        Esborra les guies que hi havia: si no, es quedarien les velles amb els
+        indexs alts i el build les comptaria totes.
+        """
+        side = self._get_brow_side()
+
+        curve = guides_module.EyebrowsGuides.curve_name(side)
+        if not cmds.objExists(curve):
+            cmds.warning(f"[UI] No hi ha corba de cella ({curve}). Selecciona "
+                         f"l edge de la cella i dona a EYEBROW CURVE.")
+            return None
+
+        old_guides = [f"{side}_eyebrow_root_{index + 1:02d}"
+                      for index in range(guides_module.EyebrowsGuides.guide_count(
+                          side, "eyebrow_root"))]
+        old_guides = [guide for guide in old_guides if cmds.objExists(guide)]
+
+        # D una en una i comprovant: les guies van en cadena, aixi que en
+        # esborrar la primera cauen les filles i la resta de la llista ja no
+        # existeix. Amb el mirror poden venir com a arrels soltes, i aixi tambe
+        # funciona.
+        for guide in old_guides:
+            if cmds.objExists(guide):
+                cmds.delete(guide)
+
+        # El grup buit s ha d esborrar o Maya numeraria el nou
+        # (eyebrows_guides_GRP1) i el outliner acabaria amb dos.
+        group_name = "eyebrows_guides_GRP"
+        if cmds.objExists(group_name) and not cmds.listRelatives(group_name,
+                                                                 children=True):
+            cmds.delete(group_name)
+
+        instance = guides_module.EyebrowsGuides(
+            f"{side}_eyebrow_root", f"{side}_eyebrow_end", side=side
+        )
+        instance.eyebrows_guides()
+
+        print(f"[UI] {instance.num_joints} guies de cella {side} des de {curve}.")
+
+        return instance.guides_group
 
     def create_guides(self):
         """
@@ -1536,10 +1721,20 @@ class Window(QtWidgets.QDialog):
         self.lock_btn.clicked.connect(lambda: self.apply_lock(True))
         self.unlock_btn.clicked.connect(lambda: self.apply_lock(False))
 
+        self.face_mesh_sel_btn.clicked.connect(
+            lambda: self._field_from_selection(self.face_mesh_field))
+        self.body_mesh_sel_btn.clicked.connect(
+            lambda: self._field_from_selection(self.body_mesh_field))
+        self.face_bls_create_btn.clicked.connect(self.create_face_blendshape)
+        self.face_bls_validate_btn.clicked.connect(self.validate_face_setup)
+
         self.eye_upper_btn.clicked.connect(
             lambda: self.build_loop_curve(upper=True))
         self.eye_lower_btn.clicked.connect(
             lambda: self.build_loop_curve(upper=False))
+
+        self.brow_curve_btn.clicked.connect(self.build_eyebrow_curve)
+        self.brow_guides_btn.clicked.connect(self.rebuild_eyebrow_guides)
         # ---- DESACTIVAT DE MOMENT ------------------------------------
         # self.eye_inner_ref_btn.clicked.connect(self.set_inner_reference_from_selection)
         # self.eye_check_btn.clicked.connect(self.report_loop_curves)

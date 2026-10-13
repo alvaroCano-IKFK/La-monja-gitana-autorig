@@ -67,6 +67,16 @@ class RigRoot(object):
         
         cmds.scaleConstraint(globalCtl, rigGroup, mo=True)  
 
+        # El esqueleto de skin tambien escala con el global: los _ENV del
+        # SKN_GRP van con parentConstraint, que copia posicion y rotacion pero
+        # NO escala, asi que la escala les tiene que llegar por jerarquia. Sin
+        # esto la malla de body solo se estira entre joints, sin crecer en
+        # volumen.
+        #
+        # El faceSKN_GRP tambien cuelga de aqui, pero con inheritsTransform a 0
+        # (lo crea skinning_module), asi que este constraint no le afecta.
+        cmds.scaleConstraint(globalCtl, skeleton, mo=True)
+
         self.groups.extend([masterGroup,
                            rigGroup,
                            globalRoot,

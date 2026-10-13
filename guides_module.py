@@ -746,37 +746,290 @@ class SocketGuides(object):
 
 class EyebrowsGuides(object):
     """
-    Crea automàticament 10 guies de les celles a partir de les posicions de referència.
+    Guies de les celles. Una joint per CV de la corba de la cella.
+
+    La forma de crear-les es la mateixa que la dels ulls: es selecciona l edge
+    de la cella sobre la malla, es fa la corba (un CV per vertex) i d aquesta
+    corba surten TOTES les guies. Aixi el nombre de joints el posa el model i
+    no una constant: una cella curta dona poques guies i una llarga en dona
+    moltes, sense tocar codi.
+
+    Si no hi ha corba es manté el repartiment lineal de sempre entre root_pos i
+    end_pos amb num_joints guies, que serveix per col.locar-les a ma.
+
+    El que construeix el modul a partir d aquestes guies NO canvia: segueixen
+    dient-se {eyebrow_root}_01 ... {eyebrow_root}_NN, segueixen sortint en
+    cadena i segueixen anant a "eyebrows_guides_GRP".
     """
-    def __init__(self, eyebrow_root, eyebrow_end, root_pos=(0, 24, 10), end_pos=(2.5, 24, 9)):
+
+    # Nombre de la corba de la cella. La convencio viu aqui i en cap altre
+    # lloc: la UI la fa servir per crear-la i el guides/build per buscar-la.
+    @staticmethod
+    def curve_name(side="L"):
+        return f"{side}_eyebrowLoop_CRV"
+
+    # ------------------------------------------------------------------
+    # CORBA DE LA CELLA (pas a ma, abans de les guies)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def build_curve_from_selection(side="L", components=None,
+                                   inner_reference=None):
+        """
+        Construeix la corba de la cella a partir de l edge seleccionat.
+
+        Accepta edges, vertices o cares: tot es converteix a edges abans de
+        cridar polyToCurve. Amb degree=1 polyToCurve treu exactament un CV per
+        vertex i en ordre al llarg del loop, que es justament el que es demana.
+        Se li esborra l history acte seguit: la corba ha de quedar estatica, no
+        viva contra la malla.
+
+        Torna (nom_de_la_corba, nombre_de_cvs) o None.
+        """
+        if components is None:
+            components = cmds.ls(selection=True, flatten=True) or []
+
+        # Nomes components: un transform o un shape no porten "." al nom.
+        components = [item for item in components if "." in item]
+        if not components:
+            cmds.warning("[EyebrowsGuides] Selecciona l edge de la cella, "
+                         "no l objecte sencer.")
+            return None
+
+        edges = cmds.ls(cmds.polyListComponentConversion(components, toEdge=True) or [],
+                        flatten=True)
+        if not edges:
+            cmds.warning("[EyebrowsGuides] La seleccio no dona cap edge.")
+            return None
+
+        expected = cmds.ls(cmds.polyListComponentConversion(edges, toVertex=True) or [],
+                           flatten=True)
+
+        curve_name = EyebrowsGuides.curve_name(side)
+        if cmds.objExists(curve_name):
+            cmds.delete(curve_name)
+
+        cmds.select(edges, replace=True)
+        created = cmds.polyToCurve(form=0, degree=1, conformToSmoothMeshPreview=0)
+        curve = created[0]
+
+        # Sense aixo la corba es queda enganxada a la malla pel node
+        # polyToCurve i deixa de ser una guia: passa a ser un deformador mes.
+        cmds.delete(curve, constructionHistory=True)
+        curve = cmds.rename(curve, curve_name)
+
+        cv_count = EyebrowsGuides.curve_cv_count(curve)
+
+        if expected and cv_count != len(expected):
+            cmds.warning(f"[EyebrowsGuides] {curve_name}: {cv_count} CVs per "
+                         f"{len(expected)} vertices seleccionats. El normal es "
+                         f"que la seleccio no sigui un loop continu (hi ha un "
+                         f"salt, o has agafat edges de dues linies diferents).")
+
+        EyebrowsGuides._orient_curve(curve, side=side,
+                                     inner_reference=inner_reference)
+
+        cmds.setAttr(f"{curve}.lineWidth", 3)
+        cmds.select(clear=True)
+
+        print(f"[EyebrowsGuides] {curve_name}: {cv_count} CVs -> "
+              f"{cv_count} guies de cella.")
+
+        return curve, cv_count
+
+    @staticmethod
+    def curve_cv_count(curve):
+        """Nombre de CVs d una corba, llegit del seu shape."""
+        shape = cmds.listRelatives(curve, shapes=True, noIntermediate=True)
+        if not shape:
+            return 0
+
+        shape = shape[0]
+
+        if cmds.getAttr(f"{shape}.form") == 2:   # periodica
+            return cmds.getAttr(f"{shape}.spans")
+
+        return cmds.getAttr(f"{shape}.spans") + cmds.getAttr(f"{shape}.degree")
+
+    @staticmethod
+    def _orient_curve(curve, side="L", inner_reference=None):
+        """
+        Deixa la corba sempre en el mateix sentit: CV[0] a l extrem INTERN.
+
+        polyToCurve comenca per on li ve de gust segons l ordre dels edges de
+        la seleccio, aixi que sense aixo la meitat de les vegades la corba surt
+        del revés. I el sentit importa: el modul posa el sub "In" a la guia 01
+        i el sub "Out" a l ultima, igual que feia el repartiment lineal, que
+        anava de la linia mitja cap a fora.
+
+        Criteri per defecte: l extrem intern es el mes a prop de la linia mitja
+        de la cara (X de mon 0). Si el personatge no esta centrat a l origen,
+        passa 'inner_reference' (un node qualsevol del centre de la cara) i es
+        mesura contra ell.
+        """
+        cv_count = EyebrowsGuides.curve_cv_count(curve)
+        if cv_count < 2:
+            return curve
+
+        first = cmds.pointPosition(f"{curve}.cv[0]", world=True)
+        last = cmds.pointPosition(f"{curve}.cv[{cv_count - 1}]", world=True)
+
+        if inner_reference and cmds.objExists(inner_reference):
+            reference = cmds.xform(inner_reference, q=True, ws=True, t=True)
+            first_score = sum((a - b) ** 2 for a, b in zip(first, reference))
+            last_score = sum((a - b) ** 2 for a, b in zip(last, reference))
+        else:
+            first_score = abs(first[0])
+            last_score = abs(last[0])
+
+        if last_score < first_score:
+            cmds.reverseCurve(curve, ch=0, rpo=1)
+
+        return curve
+
+    @staticmethod
+    def curve_cv_positions(curve):
+        """Posicions de mon de tots els CVs d una corba, en ordre."""
+        cv_count = EyebrowsGuides.curve_cv_count(curve)
+
+        return [cmds.pointPosition(f"{curve}.cv[{index}]", world=True)
+                for index in range(cv_count)]
+
+    @staticmethod
+    def _unique_positions(positions):
+        """
+        Treu CVs repetits.
+
+        Si el loop es tanca sobre si mateix o la seleccio tenia un vertex de
+        mes, poden sortir dos CVs al mateix lloc i tindriem dues guies barallant-
+        se pel mateix punt. Es queden en una.
+        """
+        if not positions:
+            return []
+
+        # Tolerancia relativa a la mida de la cella, no absoluta: una cella de
+        # 2 unitats i una de 20 no poden fer servir el mateix llindar.
+        span = 0.0
+        for axis in range(3):
+            values = [position[axis] for position in positions]
+            span = max(span, max(values) - min(values))
+
+        tolerance = max(span, 1.0) * 1e-4
+
+        unique = []
+        for position in positions:
+            if unique:
+                distance = math.sqrt(sum((a - b) ** 2
+                                         for a, b in zip(position, unique[-1])))
+                if distance < tolerance:
+                    continue
+            unique.append(position)
+
+        return unique
+
+    @staticmethod
+    def guide_count(side="L", base_prefix="eyebrow_root"):
+        """
+        Quantes guies de cella hi ha realment a l escena, comptades pel nom.
+
+        Es el que ha de llegir el build en lloc d una constant: val tant si les
+        guies venen de la corba com si venen del repartiment lineal, i tant si
+        son les originals com les del mirror.
+        """
+        count = 0
+        while cmds.objExists(f"{side}_{base_prefix}_{count + 1:02d}"):
+            count += 1
+
+        return count
+
+    # ------------------------------------------------------------------
+    def __init__(self, eyebrow_root, eyebrow_end, root_pos=(0, 24, 10),
+                 end_pos=(2.5, 24, 9), num_joints=10, curve=None, side="L",
+                 inner_reference=None):
         self.eyebrow_root = eyebrow_root
         self.eyebrow_end = eyebrow_end
         self.root_pos = root_pos
         self.end_pos = end_pos
+
+        # Nomes s usa quan no hi ha corba: es el repartiment lineal de sempre.
+        self.num_joints = num_joints
+
+        # Corba explicita. Amb None es busca la de convencio.
+        self.curve = curve
+        self.side = side
+        self.inner_reference = inner_reference
+
         self.guides_group = None
+        self.created_joints = []
+
+    def _resolve_curve(self):
+        """
+        Corba de la cella que toca fer servir.
+
+        Si se li ha passat una explicita manda aquella; si no, la de convencio.
+        Torna None si no existeix cap: aleshores es fa el repartiment lineal.
+        """
+        if self.curve:
+            if cmds.objExists(self.curve):
+                return self.curve
+            cmds.warning(f"[EyebrowsGuides] No existeix la corba {self.curve}.")
+            return None
+
+        by_convention = self.curve_name(self.side)
+
+        return by_convention if cmds.objExists(by_convention) else None
+
+    def _guide_positions(self):
+        """
+        Posicions de les guies: de la corba si n hi ha, lineals si no.
+
+        Es l UNIC que canvia respecte a abans. Tot el que ve despres (noms,
+        cadena, grup) es exactament igual.
+        """
+        curve = self._resolve_curve()
+
+        if curve:
+            positions = self._unique_positions(self.curve_cv_positions(curve))
+
+            if len(positions) >= 2:
+                return positions
+
+            cmds.warning(f"[EyebrowsGuides] {curve} nomes dona "
+                         f"{len(positions)} CV util. Es fa el repartiment "
+                         f"lineal.")
+        else:
+            print(f"[EyebrowsGuides] No hi ha corba "
+                  f"({self.curve_name(self.side)}). Es reparteixen "
+                  f"{self.num_joints} guies en linia; col.loca-les a ma o fes "
+                  f"la corba des de l edge de la cella.")
+
+        count = max(2, int(self.num_joints))
+
+        return [
+            [round(self.root_pos[axis]
+                   + (self.end_pos[axis] - self.root_pos[axis]) * (i / float(count - 1)), 4)
+             for axis in range(3)]
+            for i in range(count)
+        ]
 
     def eyebrows_guides(self):
+        positions = self._guide_positions()
+
         cmds.select(clear=True)
-        
+
         created_joints = []
-        num_joints = 10  
 
-        for i in range(num_joints):
-            t = i / float(num_joints - 1)
-            
-            current_pos = [
-                round(self.root_pos[j] + (self.end_pos[j] - self.root_pos[j]) * t, 4)
-                for j in range(3)
-            ]
-
+        for i, current_pos in enumerate(positions):
             joint_name = f"{self.eyebrow_root}_{i+1:02d}"
-            
+
             current_joint = cmds.joint(p=current_pos, name=joint_name)
             if not current_joint:
                 print(f"Error creant el joint: {joint_name}")
                 return
-                
+
             created_joints.append(current_joint)
+
+        self.created_joints = created_joints
+        self.num_joints = len(created_joints)
 
         self.guides_group = cmds.group(created_joints, n="eyebrows_guides_GRP")
         if self.guides_group is None:
@@ -1490,10 +1743,13 @@ class CharacterGuides(object):
                 new_groups.append(socket_instance.guides_group)
 
             elif block == "eyebrow":
-                #Crea les guies de les celles
+                #Crea les guies de les celles. Si hi ha corba de cella
+                #(L_eyebrowLoop_CRV, feta des de l edge de la malla) surt una
+                #guia per CV; si no, es reparteixen en linia entre root i end.
                 eyebrows_instance = EyebrowsGuides("L_eyebrow_root", "L_eyebrow_end",
                                                    root_pos=self.moved((0, 34, 10)),
-                                                   end_pos=self.moved((2.5, 34, 9)))
+                                                   end_pos=self.moved((2.5, 34, 9)),
+                                                   side="L")
                 eyebrows_instance.eyebrows_guides()
                 new_groups.append(eyebrows_instance.guides_group)
 

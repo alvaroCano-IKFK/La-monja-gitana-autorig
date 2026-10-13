@@ -850,9 +850,27 @@ class BuildRig(object):
             cmds.warning(f"[Eyebrow {side}] No hay guias de ceja. Se salta.")
             return None
 
+        # El numero de joints NO se escribe aqui: se cuenta de las guias que
+        # hay en la escena. Como las guias salen de la curva de la ceja (un CV
+        # por vertice del edge), el modelo es el que decide cuantos joints
+        # tiene la ceja. Una ceja corta da pocos y una larga da muchos, sin
+        # tocar codigo y sin que haya que cuadrar dos numeros a mano.
+        num_joints = guides_module.EyebrowsGuides.guide_count(side, "eyebrow_root")
+
+        # Por debajo de 4 los indices del modulo se pisan: el sub "In" va a la
+        # guia 01, el "Out" a la ultima, y las tangentes a sus vecinas (02 y
+        # N-1). Con 3 guias las dos tangentes caerian en la misma.
+        if num_joints < 4:
+            cmds.warning(f"[Eyebrow {side}] Solo {num_joints} guias. Hacen "
+                         f"falta 4 como minimo: coge mas edges de la ceja al "
+                         f"hacer la curva. Se salta la ceja {side}.")
+            return None
+
+        print(f"[Eyebrow {side}] {num_joints} guias encontradas.")
+
         eyebrows = eyebrowsModule.EyebrowsModule(
             guide_prefix=f"{side}_eyebrow_root",
-            num_joints=10,
+            num_joints=num_joints,
             rig_name=self.RIG_NAME,
             side=side,
             root_instance=self.root_rig,

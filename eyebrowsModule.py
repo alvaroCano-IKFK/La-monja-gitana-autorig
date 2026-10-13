@@ -6,6 +6,7 @@ import controlsLibrary
 import groups_module
 import guides_module
 import rigRoot_module
+import skinning_module
 from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 
@@ -932,7 +933,7 @@ class EyebrowsModule(object):
         Reparte todo lo que el build deja suelto en la raiz del mundo.
 
             C_<rig>_face_GRP                  (sistemas, bajo rig_GRP)
-               |- <prefix>_systems_GRP
+               |- <prefix>_systems_GRP        inheritsTransform = 0
                     |- <prefix>_joints_GRP    bind, projected y forehead
                     |- <prefix>_local_GRP     MainLocal_OFF y las curvas
                     |- <prefix>_rel_GRP       los _REL
@@ -945,6 +946,18 @@ class EyebrowsModule(object):
         """
         systems_grp = self._ensure_group(f"{self.prefix}_systems_GRP",
                                          self._face_systems_root())
+
+        # El sistema de la ceja se queda en bind: no hereda el global scale.
+        #
+        # Sus joints de skin solo deforman la malla facial, y esa malla tiene
+        # que quedarse quieta para que la blendShape le pase al body el delta
+        # de expresion y nada mas. Si este grupo escalase, los joints se irian
+        # a s² (el sistema mezcla plugs de mundo con slots locales) y la
+        # blendShape le sumaria esa escala al body. Ver skinning_module.
+        #
+        # Va aqui y NO en C_<rig>_face_GRP: boca, jaw y nariz deforman el body
+        # directamente y si tienen que escalar.
+        cmds.setAttr(f"{systems_grp}.inheritsTransform", 0)
 
         joints_grp = self._ensure_group(f"{self.prefix}_joints_GRP", systems_grp)
         local_grp = self._ensure_group(f"{self.prefix}_local_GRP", systems_grp)
@@ -1535,6 +1548,14 @@ class EyebrowsModule(object):
         # 7) SLIDE SETUP SOBRE LA NURBS DEL CRANEO
         #    Al final: necesita los joints ya conducidos por el motionPath.
         self._build_slide_setup()
+
+        # 7b) ESPACIO DE SKIN
+        #     Los _ENV de la ceja solo deforman la malla facial, asi que van al
+        #     espacio "face" del SkinningModule (faceSKN_GRP, que no escala).
+        #     La marca va en el _JNT; el SkinningModule la lee al duplicarlo.
+        skinning_module.mark_skin_space(
+            self.rig_joints + self.slide_projected_joints + self.forehead_joints,
+            skinning_module.FACE_SPACE)
 
         # 8) OUTLINER
         self._organize_outliner()

@@ -7,6 +7,7 @@ from groups_module import ControlsGroups
 from nodeCreator_module import NodeCreator
 import rigRoot_module
 import module_specs
+import skinning_module
 
 
 class EyesModule(module_specs.FeaturesMixin):
@@ -2673,7 +2674,7 @@ class EyesModule(module_specs.FeaturesMixin):
     #
     #     <rig>_rig_GRP
     #         |- C_<rig>_face_GRP
-    #              |- C_<rig>_eyes_GRP
+    #              |- C_<rig>_eyes_GRP          inheritsTransform = 0
     #                   |- L_<rig>_eyes_GRP
     #                   |- R_<rig>_eyes_GRP
     #
@@ -2825,6 +2826,21 @@ class EyesModule(module_specs.FeaturesMixin):
 
         # --- 1. Esqueleto ---
         systems_grp = self._ensure_group(f"{center}_eyes_GRP", self._face_systems_root())
+
+        # El sistema de los ojos se queda en bind: no hereda el global scale.
+        #
+        # Sus joints de skin (los AimEnd) solo deforman la malla facial, y esa
+        # malla tiene que quedarse quieta para que la blendShape le pase al body
+        # el delta de expresion y nada mas. Si este grupo escalase, las curvas
+        # skineadas y la red de aim (que mezclan plugs de mundo con slots
+        # locales) se irian a s² y la blendShape le sumaria esa escala al body.
+        # Ver skinning_module.
+        #
+        # Va aqui y NO en C_<rig>_face_GRP: boca, jaw y nariz deforman el body
+        # directamente y si tienen que escalar. Es el grupo compartido de los
+        # dos ojos, asi que cubre L y R.
+        cmds.setAttr(f"{systems_grp}.inheritsTransform", 0)
+
         side_systems_grp = self._ensure_group(f"{self.prefix}_eyes_GRP", systems_grp)
 
         controls_grp = self._ensure_group(f"{center}_eyesControls_GRP",
@@ -3172,6 +3188,20 @@ class EyesModule(module_specs.FeaturesMixin):
             # de skinning.
             # =====================================================
             self._build_loop_aims()
+
+            # =====================================================
+            # ESPACIO DE SKIN
+            # Los AimEnd son los joints de skin de los parpados y solo deforman
+            # la malla facial: van al espacio "face" del SkinningModule
+            # (faceSKN_GRP, que no escala). La marca va en el _JNT y el
+            # SkinningModule la lee al duplicarlo.
+            #
+            # El eye_mid NO se marca: el globo ocular sigue a la cabeza y a la
+            # escala, asi que su _ENV va en el espacio body.
+            # =====================================================
+            skinning_module.mark_skin_space(
+                self.loop_aim_ends["upper"] + self.loop_aim_ends["lower"],
+                skinning_module.FACE_SPACE)
         else:
             print(f"[{self.prefix}] Loop joints desactivados en la receta.")
 
@@ -3183,5 +3213,4 @@ class EyesModule(module_specs.FeaturesMixin):
 
         cmds.select(clear=True)
 
-        return self.joints_group  
-    #asdasdasd
+        return self.joints_group

@@ -90,6 +90,12 @@ class BuildRig(object):
         # pivote movible) y el localHip_CTL. Lo unico que cambia es de que
         # guia sale, porque el caballo no tiene "root".
         (13, "_core_hip",       "Hip",           None),
+        # El twist del ikSpline de la espina necesita el localHip_CTL (paso
+        # 13) y el chestFix_CTL (paso 11), y la espina del biped se construye
+        # ANTES que los dos. Por eso el enganche va aqui y no dentro del
+        # modulo: cuando la espina se construye, esos controles todavia no
+        # existen y connectAttr peta con "source attribute cannot be found".
+        (14, "_core_spine_twist", "Twist de la espina", ("biped",)),
         (70, "_core_skinning",  "Skinning",      None),
         (80, "_core_post",      "Soft IK y pole vector pins", None),
         (90, "_core_spaces",    "Space switching", None),
@@ -101,6 +107,9 @@ class BuildRig(object):
         self.recipe = []
         self.root_rig = None
         self.hip_rig = None
+        self.spine_rig = None
+        self.horse_spine_rig = None
+        self.chest_rig = None
         self.template = module_specs.DEFAULT_TEMPLATE
         self.skip_core = set()
 
@@ -431,6 +440,24 @@ class BuildRig(object):
             root_instance=self.root_rig,
         )
         self.chest_rig.build()
+
+    def _core_spine_twist(self):
+        """
+        Engancha el Advanced Twist del ikSpline de la espina.
+
+        Va en un paso aparte, despues del hip, porque es un problema de ORDEN,
+        no del modulo: la espina del biped se construye antes que el chest
+        (11) y que el hip (13), asi que cuando ella misma intenta conectar sus
+        objetos de up, el chestFix_CTL y el localHip_CTL todavia no existen.
+
+        SpineModule.connect_twist_up_objects() ya avisa y sigue en vez de
+        tumbar el build si falta alguno, asi que la espina se construye
+        entera; lo unico que le queda pendiente es esto, y se resuelve aqui.
+        """
+        if self.spine_rig is None:
+            return None
+
+        return self.spine_rig.connect_twist_up_objects()
 
     # ==================================================================
     # CUADRUPEDO

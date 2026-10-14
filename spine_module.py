@@ -28,8 +28,76 @@ class SpineModule(object):
         self.joints = []
         self.controls = []
         self.clusters = []
+        self.ik_handle = None
         self.root_instance = root_instance
         
+    # ------------------------------------------------------------------
+    # TWIST DEL IK SPLINE
+    # ------------------------------------------------------------------
+    def connect_twist_up_objects(self, ik=None, quiet=False):
+        """
+        Engancha los dos objetos de up del Advanced Twist del ikSpline.
+
+        OJO con el nombre de los atributos: en el Attribute Editor los campos
+        se llaman "World Up Object" y "World Up Object 2", pero ESOS NOMBRES NO
+        EXISTEN como atributos del ikHandle. Lo que hay debajo son dos entradas
+        de MATRIZ:
+
+            dWorldUpMatrix      <- el objeto del START (la base, la cadera)
+            dWorldUpMatrixEnd   <- el objeto del END   (la punta, el pecho)
+
+        Por eso no se ponen con setAttr de un string, sino conectando el
+        worldMatrix[0] del control. Un setAttr contra dWorldUpObject revienta
+        con "No object matches name", que es exactamente el error que salia.
+
+        Y el orden importa: el START es el extremo donde empieza la cadena de
+        joints (spine_0, abajo, la cadera) y el END donde acaba (spine_4,
+        arriba, el pecho). Al reves, el twist sale invertido: la cadera manda
+        en el pecho y el pecho en la cadera.
+
+        quiet=True se usa desde build(): la espina del biped se construye
+        ANTES que el chest (paso 11) y que el hip (paso 13), asi que lo
+        normal es que esos dos controles no existan todavia y no hay nada
+        que avisar. Quien lo engancha de verdad es el paso
+        _core_spine_twist de build_module, que corre despues del hip y
+        llama a esto sin quiet.
+        """
+        ik = ik or self.ik_handle
+        if not ik or not cmds.objExists(ik):
+            if not quiet:
+                cmds.warning("[Spine] No hay ikHandle al que enganchar "
+                             "el twist.")
+            return False
+
+        start_ctl = f"{self.rig_name}_localHip_CTL"    # abajo  -> spine_0
+        end_ctl = f"{self.rig_name}_chestFix_CTL"      # arriba -> spine_4
+
+        pairs = [(start_ctl, "dWorldUpMatrix"),
+                 (end_ctl, "dWorldUpMatrixEnd")]
+
+        missing = [control for control, _plug in pairs
+                   if not cmds.objExists(control)]
+        if missing:
+            # Aviso, no error: si falta un control el resto de la espina es
+            # perfectamente valida y se puede reenganchar luego llamando a
+            # este mismo metodo.
+            if not quiet:
+                cmds.warning(f"[Spine] No existen {', '.join(missing)}. El "
+                             f"twist del ikSpline se queda sin objetos de "
+                             f"up. Llama a connect_twist_up_objects() "
+                             f"cuando esten.")
+            return False
+
+        for control, plug in pairs:
+            cmds.connectAttr(f"{control}.worldMatrix[0]", f"{ik}.{plug}",
+                             force=True)
+
+        if not quiet:
+            print(f"[Spine] Twist: start={start_ctl} -> dWorldUpMatrix, "
+                  f"end={end_ctl} -> dWorldUpMatrixEnd")
+
+        return True
+
     def build(self):
         if not cmds.objExists(self.root_guide):
             cmds.error("Root guide not found")
@@ -138,21 +206,23 @@ class SpineModule(object):
             n=f"{self.rig_name}_spine_IK"
         )
         cmds.setAttr(f"{ik}.dTwistControlEnable", 1)
-        cmds.setAttr(f"{ik}.dWorldUpType", 4) # Object Up (Start/End)
-        cmds.setAttr(f"{ik}.dForwardAxis", 2) # Y axis
-        cmds.setAttr(f"{ik}.dWorldUpAxis", 6) # Z axis
+        cmds.setAttr(f"{ik}.dWorldUpType", 4)   # 4 = Object Rotation Up (Start/End)
+        cmds.setAttr(f"{ik}.dForwardAxis", 2)   # 2 = Positive Y
+        cmds.setAttr(f"{ik}.dWorldUpAxis", 6)   # 6 = Positive X
 
         # Vectores Up
         cmds.setAttr(f"{ik}.dWorldUpVectorX", 1)
         cmds.setAttr(f"{ik}.dWorldUpVectorEndX", 1)
         cmds.setAttr(f"{ik}.dWorldUpVectorY", 0)
         cmds.setAttr(f"{ik}.dWorldUpVectorEndY", 0)
-        
+
         cmds.parent(ik, self.spine_grp)
 
-        
-        chest_ctl_name = f"{self.rig_name}_chestFix_CTL"
-        hip_ctl_name = f"{self.rig_name}_localHip_CTL"
+        self.ik_handle = ik
+
+        # Intento optimista: si el chest y el hip ya estan, se engancha
+        # aqui mismo. Si no, calla y lo hace el paso _core_spine_twist.
+        self.connect_twist_up_objects(quiet=True)
 
         
         # --- SECCIÓN DE ORGANIZACIÓN FINAL ---
@@ -179,4 +249,3 @@ class SpineModule(object):
 
         print(f"Spine para {self.rig_name} creada con éxito.")
         return self
-        

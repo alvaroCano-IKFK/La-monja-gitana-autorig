@@ -36,6 +36,7 @@ class LegModule(object):
                  pv_mult=1.0,
                  scapula_surface=None,
                  auto_scapula_driver=None,
+                 auto_scapula_driver_attr="translateY",
                  auto_scapula_axis="X",
                  clavicle=True,
                  three_bone=False,
@@ -122,9 +123,14 @@ class LegModule(object):
         #Si es None, l escapula nomes segueix el seu control.
         self.scapula_surface = scapula_surface
 
-        #AUTO ESCAPULA: control del pit (o el que sigui) que, en rotar, fa que
-        #la clavicula vagi una mica endavant. Si es None, no es crea.
+        #AUTO ESCAPULA: control del pit (o el que sigui) que fa que la
+        #clavicula vagi una mica endavant. Si es None, no es crea.
+        #  driver_attr: el canal que ho dispara. Per defecte translateY: quan
+        #               el pit PUJA, l escapula va endavant. El clamp es queda
+        #               la part positiva, aixi que baixar no fa res.
+        #  axis:        l eix de rotacio del SDK de la clavicula
         self.auto_scapula_driver = auto_scapula_driver
+        self.auto_scapula_driver_attr = auto_scapula_driver_attr
         self.auto_scapula_axis = auto_scapula_axis.upper()
 
         self.bind_chain = []
@@ -259,27 +265,41 @@ class LegModule(object):
 
     def build_auto_scapula(self, clavicule_ctrl, clavicule_gen):
         """
-        Auto escapula: quan el pit rota, la clavicula va una mica endavant.
+        Auto escapula: quan el pit PUJA, la clavicula va una mica endavant.
 
-            pit.rotate<eix> * Factor * AutoScapula  ->  clamp(Min, Max)
-                                                    ->  SDK del clavicule_GRP
+            pit.translateY * Factor * AutoScapula  ->  clamp(Min, Max)
+                                                   ->  SDK del clavicule_GRP
 
-        El clamp evita que amb rotacions grans del pit la clavicula es passi de
-        frenada. L animador pot corregir a sobre amb el control, perque l auto
-        entra per l SDK i no pel canal del control.
+        El disparador es el canal de auto_scapula_driver_attr (per defecte
+        translateY). Endavant es rotacio NEGATIVA, aixi que el Factor ve
+        negatiu: el pit puja (valor positiu) i el producte surt negatiu.
+
+        El rang del clamp va de Min (-15) a Max (0). El Max a 0 es el que fa
+        que nomes compti la pujada: quan el pit baixa, el producte surt
+        positiu, el clamp el talla a 0 i l escapula no es mou.
+
+        L animador pot corregir a sobre amb el control, perque l auto entra
+        per l SDK i no pel canal del control.
 
         Atributs al clavicule_CTRL:
             AutoScapula        0-1, quant actua (1 per defecte)
-            AutoScapulaFactor  graus de clavicula per grau de pit
-            AutoScapulaMin/Max limits en graus
+            AutoScapulaFactor  graus de clavicula per unitat que puja el pit
+                               (NEGATIU: endavant es rotacio negativa)
+            AutoScapulaMin/Max limits en graus (Max 0 = nomes cap amunt)
         """
         p = self.prefix
         driver = self.auto_scapula_driver
         axis = self.auto_scapula_axis
+        driver_attr = self.auto_scapula_driver_attr
 
         sdk = clavicule_gen.replace("_GRP", "_SDK")
         if not cmds.objExists(sdk):
             cmds.warning(f"[{p}] No existeix {sdk}: auto escapula no connectada.")
+            return None
+
+        if not cmds.attributeQuery(driver_attr, node=driver, exists=True):
+            cmds.warning(f"[{p}] {driver} no te el canal {driver_attr}: "
+                         f"auto escapula no connectada.")
             return None
 
         cmds.addAttr(clavicule_ctrl, ln="autoScapulaSep", nn="AUTO SCAPULA",
@@ -287,13 +307,15 @@ class LegModule(object):
         cmds.setAttr(f"{clavicule_ctrl}.autoScapulaSep", cb=True)
         cmds.setAttr(f"{clavicule_ctrl}.autoScapulaSep", l=True)
         cmds.addAttr(clavicule_ctrl, ln="AutoScapula", at="float", min=0, max=1, dv=1, k=True)
-        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaFactor", at="float", dv=0.5, k=True)
+        # Factor negatiu: endavant es rotacio negativa al SDK de la clavicula
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaFactor", at="float", dv=-0.5, k=True)
+        # Rang [-15, 0]. El Max a 0 deixa fora la baixada del pit.
         cmds.addAttr(clavicule_ctrl, ln="AutoScapulaMin", at="float", dv=-15, k=True)
-        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaMax", at="float", dv=15, k=True)
+        cmds.addAttr(clavicule_ctrl, ln="AutoScapulaMax", at="float", dv=0, k=True)
 
-        # rotacio del pit * factor
+        # quant ha pujat el pit * factor
         factor = cmds.createNode("multDoubleLinear", n=f"{p}_autoScapulaFactor_MDL")
-        cmds.connectAttr(f"{driver}.rotate{axis}", f"{factor}.input1")
+        cmds.connectAttr(f"{driver}.{driver_attr}", f"{factor}.input1")
         cmds.connectAttr(f"{clavicule_ctrl}.AutoScapulaFactor", f"{factor}.input2")
 
         # ... * quant actua
@@ -310,7 +332,7 @@ class LegModule(object):
         cmds.connectAttr(f"{clp}.outputR", f"{sdk}.rotate{axis}")
 
         self.auto_scapula_clamp = clp
-        print(f"[{p}] Auto escapula connectada a {driver}.rotate{axis}")
+        print(f"[{p}] Auto escapula: {driver}.{driver_attr} -> {sdk}.rotate{axis}")
         return clp
 
     def build_scapula_pin(self, bind_joint):

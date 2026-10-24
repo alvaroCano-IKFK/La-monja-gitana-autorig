@@ -555,9 +555,31 @@ class BuildRig(object):
 
         return fallback
 
+    def _feature_on(self, module_type, key, features, default=True):
+        """
+        Si la feature esta marcada, True. Si el spec del modulo ni siquiera la
+        declara (la casilla no existe en el arbol de la UI), se usa 'default':
+        asi una feature nueva no se queda apagada para siempre solo porque
+        module_specs todavia no la conoce.
+        """
+        if key in features:
+            return True
+
+        declared = set()
+        for getter in ("feature_keys", "all_feature_keys", "default_feature_keys"):
+            func = getattr(module_specs, getter, None)
+            if callable(func):
+                try:
+                    declared |= set(func(module_type) or ())
+                except Exception:
+                    pass
+
+        return False if key in declared else default
+
     #: NURBS sobre la que se proyecta la escapula. Se buscan varios nombres
     #: porque la superficie puede venir de las guias o estar puesta a mano.
-    THORAX_CANDIDATES = ("thorax_NRB", "Character_thorax_NRB", "thorax_surface")
+    THORAX_CANDIDATES = ("scapula_surface_NRB", "thorax_NRB",
+                         "Character_thorax_NRB", "thorax_surface")
 
     def _horse_thorax_surface(self):
         for name in self.THORAX_CANDIDATES:
@@ -601,11 +623,18 @@ class BuildRig(object):
                 "chest", f"{self.RIG_NAME}_chestFix_CTL"),
             clavicle=True,
             hoof=True,
-            scapula="scapula" in features,
+            scapula=self._feature_on("horse_leg", "scapula", features),
             # La NURBS del torax. Sin ella el modulo construye la escapula
             # igual, pero sin el proximityPin: solo sigue a su control, sin
             # deslizarse sobre las costillas.
             scapula_surface=self._horse_thorax_surface(),
+            # AUTO ESCAPULA: cuando el pecho SUBE, la escapula va hacia
+            # delante. Se lee el CONTROL de la espina (su translate parte de
+            # cero, asi que lo que entra ya es cuanto ha subido). Sin esta
+            # linea el driver es None y horse_leg_module se salta la red.
+            auto_scapula_driver=self._horse_spine_control("chest"),
+            auto_scapula_driver_attr="translateY",
+            auto_scapula_axis="X",
         )
         leg.build()
 

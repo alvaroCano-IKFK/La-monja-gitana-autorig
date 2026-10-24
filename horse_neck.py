@@ -26,15 +26,39 @@ class HorseNeck(object):
             V = llargada, 2 spans grau 3 -> 5 CVs
       2. 3 joints (base, mig i final) que deformen la NURBS amb un skinCluster.
          Son els joints de skin del coll.
-      3. 3 controls en jerarquia  neckBase > neckMid > neckEnd,
-         cadascun amb parentConstraint al seu joint.
+      3. 3 controls, cadascun amb parentConstraint al seu joint.
 
          control -> joint -> skinCluster -> NURBS
 
-      4. Cap: un joint i un control al final del coll (head=True), penjat del
-         neckEnd_CTRL. El joint del cap es un joint de skin mes.
+      4. Cap: un joint i un control al final del coll (head=True).
+         El joint del cap es un joint de skin mes.
       5. Opcional (pin_joints > 0): joints extra enganxats a la superficie amb
          un uvPin, repartits per la V. Per defecte no se n creen.
+
+    EL CAP MANA (head_world_space=True, per defecte)
+    ------------------------------------------------
+    El control del cap NO penja del neckEnd_CTRL: viu en espai de mon, al
+    costat dels controls del coll, i nomes segueix el pit (parent_joint).
+
+    LA JERARQUIA ES LA DE SEMPRE: neckBase > neckMid > neckEnd, aixi que la
+    cadena FK funciona igual que abans. El cap entra pel GRUP D OFFSET de
+    cada control, amb un parentConstraint (translacio i rotacio) i el pes de
+    neck_follow:
+
+        neckBase_OFF   cap 0.0    -> FK pura
+        neckMid_OFF    cap 0.5    -> meitat cadena, meitat cap
+        neckEnd_OFF    cap 1.0    -> el cap mana
+
+    El pes es el que barreja: quan la suma dels pesos d un constraint no
+    arriba a 1, la part que falta se la queda la rest position del grup, que
+    es justament el que li dona la jerarquia. Per aixo conviuen les dues
+    coses sense doble transformacio.
+
+    El final va a 1.0 perque el joint del cap i el neckEnd surtin del mateix
+    lloc i no es puguin separar. El del mig es per gust: 0.5 o 0.75.
+
+    Amb head_world_space=False es torna al muntatge antic: cadena
+    neckBase > neckMid > neckEnd i el cap penjat del neckEnd_CTRL.
     """
 
     def __init__(self,
@@ -49,6 +73,8 @@ class HorseNeck(object):
                  pin_joints=0,
                  head=True,
                  head_guide=None,
+                 head_world_space=True,
+                 neck_follow=(0.0, 0.5, 1.0),
                  width=None,
                  parent_joint=None,
                  root_instance=None,
@@ -64,6 +90,11 @@ class HorseNeck(object):
         #del final del coll (neck_end)
         self.head = head
         self.head_guide = head_guide
+        # El cap en espai de mon i els controls del coll seguint-lo
+        self.head_world_space = head_world_space
+        # Quant segueix el cap cada control del coll (base, mig, final).
+        # La resta fins a 1.0 se la queda el pit (parent_joint).
+        self.neck_follow = tuple(neck_follow)
         self.width = width            # None -> 10% de la llargada del coll
         self.parent_joint = parent_joint
         self.root_instance = root_instance
@@ -80,6 +111,8 @@ class HorseNeck(object):
         self.uv_pin = None
         self.head_joint = None
         self.head_ctrl = None
+        self.tops = []          # el grup de dalt de cada control del coll
+        self.offsets = []       # el grup d offset de cada control del coll
 
     # ------------------------------------------------------------------ #
     # HELPERS
@@ -95,6 +128,24 @@ class HorseNeck(object):
     @staticmethod
     def _length(a):
         return math.sqrt(sum(v * v for v in a))
+
+    @staticmethod
+    def _offset_group(top, ctrl):
+        """
+        El grup d OFFSET de la pila GRP > SPC > OFF > SDK > CTRL.
+
+        Es baixa del grup de dalt fins al control buscant el node que acaba
+        en _OFF. Si la pila canvia de noms es torna el grup de dalt, que
+        funciona igual (nomes es perd el nivell d offset per a l animador).
+        """
+        node = top
+        while node and node != ctrl:
+            if node.split("|")[-1].upper().endswith("_OFF"):
+                return node
+            children = cmds.listRelatives(node, c=True, type="transform",
+                                          fullPath=False) or []
+            node = children[0] if children else None
+        return top
 
     @staticmethod
     def _world_axes(node):
@@ -213,13 +264,18 @@ class HorseNeck(object):
             tops.append(self.group_maker.create_rig_hierarchy(ctrl, drv))
             self.controls.append(ctrl)
 
-        # Jerarquia: base > mig > final
+        # Cadena FK de sempre: base > mig > final.
+        # El cap no la trenca: entra pel pes del constraint al grup d offset.
         cmds.parent(tops[0], ctrl_grp)
         cmds.parent(tops[1], self.controls[0])
         cmds.parent(tops[2], self.controls[1])
 
         for ctrl, drv in zip(self.controls, self.joints):
             cmds.parentConstraint(ctrl, drv, mo=True, n=f"{drv}_PAC")
+
+        self.tops = tops
+        self.offsets = [self._offset_group(top, ctrl)
+                        for top, ctrl in zip(tops, self.controls)]
         return tops
 
     # ------------------------------------------------------------------ #
@@ -229,8 +285,10 @@ class HorseNeck(object):
         """
         Joint i control del cap, al final del coll.
 
-        El control penja del neckEnd_CTRL, aixi que el cap acompanya el coll i
-        a sobre es pot orientar a part. El joint es de skin, com els del coll.
+        Amb head_world_space el control va en espai de mon (parent_ctrl es el
+        grup de controls del coll, no el neckEnd_CTRL) i nomes segueix el pit:
+        es ell qui mana i els controls del coll el segueixen. Sense, penja del
+        neckEnd_CTRL com abans. El joint es de skin, com els del coll.
         """
         n = self.rig_name
         guide = self.head_guide if self.head_guide else self.guides[-1]
@@ -254,9 +312,53 @@ class HorseNeck(object):
         cmds.parent(top, parent_ctrl)
         cmds.parentConstraint(head_ctrl, head_jnt, mo=True, n=f"{head_jnt}_PAC")
 
+        # En espai de mon el cap no hereta res del coll: perque acompanyi el
+        # cos se l penja del pit amb un constraint al seu grup de dalt.
+        if self.head_world_space:
+            if self.parent_joint and cmds.objExists(self.parent_joint):
+                cmds.parentConstraint(self.parent_joint, top, mo=True,
+                                      n=f"{n}_head_follow_PAC")
+            else:
+                cmds.warning("[HorseNeck] El cap queda en mon pur: no hi ha "
+                             "res per seguir el cos.")
+
         self.head_joint = head_jnt
         self.head_ctrl = head_ctrl
         return head_ctrl
+
+    def _link_neck_to_head(self):
+        """
+        Un parentConstraint (translacio i rotacio) del CAP al grup d offset
+        de cada control del coll, amb el pes de neck_follow.
+
+        La jerarquia NO es toca: els controls segueixen en cadena
+        base > mig > final i la FK funciona com sempre. El que fa la barreja
+        es el pes del constraint: quan la suma dels pesos no arriba a 1, la
+        part que falta se la queda la REST POSITION, que es el valor local
+        que tenia el grup al crear-lo, o sigui exactament el que li dona la
+        jerarquia. Per aixo:
+
+            pes 0.0  -> FK pura, el cap no hi diu res
+            pes 0.5  -> meitat cadena, meitat cap
+            pes 1.0  -> el cap mana del tot i la cadena de sobre queda anulada
+
+        Al final del coll va 1.0 a proposit: aixi el joint del cap i el
+        neckEnd surten del mateix lloc i no es poden separar mai.
+        """
+        n = self.rig_name
+        if not self.head_ctrl:
+            return
+
+        names = ["neckBase", "neckMid", "neckEnd"]
+        for name, off, weight in zip(names, self.offsets, self.neck_follow):
+            weight = max(0.0, min(1.0, float(weight)))
+            if weight <= 0.0:
+                continue   # FK pura: no cal constraint
+
+            pac = cmds.parentConstraint(self.head_ctrl, off, mo=True,
+                                        n=f"{n}_{name}_head_PAC")[0]
+            for alias in cmds.parentConstraint(pac, q=True, weightAliasList=True):
+                cmds.setAttr(f"{pac}.{alias}", weight)
 
     # ------------------------------------------------------------------ #
     # 5. UVPIN (opcional)
@@ -317,6 +419,12 @@ class HorseNeck(object):
         n = self.rig_name
         guide_pos = [cmds.xform(g, q=True, ws=True, t=True) for g in self.guides]
 
+        # Sense cap no hi ha res que mani: es torna a la cadena de sempre
+        if not self.head and self.head_world_space:
+            cmds.warning("[HorseNeck] head=False: el coll torna a la cadena "
+                         "neckBase > neckMid > neckEnd.")
+            self.head_world_space = False
+
         # Sistemes i joints en espai de mon: no hereten transformacions
         module = cmds.createNode("transform", n=f"{n}_neck_GRP")
         sys_grp = cmds.createNode("transform", n=f"{n}_neckSystems_GRP", parent=module)
@@ -330,8 +438,12 @@ class HorseNeck(object):
         self._build_joints(guide_pos, jnt_grp)
         self._skin_surface(mid_ratio)
         tops = self._build_controls(ctrl_grp)
+
+        # El cap va PRIMER: els controls del coll el necessiten com a target
         if self.head:
-            self._build_head(self.controls[-1], jnt_grp)
+            head_parent = ctrl_grp if self.head_world_space else self.controls[-1]
+            self._build_head(head_parent, jnt_grp)
+
         if self.pin_joints:
             self._build_pinned_joints(jnt_grp)
 
@@ -347,7 +459,10 @@ class HorseNeck(object):
         if container and cmds.objExists(container):
             cmds.parent(ctrl_grp, container)
 
-        # La base del coll segueix el pit de l espina
+        # --- Qui segueix a qui ------------------------------------------------
+        # Es fa amb els grups ja al seu lloc definitiu: el maintainOffset d un
+        # parentConstraint congela la relacio del moment en que es crea.
+        # La base del coll segueix el pit i la cadena FK fa la resta
         if self.parent_joint and cmds.objExists(self.parent_joint):
             cmds.parentConstraint(self.parent_joint, tops[0], mo=True,
                                   n=f"{n}_neckBase_follow_PAC")
@@ -355,8 +470,13 @@ class HorseNeck(object):
             cmds.warning(f"[HorseNeck] No s ha trobat {self.parent_joint}: "
                          f"el coll no segueix l espina.")
 
+        # I a sobre, el cap estira del mig i del final
+        if self.head_world_space:
+            self._link_neck_to_head()
+
         print(f"[HorseNeck] Ribbon construit: NURBS {self.u_spans}x{self.v_spans} spans "
               f"(grau {self.u_degree}/{self.v_degree}), {len(self.joints)} joints de skin, "
               f"{len(self.pinned)} pinned, 3 controls"
-              f"{' + cap' if self.head_ctrl else ''}.")
+              f"{' + cap' if self.head_ctrl else ''}. "
+              f"{'El cap mana i el coll el segueix ' + str(self.neck_follow) if self.head_world_space else 'Cadena FK classica'}.")
         return self

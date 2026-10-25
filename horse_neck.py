@@ -70,6 +70,9 @@ class HorseNeck(object):
                  head_guide=None,
                  head_world_space=True,
                  neck_follow=(0.0, 0.5, 1.0),
+                 aim_at_head=True,
+                 aim_vector=(1, 0, 0),
+                 aim_up_vector=(0, 1, 0),
                  width=None,
                  parent_joint=None,
                  root_instance=None,
@@ -90,6 +93,10 @@ class HorseNeck(object):
         # Quant segueix el cap cada control del coll (base, mig, final).
         # La resta fins a 1.0 se la queda el pit (parent_joint).
         self.neck_follow = tuple(neck_follow)
+        # aimConstraint de cada control del coll al control del cap
+        self.aim_at_head = aim_at_head
+        self.aim_vector = tuple(aim_vector)
+        self.aim_up_vector = tuple(aim_up_vector)
         self.width = width            # None -> 10% de la llargada del coll
         self.parent_joint = parent_joint
         self.root_instance = root_instance
@@ -108,6 +115,7 @@ class HorseNeck(object):
         self.head_ctrl = None
         self.tops = []          # el grup de dalt de cada control del coll
         self.offsets = []       # el grup d offset de cada control del coll
+        self.aims = []          # els aimConstraint al cap
 
     # ------------------------------------------------------------------ #
     # HELPERS
@@ -360,6 +368,97 @@ class HorseNeck(object):
             for alias, (_, w) in zip(aliases, targets):
                 cmds.setAttr(f"{pac}.{alias}", w)
 
+    def _head_aim_target(self):
+        """
+        Punt al que apunta el control del coll que cau damunt del cap.
+
+        Es un transform penjat del head_CTRL i separat cap endavant per l eix
+        de l aim, aixi que apuntar-hi equival a alinear-se amb la direccio del
+        cap. Es crea un sol cop i no es veu al viewport.
+        """
+        n = self.rig_name
+        name = f"{n}_headAim_TRN"
+        if cmds.objExists(name):
+            return name
+
+        # Separacio: el tram final del coll, o 1.0 si no es pot mesurar
+        gap = 1.0
+        if len(self.controls) > 1:
+            a = cmds.xform(self.controls[-2], q=True, ws=True, t=True)
+            b = cmds.xform(self.controls[-1], q=True, ws=True, t=True)
+            gap = self._length(self._sub(b, a)) or 1.0
+
+        target = cmds.createNode("transform", n=name, parent=self.head_ctrl)
+        for attr, value in zip("XYZ", self.aim_vector):
+            cmds.setAttr(f"{target}.translate{attr}", value * gap)
+        cmds.setAttr(f"{target}.rotate", 0, 0, 0)
+        cmds.setAttr(f"{target}.visibility", 0)
+        return target
+
+    def _aim_neck_to_head(self):
+        """
+        aimConstraint de cada control del coll al control del cap.
+
+        L aim NO va al mateix node que el parentConstraint del cap: aquell va
+        a l _OFF i aquest a l _SDK, un nivell mes avall. Si anessin tots dos
+        al mateix transform es barallarien pel canal rotate i Maya nomes
+        deixaria connectar el primer.
+
+        Es crea amb maintainOffset, o sigui que al build no salta res: el que
+        mante es la relacio que tenien ja posats, i a partir d aqui el coll
+        apunta al cap tota l estona i s alinea sol. L animador encara pot
+        girar el control a sobre, perque el CTRL penja de l SDK.
+
+        El neckEnd es el cas especial: la guia del cap es, per defecte,
+        neck_end, aixi que el control del cap li cau JUST A SOBRE i un aim
+        sense distancia fa tombarelles. Per a ell s apunta a headAim_TRN, un
+        punt penjat del propi cap i separat cap endavant: apuntar-hi es el
+        mateix que alinear-se amb la direccio del cap.
+        """
+        if not self.head_ctrl:
+            return []
+
+        n = self.rig_name
+        head_pos = cmds.xform(self.head_ctrl, q=True, ws=True, t=True)
+        names = ["neckBase", "neckMid", "neckEnd"]
+        self.aims = []
+
+        for name, top, ctrl in zip(names, self.tops, self.controls):
+            # el grup _SDK de la pila GRP > SPC > OFF > SDK > CTRL
+            sdk = None
+            node = top
+            while node and node != ctrl:
+                if node.split("|")[-1].upper().endswith("_SDK"):
+                    sdk = node
+                    break
+                children = cmds.listRelatives(node, c=True, type="transform") or []
+                node = children[0] if children else None
+
+            if not sdk:
+                cmds.warning(f"[HorseNeck] {ctrl} no te grup _SDK: sense ell "
+                             f"l aim xocaria amb el parentConstraint de l _OFF. "
+                             f"Aim de {name} no creat.")
+                continue
+
+            # Si cau damunt del cap, s apunta al punt separat
+            pos = cmds.xform(sdk, q=True, ws=True, t=True)
+            if self._length(self._sub(head_pos, pos)) < 0.001:
+                target = self._head_aim_target()
+            else:
+                target = self.head_ctrl
+
+            aic = cmds.aimConstraint(
+                target, sdk, mo=True,
+                aimVector=self.aim_vector,
+                upVector=self.aim_up_vector,
+                worldUpType="objectrotation",
+                worldUpVector=self.aim_up_vector,
+                worldUpObject=self.head_ctrl,
+                n=f"{n}_{name}_aim_AIC")[0]
+            self.aims.append(aic)
+
+        return self.aims
+
     # ------------------------------------------------------------------ #
     # 5. UVPIN (opcional)
     # ------------------------------------------------------------------ #
@@ -465,6 +564,10 @@ class HorseNeck(object):
         if self.head_world_space:
             # Blend pit/cap al grup d offset de cada control del coll
             self._link_neck_to_head()
+
+            # ... i a mes el coll apunta al cap tota l estona
+            if self.aim_at_head:
+                self._aim_neck_to_head()
         elif self.parent_joint and cmds.objExists(self.parent_joint):
             # Muntatge antic: nomes la base segueix el pit, la cadena fa la resta
             cmds.parentConstraint(self.parent_joint, tops[0], mo=True,

@@ -297,6 +297,10 @@ class HorseNeck(object):
         grup de controls del coll, no el neckEnd_CTRL) i nomes segueix el pit:
         es ell qui mana i els controls del coll el segueixen. Sense, penja del
         neckEnd_CTRL com abans. El joint es de skin, com els del coll.
+
+        El joint i el control neixen ALINEATS AMB EL MON, no amb el coll: els
+        seus eixos son els del mon i no la direccio de l espina, aixi que el
+        cap no te la mateixa rotacio que els controls del coll.
         """
         n = self.rig_name
         guide = self.head_guide if self.head_guide else self.guides[-1]
@@ -304,10 +308,14 @@ class HorseNeck(object):
             cmds.warning(f"[HorseNeck] No existeix {guide}: cap no creat.")
             return None
 
+        # EN ESPAI DE MON: nomes la posicio de la guia. El joint NO copia
+        # la rotacio del darrer joint del coll (abans hi havia un
+        # matchTransform rot=True): si la copiava, el cap quedava alineat amb
+        # la direccio de l espina enlloc de mirar endavant, i el control
+        # heretava la mateixa rotacio que els del coll.
         cmds.select(clear=True)
         head_jnt = cmds.joint(n=f"{n}_head_JNT",
                               p=cmds.xform(guide, q=True, ws=True, t=True))
-        cmds.matchTransform(head_jnt, self.joints[-1], pos=False, rot=True)
         cmds.makeIdentity(head_jnt, apply=True, t=0, r=1, s=0, n=0)
         head_jnt = cmds.parent(head_jnt, jnt_parent)[0]
         cmds.select(clear=True)
@@ -368,33 +376,6 @@ class HorseNeck(object):
             for alias, (_, w) in zip(aliases, targets):
                 cmds.setAttr(f"{pac}.{alias}", w)
 
-    def _head_aim_target(self):
-        """
-        Punt al que apunta el control del coll que cau damunt del cap.
-
-        Es un transform penjat del head_CTRL i separat cap endavant per l eix
-        de l aim, aixi que apuntar-hi equival a alinear-se amb la direccio del
-        cap. Es crea un sol cop i no es veu al viewport.
-        """
-        n = self.rig_name
-        name = f"{n}_headAim_TRN"
-        if cmds.objExists(name):
-            return name
-
-        # Separacio: el tram final del coll, o 1.0 si no es pot mesurar
-        gap = 1.0
-        if len(self.controls) > 1:
-            a = cmds.xform(self.controls[-2], q=True, ws=True, t=True)
-            b = cmds.xform(self.controls[-1], q=True, ws=True, t=True)
-            gap = self._length(self._sub(b, a)) or 1.0
-
-        target = cmds.createNode("transform", n=name, parent=self.head_ctrl)
-        for attr, value in zip("XYZ", self.aim_vector):
-            cmds.setAttr(f"{target}.translate{attr}", value * gap)
-        cmds.setAttr(f"{target}.rotate", 0, 0, 0)
-        cmds.setAttr(f"{target}.visibility", 0)
-        return target
-
     def _aim_neck_to_head(self):
         """
         aimConstraint de cada control del coll al control del cap.
@@ -409,11 +390,9 @@ class HorseNeck(object):
         apunta al cap tota l estona i s alinea sol. L animador encara pot
         girar el control a sobre, perque el CTRL penja de l SDK.
 
-        El neckEnd es el cas especial: la guia del cap es, per defecte,
-        neck_end, aixi que el control del cap li cau JUST A SOBRE i un aim
-        sense distancia fa tombarelles. Per a ell s apunta a headAim_TRN, un
-        punt penjat del propi cap i separat cap endavant: apuntar-hi es el
-        mateix que alinear-se amb la direccio del cap.
+        El neckEnd NO en porta: es queda nomes amb el seu parentConstraint
+        al cap (pes 1.0), que ja l hi enganxa del tot. Un aim alli no te on
+        apuntar, perque el control del cap li cau just a sobre.
         """
         if not self.head_ctrl:
             return []
@@ -423,7 +402,8 @@ class HorseNeck(object):
         names = ["neckBase", "neckMid", "neckEnd"]
         self.aims = []
 
-        for name, top, ctrl in zip(names, self.tops, self.controls):
+        # L ultim es queda fora: nomes parentConstraint
+        for name, top, ctrl in zip(names[:-1], self.tops[:-1], self.controls[:-1]):
             # el grup _SDK de la pila GRP > SPC > OFF > SDK > CTRL
             sdk = None
             node = top
@@ -440,15 +420,14 @@ class HorseNeck(object):
                              f"Aim de {name} no creat.")
                 continue
 
-            # Si cau damunt del cap, s apunta al punt separat
+            # Massa a prop del cap: l aim no tindria direccio on apuntar
             pos = cmds.xform(sdk, q=True, ws=True, t=True)
             if self._length(self._sub(head_pos, pos)) < 0.001:
-                target = self._head_aim_target()
-            else:
-                target = self.head_ctrl
+                print(f"[HorseNeck] {name} esta damunt del cap: sense aim.")
+                continue
 
             aic = cmds.aimConstraint(
-                target, sdk, mo=True,
+                self.head_ctrl, sdk, mo=True,
                 aimVector=self.aim_vector,
                 upVector=self.aim_up_vector,
                 worldUpType="objectrotation",

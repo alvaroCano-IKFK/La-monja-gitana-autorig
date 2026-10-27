@@ -521,13 +521,16 @@ class BuildRig(object):
             cmds.warning("[Horse Neck] No encuentro el joint del pecho de la "
                          "espina: el cuello no la seguira.")
 
-        # pin_joints: el modulo no crea ninguno por defecto. Con la feature
-        # marcada se piden los 5 que reparte por la V del ribbon.
+        # pin_joints: con la feature marcada se piden 4, que el modulo reparte
+        # por dentro de la V del ribbon (0.2, 0.4, 0.6, 0.8): dos entre la base
+        # y el medio y dos entre el medio y el final. Eran 5, que caian en los
+        # extremos (encima del neckBase y del neckEnd) y en el centro, justo
+        # donde ahora va el joint del medio.
         neck = horse_neck.HorseNeck(
             rig_name=self.RIG_NAME,
             root_instance=self.root_rig,
             parent_joint=parent_joint,
-            pin_joints=5 if "pin_joints" in features else 0,
+            pin_joints=4 if "pin_joints" in features else 0,
         )
         neck.build()
 

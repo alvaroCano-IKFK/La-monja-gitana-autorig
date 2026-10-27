@@ -25,15 +25,18 @@ class HorseNeck(object):
             U = amplada, 1 span grau 2   -> 3 CVs (vora, centre, vora)
             V = llargada, 2 spans grau 3 -> 5 CVs
       2. 3 joints (base, mig i final) que deformen la NURBS amb un skinCluster.
-         Son els joints de skin del coll.
+         Son els joints de skin del coll. El del mig va al CENTRE DE LA NURBS
+         (V 0.5), no a la guia: la guia no cau al mig del parametre.
       3. 3 controls, cadascun amb parentConstraint al seu joint.
 
          control -> joint -> skinCluster -> NURBS
 
       4. Cap: un joint i un control al final del coll (head=True).
          El joint del cap es un joint de skin mes.
-      5. Opcional (pin_joints > 0): joints extra enganxats a la superficie amb
-         un uvPin, repartits per la V. Per defecte no se n creen.
+      5. pin_joints: joints extra enganxats a la superficie amb un uvPin,
+         repartits uniformement per la V pero SENSE tocar els extrems. Amb
+         els 4 de per defecte queden a V 0.2, 0.4, 0.6 i 0.8: dos entre la
+         base i el mig, i dos entre el mig i el final.
 
     EL CAP MANA (head_world_space=True, per defecte)
     ------------------------------------------------
@@ -65,7 +68,8 @@ class HorseNeck(object):
                  v_degree=3,
                  u_spans=1,
                  u_degree=2,
-                 pin_joints=0,
+                 pin_joints=4,
+                 mid_on_surface=True,
                  head=True,
                  head_guide=None,
                  head_world_space=True,
@@ -84,6 +88,8 @@ class HorseNeck(object):
         self.u_spans = u_spans
         self.u_degree = u_degree
         self.pin_joints = pin_joints
+        # El joint del mig, al centre de la NURBS (V 0.5) i no a la guia
+        self.mid_on_surface = mid_on_surface
         #Cap: joint i control al final del coll. head_guide=None -> la guia
         #del final del coll (neck_end)
         self.head = head
@@ -193,14 +199,39 @@ class HorseNeck(object):
     # ------------------------------------------------------------------ #
     # 2. JOINTS + SKIN
     # ------------------------------------------------------------------ #
+    def _surface_point(self, u, v):
+        """
+        Posicio al mon d un punt de la NURBS, amb els parametres de 0 a 1.
+
+        pointOnSurface torna el punt en l espai de l objecte, aixi que es
+        multiplica per la worldMatrix de la superficie. Ara mateix la
+        superficie esta en identitat i seria el mateix, pero si algun dia
+        penja d un grup mogut, aixo segueix sent correcte.
+        """
+        p = cmds.pointOnSurface(self.surface, u=u, v=v, position=True)
+        m = cmds.xform(self.surface, q=True, ws=True, m=True)
+
+        return [p[0] * m[0] + p[1] * m[4] + p[2] * m[8] + m[12],
+                p[0] * m[1] + p[1] * m[5] + p[2] * m[9] + m[13],
+                p[0] * m[2] + p[1] * m[6] + p[2] * m[10] + m[14]]
+
     def _build_joints(self, guide_pos, parent):
         """Els 3 joints del coll: deformen la NURBS i son els de skin."""
         n = self.rig_name
         names = ["neckBase", "neckMid", "neckEnd"]
 
+        # El del mig va al CENTRE DE LA NURBS (U 0.5, V 0.5), no a la guia.
+        # La guia del mig no cau al centre del parametre: la corba passa per
+        # tres punts i, si els dos trams no fan el mateix, el mig del
+        # parametre queda desplacat respecte de la guia. Com que el joint ha
+        # de deformar la superficie, el que mana es la superficie.
+        positions = list(guide_pos)
+        if self.mid_on_surface and self.surface:
+            positions[1] = self._surface_point(0.5, 0.5)
+
         # Cadena temporal per orientar-los al llarg del coll; despres se separen
         cmds.select(clear=True)
-        chain = [cmds.joint(p=p, n=f"{n}_{name}_JNT") for name, p in zip(names, guide_pos)]
+        chain = [cmds.joint(p=p, n=f"{n}_{name}_JNT") for name, p in zip(names, positions)]
         cmds.joint(chain[0], e=True, oj="xyz", sao="yup", ch=True, zso=True)
         cmds.setAttr(f"{chain[-1]}.jointOrient", 0, 0, 0)
         cmds.select(clear=True)
@@ -452,11 +483,16 @@ class HorseNeck(object):
         cmds.setAttr(f"{pin}.tangentAxis", 2)   # Z = tangent U (amplada)
         self.uv_pin = pin
 
+        # Repartits uniformement DINS de la NURBS, sense tocar els extrems:
+        # amb 4 queden a V 0.2, 0.4, 0.6 i 0.8, o sigui dos entre la base i el
+        # mig i dos entre el mig i el final. Abans es feia i/(n-1), que posava
+        # un pin a cada punta (damunt del neckBase i del neckEnd) i un altre
+        # al centre, just on ara hi va el joint del mig.
         self.pinned = []
         for i in range(self.pin_joints):
             cmds.setAttr(f"{pin}.coordinate[{i}].coordinateU", 0.5)
             cmds.setAttr(f"{pin}.coordinate[{i}].coordinateV",
-                         i / float(max(self.pin_joints - 1, 1)))
+                         (i + 1) / float(self.pin_joints + 1))
 
             cmds.select(clear=True)
             jnt = cmds.joint(n=f"{n}_neckPin_{i + 1:02d}_JNT")
@@ -514,7 +550,9 @@ class HorseNeck(object):
 
         _, mid_ratio = self._build_surface(guide_pos, sys_grp)
         self._build_joints(guide_pos, jnt_grp)
-        self._skin_surface(mid_ratio)
+        # Si el joint del mig s ha posat al centre de la NURBS, el repartiment
+        # per defecte dels pesos tambe ha de centrar-se alli.
+        self._skin_surface(0.5 if self.mid_on_surface else mid_ratio)
         tops = self._build_controls(ctrl_grp)
 
         # El cap va PRIMER: els controls del coll el necessiten com a target

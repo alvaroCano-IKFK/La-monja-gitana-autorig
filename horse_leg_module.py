@@ -40,7 +40,8 @@ class LegModule(object):
                  auto_scapula_axis="X",
                  clavicle=True,
                  three_bone=False,
-                 hock_guide=None):
+                 hock_guide=None,
+                 pastern_joints=3):
         
         self.clavicule_start_guide = clavicule_start_guide
         self.clavicule_guide = clavicule_guide             
@@ -133,9 +134,20 @@ class LegModule(object):
         self.auto_scapula_driver_attr = auto_scapula_driver_attr
         self.auto_scapula_axis = auto_scapula_axis.upper()
 
+        #CUARTILLA: joints intermedis entre el menudillo (ankle) i la corona
+        #(ball). Cada un es constreny als dos extrems amb un pes diferent, de
+        #manera que al rodar el casc la cuartilla baixa en ARC i no en bloc.
+        #0 = no se n crea cap.
+        self.pastern_joints = pastern_joints
+
         self.bind_chain = []
         self.ik_chain = []
         self.fk_chain = []
+        self.pastern_chain = []
+        #Plug amb el doblec total del menudillo (roll + FetlockBend). El
+        #guarda build_hoof_attrs i el fa servir la cuartilla per saber cap a
+        #on va el moviment.
+        self.fetlock_bend_plug = None
         self.leg_joints_grp = None
 
     def create_offset_group(self, ctrl, target_proc, orient=False, world_space=True):
@@ -368,6 +380,153 @@ class LegModule(object):
         self.scapula_projected = projected
         return pin
 
+    def build_pastern_limit(self, ik_ctrl, driver_plug):
+        """
+        Limit de l arc cap ENDAVANT.
+
+        Enrere l arc queda be tal qual, pero endavant surt massa corbat: a la
+        pota de debo la cuartilla s endreca quan el casc trenca. Aixi que
+        endavant es rebaixa quant segueixen els joints a la corona.
+
+            doblec -> clamp(0, inf)      nomes la part positiva (endavant)
+                   -> remap(0..Angle)    0 a 1, quant de limit toca
+                   -> blend(1, Forward)  factor: 1 enrere, Forward endavant
+
+        Aquest factor multiplica el pes de CADA joint cap a la corona. Amb
+        Forward a 0.4, el que anava 0.75 amb la corona hi va 0.30 i la resta
+        se la queda el menudillo: el tram es queda mes recte. Enrere el
+        factor es 1 i no canvia res del que ja funciona.
+
+        Torna el plug del factor, o None si no hi ha doblec que llegir.
+        """
+        p = self.prefix
+        if not (ik_ctrl and driver_plug):
+            return None
+
+        cmds.addAttr(ik_ctrl, ln="PasternForward", at="float",
+                     min=0, max=1, dv=0.4, k=True)
+        cmds.addAttr(ik_ctrl, ln="PasternForwardAngle", at="float",
+                     min=0.1, dv=30, k=True)
+
+        # Nomes la part positiva del doblec: enrere no ha de limitar res
+        clp = cmds.createNode("clamp", n=f"{p}_pasternForward_CLP")
+        cmds.setAttr(f"{clp}.minR", 0)
+        cmds.setAttr(f"{clp}.maxR", 10000)
+        cmds.connectAttr(driver_plug, f"{clp}.inputR")
+
+        # Quants graus endavant fan falta per arribar al limit sencer
+        rmv = cmds.createNode("remapValue", n=f"{p}_pasternForward_RMV")
+        cmds.connectAttr(f"{clp}.outputR", f"{rmv}.inputValue")
+        cmds.connectAttr(f"{ik_ctrl}.PasternForwardAngle", f"{rmv}.inputMax")
+        cmds.setAttr(f"{rmv}.inputMin", 0)
+        cmds.setAttr(f"{rmv}.outputMin", 0)
+        cmds.setAttr(f"{rmv}.outputMax", 1)
+
+        # 1 quan no hi ha doblec endavant, PasternForward quan n hi ha tot
+        bta = cmds.createNode("blendTwoAttr", n=f"{p}_pasternForward_BTA")
+        cmds.setAttr(f"{bta}.input[0]", 1.0)
+        cmds.connectAttr(f"{ik_ctrl}.PasternForward", f"{bta}.input[1]")
+        cmds.connectAttr(f"{rmv}.outValue", f"{bta}.attributesBlender")
+
+        self.pastern_limit = bta
+        return f"{bta}.output"
+
+    def build_pastern_joints(self, ankle_jnt, ball_jnt, ik_ctrl=None,
+                             driver_plug=None):
+        """
+        Joints de la CUARTILLA, entre el menudillo i la corona.
+
+        El problema: amb un sol os de menudillo a corona, quan entra el Roll o
+        el FetlockBend tot aquest tram gira de cop i baixa EN BLOC, amb una
+        cantonada al menudillo. A la pota de debo la cuartilla fa una corba.
+
+        La solucio son joints intermedis que no van ni amb l un ni amb l
+        altre, sino una mica amb cada un:
+
+            pastern_01   menudillo 0.75   corona 0.25
+            pastern_02   menudillo 0.50   corona 0.50
+            pastern_03   menudillo 0.25   corona 0.75
+
+        Un parentConstraint amb dos targets fa la mitjana ponderada de les
+        dues matrius, aixi que cada joint es queda a la seva part del cami: el
+        de a dalt gairebe no es mou i el de a baix gairebe acompanya el casc.
+        Entremig, l ARC.
+
+        JERARQUIA: pengen del menudillo, pero qui els mou es NOMES el
+        constraint. No hi ha doble transformacio perque un parentConstraint
+        calcula en mon i ja compensa el pare (constraintParentInverseMatrix):
+        el pare nomes serveix per tenir-los recollits amb la resta de
+        l esquelet i que viatgin amb ell al leg_GRP.
+
+        Els pesos no son fixos: amb ik_ctrl i driver_plug, el de la corona
+        passa per build_pastern_limit, que el rebaixa quan el doblec va
+        ENDAVANT. Enrere l arc queda igual; endavant el tram s endreca.
+
+        S han de crear AL FINAL del build: si existissin abans, el
+        duplicate_chain de les cadenes ik i fk se ls enduria tambe.
+        """
+        p = self.prefix
+        count = self.pastern_joints
+        if not count:
+            return []
+
+        pos_a = cmds.xform(ankle_jnt, q=True, ws=True, t=True)
+        pos_b = cmds.xform(ball_jnt, q=True, ws=True, t=True)
+
+        # Factor que rebaixa l arc quan el doblec va endavant
+        limit_plug = self.build_pastern_limit(ik_ctrl, driver_plug)
+
+        self.pastern_chain = []
+        for i in range(count):
+            # 3 joints -> 0.25, 0.5, 0.75: repartits sense trepitjar els extrems
+            t = (i + 1) / float(count + 1)
+            pos = [pos_a[j] + (pos_b[j] - pos_a[j]) * t for j in range(3)]
+
+            cmds.select(clear=True)
+            jnt = cmds.joint(n=f"{p}_pastern_{i + 1:02d}_bind_JNT", p=pos)
+            # Mateixa orientacio que el menudillo, perque l eix de flexio
+            # sigui el mateix a tot el tram
+            cmds.matchTransform(jnt, ankle_jnt, pos=False, rot=True)
+            cmds.makeIdentity(jnt, apply=True, t=0, r=1, s=0, n=0)
+            jnt = cmds.parent(jnt, ankle_jnt)[0]
+            cmds.select(clear=True)
+
+            pac = cmds.parentConstraint(ankle_jnt, ball_jnt, jnt, mo=True,
+                                        n=f"{jnt}_PAC")[0]
+            # Shortest: amb dos targets girant, evita que la interpolacio
+            # agafi el cami llarg i el joint faci una volta de campana.
+            cmds.setAttr(f"{pac}.interpType", 2)
+
+            aliases = cmds.parentConstraint(pac, q=True, weightAliasList=True)
+            for alias, weight in zip(aliases, (1.0 - t, t)):
+                cmds.setAttr(f"{pac}.{alias}", weight)
+
+            if limit_plug:
+                # Pes cap a la corona = t * factor. Endavant el factor baixa,
+                # el joint segueix menys el casc i el tram s endreca.
+                ball_w = cmds.createNode(
+                    "multDoubleLinear", n=f"{p}_pastern{i + 1:02d}BallW_MDL")
+                cmds.setAttr(f"{ball_w}.input1", t)
+                cmds.connectAttr(limit_plug, f"{ball_w}.input2")
+
+                # El menudillo es queda la resta, perque sumin 1
+                ankle_w = cmds.createNode(
+                    "plusMinusAverage", n=f"{p}_pastern{i + 1:02d}AnkleW_PMA")
+                cmds.setAttr(f"{ankle_w}.operation", 2)       # resta
+                cmds.setAttr(f"{ankle_w}.input1D[0]", 1.0)
+                cmds.connectAttr(f"{ball_w}.output", f"{ankle_w}.input1D[1]")
+
+                cmds.connectAttr(f"{ankle_w}.output1D", f"{pac}.{aliases[0]}",
+                                 force=True)
+                cmds.connectAttr(f"{ball_w}.output", f"{pac}.{aliases[1]}",
+                                 force=True)
+
+            self.pastern_chain.append(jnt)
+            print(f"[{p}] Cuartilla {jnt}: {ankle_jnt} {1.0 - t:.2f} / "
+                  f"{ball_jnt} {t:.2f}")
+
+        return self.pastern_chain
+
     def build_hoof_attrs(self, ik_ctrl, roll_ball_plug, ball_sdk, tip_sdk,
                          bank_in_sdk, bank_out_sdk, curl_sdk):
         """
@@ -394,6 +553,9 @@ class LegModule(object):
         cmds.connectAttr(roll_ball_plug, f"{fet_pma}.input1D[0]")
         cmds.connectAttr(f"{ik_ctrl}.FetlockBend", f"{fet_pma}.input1D[1]")
         cmds.connectAttr(f"{fet_pma}.output1D", f"{ball_sdk}.rotateX", force=True)
+        # La cuartilla llegeix d aqui per saber si el doblec va endavant o
+        # enrere: es el total, roll automatic inclos.
+        self.fetlock_bend_plug = f"{fet_pma}.output1D"
 
         # HoofCurl -> pivot de la corona
         cmds.connectAttr(f"{ik_ctrl}.HoofCurl", f"{curl_sdk}.rotateX")
@@ -1057,6 +1219,16 @@ class LegModule(object):
             source_curve = leg_curvature.degree2_curve
 )
 
+
+        # =========================================================
+        # CUARTILLA
+        # =========================================================
+        # Va l ULTIM de tot: abans d aqui s han duplicat les cadenes ik i fk
+        # a partir de la bind, i aquests joints no hi han de sortir.
+        self.build_pastern_joints(self.bind_chain[self.i_ankle],
+                                  self.bind_chain[self.i_ball],
+                                  ik_ctrl=ik_ctrl,
+                                  driver_plug=self.fetlock_bend_plug)
 
         print(f"Build {self.prefix} leg completo.")
         print(f"Leg Module {self.side} construido con éxito.")

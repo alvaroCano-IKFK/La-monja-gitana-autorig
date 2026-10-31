@@ -463,7 +463,8 @@ class BocaGuides(object):
     """
     def __init__(self, lips_NRB, lip_mid, lip_end,
                  lip_in01="L_lip_in01", lip_in02="L_lip_in02",
-                 make_surface=True, offset=(0, 0, 0)):
+                 make_surface=True, offset=(0, 0, 0),
+                 wrap_NRB="mouth_wrap_NRB", make_wrap_surface=True):
         #Desplacament de tot el bloc (el cap del caball no es al mateix lloc
         #que el del biped). Veure CharacterGuides.FACIAL_OFFSET.
         self.offset = offset
@@ -481,6 +482,18 @@ class BocaGuides(object):
         # uvPin). En el sistema simple no se usa; se deja a True por si hay que
         # volver atras, pero se puede apagar sin romper nada.
         self.make_surface = make_surface
+
+        # NURBS del PROXIMITY WRAP. Es otra, aparte de boca_surface: aquella
+        # era del sistema viejo (closestPointOnSurface) y es de grado 1, que
+        # deforma a facetas. Esta es de grado 3 y es la que, skineada a los
+        # joints de la boca, hace de driver del proximityWrap de la cara.
+        #
+        # Colocarla es parte de poner guias: tiene que quedar pegada al morro,
+        # cubriendo todo lo que se tenga que deformar al relinchar. Cuanto
+        # mejor siga la superficie de la malla, menos tendras que pelearte
+        # luego con el falloff del wrap.
+        self.wrap_surface = wrap_NRB
+        self.make_wrap_surface = make_wrap_surface
 
         # True: lip_in01 / lip_in02 cuelgan de lip_end, para que el mirror las
         # arrastre sin tocar module_specs. Ver la nota en create_boca().
@@ -516,6 +529,49 @@ class BocaGuides(object):
         cmds.select(surface + ".cv[1][0:4]", r=True)
         cmds.select(surface + ".cv[3][0:4]", add=True)
         cmds.move(0, 0, -1, r=True)
+
+        return surface
+
+    #: Mida i forma de la NURBS del wrap, relativa a la de la boca.
+    WRAP_WIDTH = 14.0
+    WRAP_LENGTH_RATIO = 0.45
+    WRAP_SPANS_U = 6
+    WRAP_SPANS_V = 4
+
+    def _create_wrap_surface(self):
+        """
+        La NURBS que conduce el proximityWrap de la cara.
+
+        Grado 3 en los dos sentidos: el driver de un proximityWrap se lee como
+        superficie continua, asi que con grado 1 las aristas entre spans se
+        notarian en la malla deformada.
+
+        Sale como un plano vertical delante de la boca, con los laterales
+        echados hacia atras para que empiece a envolver el morro. A partir de
+        ahi se coloca a mano, como cualquier guia.
+        """
+        surface = cmds.nurbsPlane(n=self.wrap_surface, ax=(0, 1, 0),
+                                  w=self.WRAP_WIDTH, lr=self.WRAP_LENGTH_RATIO,
+                                  d=3, u=self.WRAP_SPANS_U, v=self.WRAP_SPANS_V,
+                                  ch=False)[0]
+
+        position = self.moved(self.MID_POSITION)
+        cmds.setAttr(f"{surface}.translateX", position[0])
+        cmds.setAttr(f"{surface}.translateY", position[1])
+        cmds.setAttr(f"{surface}.translateZ", position[2])
+        cmds.setAttr(f"{surface}.rotateX", 90)
+
+        # Columnas de CVs en U: spans + grado
+        num_u = self.WRAP_SPANS_U + 3
+
+        # Los laterales hacia atras, mas cuanto mas al borde: asi la NURBS
+        # arranca ya curvada sobre el morro en vez de plana.
+        for column, depth in ((0, -4.0), (1, -2.0),
+                              (num_u - 1, -4.0), (num_u - 2, -2.0)):
+            cmds.select(f"{surface}.cv[{column}][0:*]", r=True)
+            cmds.move(0, 0, depth, r=True)
+
+        cmds.select(clear=True)
 
         return surface
 
@@ -570,6 +626,11 @@ class BocaGuides(object):
             members += in_between
         if surface:
             members.insert(0, surface)
+
+        # La del wrap va en el mismo grupo: asi la exporta e importa
+        # guides_io_module con todo lo demas, sin tocar nada mas.
+        if self.make_wrap_surface:
+            members.insert(0, self._create_wrap_surface())
 
         self.guides_group = cmds.group(members, n="boca_guides_GRP")
 

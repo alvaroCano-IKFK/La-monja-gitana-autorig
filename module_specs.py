@@ -348,6 +348,16 @@ MODULE_SPECS = {
             # corner_upper_lower_attr: atributo UpperLower animable en las
             # comisuras. Apagado por defecto, igual que en el modulo.
             Feature("corner_attr", "Corner Upper/Lower Attr"),
+            # use_proximity_wrap: la NURBS mouth_wrap_NRB se skinea a los
+            # joints de la boca y conduce un proximityWrap sobre la malla de
+            # la cara. Sirve para deformaciones grandes (el relincho) sin
+            # tener que meter mas joints ni pintar vertice a vertice.
+            #
+            # Marcada por defecto. Lo unico que necesita es que la guia
+            # mouth_wrap_NRB este COLOCADA sobre el morro: si no esta, el
+            # modulo la crea generica y avisa, pero la forma buena la pones
+            # tu a mano, que de ella depende todo el wrap.
+            Feature("proximity_wrap", "Proximity Wrap", default=True),
         ],
     },
 

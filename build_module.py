@@ -70,6 +70,13 @@ class BuildRig(object):
     # Nombre del rig. Antes estaba repetido como "Character" en quince sitios.
     RIG_NAME = "Character"
 
+    #: MALLAS QUE DEFORMA EL PROXIMITY WRAP DE LA BOCA.
+    #:
+    #: Es el unico dato que el modulo no puede deducir solo. Si el nombre no
+    #: existe en la escena, la boca avisa y se monta igual, pero sin wrap.
+    #: Admite varias si la cara esta partida en trozos.
+    MOUTH_WRAP_TARGETS = ("RetopoCavall_V019_body_GEO",)
+
     # ------------------------------------------------------------------
     # PASOS FIJOS DEL RIG
     #
@@ -860,10 +867,16 @@ class BuildRig(object):
             sides=("L", "R"),
         )
 
-        # Las dos capas opcionales del modulo son flags de instancia, no
+        # Las capas opcionales del modulo son flags de instancia, no
         # argumentos: se ajustan antes de build().
         mouth.use_cascade = "cascade" in features
         mouth.corner_upper_lower_attr = "corner_attr" in features
+
+        # Proximity wrap: la NURBS mouth_wrap_NRB, skineada a los joints de la
+        # boca, deforma la malla de la cara. Para deformaciones grandes como
+        # el relincho, donde los joints solos no llegan.
+        mouth.use_proximity_wrap = "proximity_wrap" in features
+        mouth.wrap_targets = list(self.MOUTH_WRAP_TARGETS)
 
         # build() intenta engancharse al jaw. Como la boca va antes (50 < 52),
         # aqui todavia no hay jaw y lo avisa: es esperado, _build_jaw lo

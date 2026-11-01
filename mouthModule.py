@@ -1,4 +1,5 @@
 import maya.cmds as cmds
+from maya.api import OpenMaya as om
 
 from groups_module import ControlsGroups
 
@@ -167,77 +168,6 @@ class SimpleMouthModule(object):
         self.joints = {}
         self.module_group = None
 
-        # ==========================================================
-        # PROXIMITY WRAP
-        # ----------------------------------------------------------
-        # Para que el caballo relinche hace falta deformar TODO el morro, no
-        # solo el borde del labio. Meterlo con joints significa o pegarlos a
-        # muchisimos vertices o meter mas joints, y las dos cosas se pintan
-        # fatal.
-        #
-        # La alternativa es una capa de geometria por el medio:
-        #
-        #     joints de la boca
-        #         -> skinCluster -> mouthWrap_NRB  (la NURBS se deforma)
-        #              -> proximityWrap -> malla de la cara
-        #
-        # El proximityWrap mueve cada vertice de la malla segun lo que haga la
-        # NURBS que tiene cerca. Como la NURBS es una superficie continua, el
-        # resultado es suave aunque solo haya siete joints detras, y el radio
-        # de accion se controla con el falloff en vez de a pincel.
-        #
-        # LAS DOS NURBS: el deformer compara la superficie DEFORMADA con la
-        # original para saber cuanto se ha movido cada punto. La original es
-        # la orig shape que crea el propio skinCluster, asi que la NURBS se
-        # skinea ANTES de engancharla como driver; si se hace al reves, no hay
-        # con que comparar.
-        self.use_proximity_wrap = False
-        self.wrap_surface = wrap_surface        # la guia
-        # Mallas a deformar. Un nombre o una lista. Sin esto no hay donde
-        # montar el deformer y el modulo lo dice en un warning.
-        if isinstance(wrap_targets, str):
-            wrap_targets = [wrap_targets]
-        self.wrap_targets = list(wrap_targets or [])
-
-        # Ajustes del deformer. maxDrivers a 1 porque solo hay un driver:
-        # cada vertice se queda con el suyo y no hay normalizacion que valga.
-        self.wrap_max_drivers = 1
-        self.wrap_falloff_scale = 1.4
-        self.wrap_smooth_influences = 5
-        # Solo para drivers NURBS: muestras por span. Sube la precision del
-        # punto mas cercano, que en una superficie no es trivial como en una
-        # malla (ahi son vertices y ya esta).
-        self.wrap_span_samples = 2
-
-        # DISTANCIA DE INFLUENCIA, en unidades de escena. Es LO QUE MAS
-        # IMPORTA: driverFalloffEnd viene de Maya a 1.0, o sea un radio de una
-        # unidad. En un personaje de 24 unidades de alto eso no alcanza a
-        # ningun vertice y el deformer parece no hacer nada aunque este bien
-        # montado y conectado.
-        #
-        # None = se calcula del tamano de la propia NURBS (su lado mayor), que
-        # escala solo con el personaje.
-        self.wrap_falloff_distance = None
-        self.wrap_falloff_start = 0.0
-
-        # A QUE SIGUE LA NURBS QUIETA.
-        #
-        # El deformer compara driver y base EN MUNDO. La driver esta skineada,
-        # asi que cuando el caballo gira la cabeza se va con ella; si la base
-        # se quedara clavada en el origen, el wrap leeria ese giro como
-        # "deformacion" y arrastraria la cara una segunda vez. Al mover el
-        # personaje se te desmontaria el morro.
-        #
-        # La base sigue a la cabeza, asi que el movimiento rigido se cancela
-        # entre las dos y al wrap solo le llega lo que de verdad deforma la
-        # boca. None = se busca sola.
-        self.wrap_base_follow = None
-
-        self.wrap_driver = None      # la NURBS skineada
-        self.wrap_base = None        # la copia quieta, la referencia
-        self.wrap_skin = None
-        self.wrap_nodes = []         # los proximityWrap creados
-
         # Grupos que hay que enganchar al jaw. Se guardan porque el jaw puede
         # construirse DESPUES que la boca, y entonces attach_to_jaw() se llama
         # mas tarde (lo hace build_module desde _build_jaw).
@@ -273,6 +203,95 @@ class SimpleMouthModule(object):
         # L, su _out_TRN en R). Ver _insert_mirror.
         self.output_nodes = {}
 
+
+
+        # ==========================================================
+        # PROXIMITY WRAP  (montaje de REFERENCE DRIVER)
+        # ----------------------------------------------------------
+        # Para que el caballo rebufe hay que deformar TODO el morro, no solo
+        # el borde del labio. Con joints eso significa o pegarlos a
+        # muchisimos vertices o meter mas joints, y las dos cosas se pintan
+        # fatal.
+        #
+        # El montaje son DOS NURBS IGUALES y un deformer que mira la
+        # diferencia entre ellas:
+        #
+        #     mouthWrapRef_NRB  (referencia)  se mueve como los joints
+        #     mouthWrapDef_NRB  (deformacion) lo mismo + el rebufo
+        #                   \             /
+        #                    proximityWrap        -> malla de la cara
+        #                   (solo pasa la RESTA)
+        #
+        # Esto es el "reference driver" del manual de Maya. Lo normal es que
+        # el wrap compare la NURBS contra su forma original en bind pose; si
+        # en vez de eso se le da otra version VIVA, lo que transmite es la
+        # separacion entre las dos.
+        #
+        # La ventaja es que todo lo que hacen las dos a la vez SE CANCELA:
+        # girar la cabeza, abrir la mandibula, caminar. La malla ya se mueve
+        # por su propio skin y el wrap no lo duplica. Solo sobrevive lo que
+        # le hagas a la Def y no a la Ref.
+        #
+        # Y como nacen identicas, la resta da cero: el sistema queda montado
+        # pero inerte, y construir no cambia nada de lo que ya funciona.
+        self.use_proximity_wrap = False
+        self.wrap_surface = wrap_surface        # la guia
+        # Mallas a deformar. Un nombre o una lista.
+        if isinstance(wrap_targets, str):
+            wrap_targets = [wrap_targets]
+        self.wrap_targets = list(wrap_targets or [])
+
+        # A True el modulo skinea las dos NURBS a los joints de la boca con
+        # los mismos pesos, para que el sistema nazca vivo en vez de muerto.
+        # Las deja IDENTICAS: la resta da cero y todavia no deforma nada. El
+        # rebufo sale de repintar la Def mas abierta que la Ref, que es el
+        # trabajo a mano que viene despues.
+        self.wrap_auto_skin = True
+
+        # Ajustes del deformer. maxDrivers a 1 porque solo hay un driver.
+        self.wrap_max_drivers = 1
+        self.wrap_falloff_scale = 1.4
+        # smoothInfluences es UN PASE DE SUAVIZADO POR VERTICE: es con
+        # diferencia lo mas caro del deformer. A 5 o mas se nota al arrastrar
+        # un control; a 1 o 2 la calidad apenas cambia.
+        self.wrap_smooth_influences = 2
+        # Solo para drivers NURBS: muestras por span.
+        self.wrap_span_samples = 2
+
+        # DISTANCIA DE INFLUENCIA, en unidades de escena. driverFalloffEnd
+        # viene de Maya a 1.0, o sea un radio de una unidad: en un personaje
+        # de 24 unidades de alto no alcanza a ningun vertice y el deformer
+        # parece no hacer nada aunque este bien conectado.
+        #
+        # None = se calcula como una fraccion del tamano de la NURBS, que
+        # escala con el personaje.
+        self.wrap_falloff_distance = None
+        # Esa fraccion. El falloff es la distancia PERPENDICULAR a la que
+        # llega la influencia, no el largo de la superficie, asi que tiene
+        # que ser una parte pequena. Antes se usaba la mitad del lado mayor
+        # y en una NURBS de 56 unidades salian 28: el wrap se comia medio
+        # caballo y se arrastraba.
+        self.wrap_falloff_ratio = 0.15
+        self.wrap_falloff_start = 0.0
+
+        # LIMITAR EL DEFORMER AL MORRO.
+        #
+        # Un proximityWrap evalua TODOS los vertices del objeto al que se le
+        # pone. En el caballo entero son decenas de miles, y para cada uno
+        # busca el punto mas cercano de la NURBS: por eso se arrastra.
+        #
+        # A True, el deformer se crea solo sobre los vertices que caen cerca
+        # de la NURBS. Los demas ni se miran, y es la diferencia entre que
+        # vaya a tirones o no se note.
+        self.wrap_limit_to_region = True
+        # Margen alrededor de la NURBS al elegir esos vertices. 1.5 = un 50%
+        # mas que el radio de influencia, para no cortar justo en el borde.
+        self.wrap_region_margin = 1.5
+
+        self.wrap_reference = None   # NURBS de referencia
+        self.wrap_driver = None      # NURBS de deformacion
+        self.wrap_skin = None
+        self.wrap_nodes = []         # los proximityWrap creados
 
     # ------------------------------------------------------------------
     # UTILIDADES
@@ -1020,7 +1039,7 @@ class SimpleMouthModule(object):
         return True
 
     # ------------------------------------------------------------------
-    # PROXIMITY WRAP
+    # PROXIMITY WRAP  (montaje de REFERENCE DRIVER)
     # ------------------------------------------------------------------
     @staticmethod
     def _deformed_shape(node):
@@ -1034,11 +1053,9 @@ class SimpleMouthModule(object):
         """
         La NURBS guia. Si no esta, se crea a partir de las guias del labio.
 
-        Existe para que el build no se quede a medias en una escena cuyas
-        guias se hicieron antes de que esto existiera. La que sale es
-        generica: un plano curvado delante de la boca, del ancho de la boca.
-        SIRVE PARA VER EL SISTEMA FUNCIONANDO, no para la toma final; para eso
-        hay que arrimarla al morro CV a CV.
+        La que sale es generica: un plano curvado delante de la boca, del
+        ancho de la boca. SIRVE PARA VER EL SISTEMA, no para la toma final;
+        para eso hay que arrimarla al morro CV a CV.
         """
         if cmds.objExists(self.wrap_surface):
             return self.wrap_surface
@@ -1053,15 +1070,13 @@ class SimpleMouthModule(object):
         end = cmds.xform(self.lip_end, q=True, ws=True, t=True)
 
         half = max(abs(end[0] - mid[0]), 0.5)
-        width = half * 3.0
 
         surface = cmds.nurbsPlane(n=self.wrap_surface, ax=(0, 1, 0),
-                                  w=width, lr=0.45, d=3, u=6, v=4,
+                                  w=half * 3.0, lr=0.45, d=3, u=6, v=4,
                                   ch=False)[0]
         cmds.xform(surface, ws=True, t=mid)
         cmds.setAttr(f"{surface}.rotateX", 90)
 
-        # Los laterales hacia atras: empieza a envolver el morro
         num_u = 6 + 3
         for column, depth in ((0, -half * 1.6), (1, -half * 0.8),
                               (num_u - 1, -half * 1.6), (num_u - 2, -half * 0.8)):
@@ -1069,112 +1084,203 @@ class SimpleMouthModule(object):
             cmds.move(0, 0, depth, r=True)
         cmds.select(clear=True)
 
-        # Al grupo de guias, si existe, para que la exporte guides_io
         if cmds.objExists("boca_guides_GRP"):
             cmds.parent(surface, "boca_guides_GRP")
 
         cmds.warning(f"[SimpleMouth] '{self.wrap_surface}' no existia y la he "
                      f"creado generica sobre la boca. COLOCALA pegada al morro "
-                     f"y vuelve a construir: de su forma depende todo el wrap.")
+                     f"y vuelve a construir.")
 
         return surface
 
-    def _find_head_node(self):
-        """El nodo de la cabeza al que engancha la NURBS quieta."""
-        if self.wrap_base_follow and cmds.objExists(self.wrap_base_follow):
-            return self.wrap_base_follow
+    def _cleanup_previous_wrap(self):
+        """
+        Borra el wrap y las NURBS de una construccion anterior.
 
-        for name in (f"{self.rig_name}_head_CTRL",
-                     f"C_{self.rig_name}_head_CTRL",
-                     f"{self.rig_name}_head_JNT",
-                     self.jaw_upper_ctrl):
-            if name and cmds.objExists(name):
-                return name
+        NO ES OPCIONAL, y la razon es fea: si el montaje se queda a medias
+        (una excepcion justo despues del cmds.deformer, por ejemplo), en la
+        escena queda un proximityWrap SIN DRIVERS. Y uno sin drivers no se
+        queda quieto: escupe basura y revienta la malla. Si encima la malla
+        no tiene skinCluster, ese zombi es el unico deformer que hay y te
+        comes la deformacion entera.
+
+        Al reconstruir sin limpiar, Maya ademas renombra el nuevo con un
+        numero al final y te quedas con los dos vivos a la vez.
+        """
+        doomed = set()
+
+        for target in self.wrap_targets:
+            if not cmds.objExists(target):
+                continue
+            # Cualquier proximityWrap en el historial de la malla, se llame
+            # como se llame: los nuestros y los que quedaron a medias.
+            doomed.update(cmds.ls(cmds.listHistory(target) or [],
+                                  type="proximityWrap"))
+
+        doomed.update(cmds.ls(f"C_{self.rig_name}_mouthWrapRef_NRB") or [])
+        doomed.update(cmds.ls(f"C_{self.rig_name}_mouthWrapDef_NRB") or [])
+
+        for node in sorted(doomed):
+            if cmds.objExists(node):
+                print(f"[SimpleMouth] Borrando resto de un build anterior: {node}")
+                cmds.delete(node)
+
+        return doomed
+
+    def _build_wrap_pair(self):
+        """
+        LAS DOS NURBS. Son identicas al crearse y ahi esta la gracia.
+
+            mouthWrapRef_NRB   la de REFERENCIA. Se mueve como los joints de
+                               la boca y nada mas: es la boca "normal".
+            mouthWrapDef_NRB   la de DEFORMACION. Se mueve igual que la otra
+                               MAS la deformacion gorda del rebufo.
+
+        El wrap no mira ninguna de las dos por separado: mira la DIFERENCIA
+        entre ellas, y esa diferencia es la unica que le pasa a la malla.
+
+        Por que importa tanto: todo lo que hacen las dos a la vez se cancela.
+        El caballo gira la cabeza, abre la mandibula, camina... las dos NURBS
+        hacen exactamente lo mismo, la resta da cero y el wrap no toca nada.
+        La malla ya se mueve por su propio skin y no se duplica el
+        movimiento. Lo unico que sobrevive a la resta es lo que le hagas a la
+        segunda y no a la primera, que es justo el rebufo.
+
+        Recien construidas son iguales, asi que la diferencia es CERO y el
+        sistema esta montado pero inerte: construir no cambia nada de lo que
+        ya tienes. A partir de ahi, todo lo que metas en la Def (skin,
+        blendShape, clusters, lo que sea) aparece en el morro.
+        """
+        if not self._ensure_wrap_guide():
+            return None, None
+
+        names = (f"C_{self.rig_name}_mouthWrapRef_NRB",
+                 f"C_{self.rig_name}_mouthWrapDef_NRB")
+
+        surfaces = []
+        for name in names:
+            if cmds.objExists(name):
+                cmds.delete(name)
+
+            surface = cmds.duplicate(self.wrap_surface, n=name)[0]
+            if cmds.listRelatives(surface, parent=True):
+                surface = cmds.parent(surface, world=True)[0]
+            cmds.makeIdentity(surface, apply=True, t=1, r=1, s=1, n=0)
+            surfaces.append(surface)
+
+        self.wrap_reference, self.wrap_driver = surfaces
+
+        if self.wrap_auto_skin:
+            self._skin_wrap_pair()
+
+        print(f"[SimpleMouth] Par de NURBS: referencia {self.wrap_reference} | "
+              f"deformacion {self.wrap_driver}")
+
+        return self.wrap_reference, self.wrap_driver
+
+    def _env_joint(self, joint):
+        """
+        El joint de ENV que le corresponde a uno de la boca, o None.
+
+        skinning_module duplica el esqueleto a una version de ENV y es esa la
+        que deforma de verdad; los joints que crea este modulo son los del
+        rig. Como no se la convencion exacta de nombres, se prueban las
+        habituales y se avisa de lo que sale, para poder corregirlo.
+        """
+        short = joint.split("|")[-1]
+        base = short[:-4] if short.endswith("_JNT") else short
+
+        for pattern in (f"{short}_ENV", f"{base}_ENV", f"{base}_env_JNT",
+                        f"{base}_ENV_JNT", f"*{base}*ENV*"):
+            found = [node for node in (cmds.ls(pattern, type="joint") or [])
+                     if node != joint]
+            if found:
+                return found[0]
 
         return None
 
-    def _build_wrap_driver(self):
+    def _wrap_influences(self):
         """
-        La NURBS driver: copia de la guia, skineada a los joints de la boca.
-
-        Es una COPIA y no la guia misma porque las guias se borran o se
-        reimportan, y porque una guia con un skinCluster encima deja de poder
-        moverse para colocar.
+        Los joints que skinean las NURBS: los de ENV si existen, y si no los
+        del propio modulo.
         """
-        if not self._ensure_wrap_guide():
-            return None
-
         joints = sorted(self.joints.values())
         if not joints:
-            cmds.warning("[SimpleMouth] No hay joints de boca: el wrap se salta.")
+            return []
+
+        influences = []
+        missing = []
+        for joint in joints:
+            env = self._env_joint(joint)
+            influences.append(env or joint)
+            if not env:
+                missing.append(joint)
+
+        if missing and len(missing) == len(joints):
+            cmds.warning("[SimpleMouth] No encuentro ningun joint de ENV para "
+                         "la boca: las NURBS se skinean a los joints del rig. "
+                         "Si tu ENV usa otra convencion de nombres, dimela.")
+        elif missing:
+            cmds.warning(f"[SimpleMouth] Sin ENV para: {missing}. Esos van al "
+                         f"joint del rig.")
+        else:
+            print(f"[SimpleMouth] Influencias de ENV encontradas: "
+                  f"{len(influences)}.")
+
+        return influences
+
+    def _skin_wrap_pair(self):
+        """
+        Skinea las dos NURBS a los joints de la boca, con los MISMOS pesos.
+
+        Opcional (wrap_auto_skin). Las dos tienen que llevar el mismo skin o
+        la resta dejaria de dar cero en reposo y el morro se deformaria sin
+        que nadie haya pedido nada.
+        """
+        joints = self._wrap_influences()
+        if not joints:
+            cmds.warning("[SimpleMouth] No hay joints de boca: las NURBS se "
+                         "quedan sin skin.")
             return None
 
-        name = f"C_{self.rig_name}_mouthWrap_NRB"
-        if cmds.objExists(name):
-            cmds.delete(name)
+        skins = []
+        for surface in (self.wrap_reference, self.wrap_driver):
+            skins.append(cmds.skinCluster(
+                joints, surface, toSelectedBones=True, maximumInfluences=3,
+                dropoffRate=4, n=f"{surface}_SKC")[0])
 
-        driver = cmds.duplicate(self.wrap_surface, n=name)[0]
+        # Los pesos del segundo se copian del primero: identicos de salida.
+        cmds.copySkinWeights(sourceSkin=skins[0], destinationSkin=skins[1],
+                             noMirror=True,
+                             surfaceAssociation="closestPoint",
+                             influenceAssociation=("name", "closestJoint"))
 
-        # Sin padres de la guia y con los canales congelados: lo que mueva
-        # esta superficie tiene que ser el skin, no una transformacion
-        # heredada del grupo de guias.
-        if cmds.listRelatives(driver, parent=True):
-            driver = cmds.parent(driver, world=True)[0]
-        cmds.makeIdentity(driver, apply=True, t=1, r=1, s=1, n=0)
+        self.wrap_skin = skins[0]
+        print(f"[SimpleMouth] Las dos NURBS skineadas a {len(joints)} joints.")
 
-        # LA SEGUNDA NURBS: una copia QUIETA, antes de skinear. El deformer
-        # compara las dos para saber cuanto se ha movido cada punto de la
-        # superficie; sin la quieta no tiene contra que medir. Es la "otra
-        # nurbs igual" del montaje.
-        base_name = f"C_{self.rig_name}_mouthWrapBase_NRB"
-        if cmds.objExists(base_name):
-            cmds.delete(base_name)
-        self.wrap_base = cmds.duplicate(driver, n=base_name)[0]
-        cmds.setAttr(f"{self.wrap_base}.visibility", 0)
+        return skins
 
-        # Que acompane el movimiento rigido de la cabeza, o el wrap se lo
-        # tomaria por deformacion. Ver la nota de wrap_base_follow.
-        head = self._find_head_node()
-        if head:
-            cmds.parentConstraint(head, self.wrap_base, mo=True,
-                                  n=f"{self.wrap_base}_PAC")
-            cmds.scaleConstraint(head, self.wrap_base, mo=True,
-                                 n=f"{self.wrap_base}_SCC")
-            print(f"[SimpleMouth] {self.wrap_base} sigue a {head}.")
-        else:
-            cmds.warning("[SimpleMouth] No encuentro la cabeza: la NURBS base "
-                         "se queda quieta en el mundo y el wrap deformara de "
-                         "mas al mover el personaje. Pasa wrap_base_follow.")
-
-        self.wrap_skin = cmds.skinCluster(
-            joints, driver, toSelectedBones=True, maximumInfluences=3,
-            dropoffRate=4, n=f"C_{self.rig_name}_mouthWrap_SKC")[0]
-
-        self.wrap_driver = driver
-        print(f"[SimpleMouth] {driver} skineada a {len(joints)} joints de boca.")
-
-        return driver
-
-    def _add_wrap_driver(self, wrap_node, driver_shape, base_shape):
+    def _add_wrap_driver(self, wrap_node, driver_shape, reference_shape):
         """
-        Engancha el driver al proximityWrap, plug a plug.
+        Engancha el par al proximityWrap, plug a plug.
 
-        Son dos conexiones y nada mas:
+            NURBS de deformacion.worldSpace -> drivers[0].driverGeometry
+            NURBS de referencia.worldSpace  -> drivers[0].driverBindGeometry
 
-            NURBS skineada.worldSpace -> drivers[0].driverGeometry
-            NURBS quieta.worldSpace   -> drivers[0].driverBindGeometry
-
-        El deformer resta la una de la otra para saber cuanto se ha movido
-        cada punto, y eso es lo que le pasa a los vertices que tenga cerca.
+        El segundo plug es el REFERENCE DRIVER del manual. Normalmente Maya
+        mete ahi la forma original (la orig shape, quieta en bind pose) y el
+        wrap transmite "cuanto se ha movido esto desde el principio". Metiendo
+        otra version VIVA, lo que transmite es "cuanto se ha separado la una
+        de la otra", que es lo que queremos.
 
         NO se usa maya.internal.nodes.proximitywrap: es codigo interno del
         Attribute Editor y cambia de version en version (en 2024 el
-        NodeInterface ya no tiene addDriver). Los plugs del nodo, en cambio,
-        son publicos y estables.
+        NodeInterface ya no tiene addDriver). Los plugs del nodo si son
+        publicos.
         """
         plugs = {
             f"{wrap_node}.drivers[0].driverGeometry": f"{driver_shape}.worldSpace[0]",
-            f"{wrap_node}.drivers[0].driverBindGeometry": f"{base_shape}.worldSpace[0]",
+            f"{wrap_node}.drivers[0].driverBindGeometry": f"{reference_shape}.worldSpace[0]",
         }
 
         for destination, source in plugs.items():
@@ -1186,7 +1292,7 @@ class SimpleMouthModule(object):
             cmds.connectAttr(source, destination, force=True)
 
         # EL RADIO DE ACCION. Sin esto el deformer esta conectado y no mueve
-        # nada: driverFalloffEnd vale 1.0 de serie.
+        # nada: driverFalloffEnd vale 1.0 de serie, o sea una unidad.
         distance = self.wrap_falloff_distance or self._auto_falloff_distance()
         cmds.setAttr(f"{wrap_node}.drivers[0].driverFalloffStart",
                      self.wrap_falloff_start)
@@ -1199,11 +1305,15 @@ class SimpleMouthModule(object):
 
     def _auto_falloff_distance(self):
         """
-        Radio de influencia a ojo: el lado mayor de la NURBS driver.
+        Radio de influencia a ojo: una fraccion del lado mayor de la NURBS.
 
-        Escala sola con el personaje, que es justo lo que no hace el 1.0 que
-        trae Maya. Si se queda corta o se come media cara, se pone a mano con
+        Escala solo con el personaje, que es lo que no hace el 1.0 que trae
+        Maya. Si se queda corto o se come media cara, se pone a mano con
         wrap_falloff_distance.
+
+        OJO con subirlo: el falloff no solo decide HASTA DONDE llega la
+        deformacion, tambien CUANTOS vertices entran en el calculo. Pasarse
+        aqui es la forma mas rapida de dejar la escena inanimable.
         """
         if not (self.wrap_driver and cmds.objExists(self.wrap_driver)):
             return 1.0
@@ -1211,7 +1321,82 @@ class SimpleMouthModule(object):
         box = cmds.exactWorldBoundingBox(self.wrap_driver)
         sizes = [box[3] - box[0], box[4] - box[1], box[5] - box[2]]
 
-        return max(sizes) * 0.5 or 1.0
+        return max(sizes) * self.wrap_falloff_ratio or 1.0
+
+    @staticmethod
+    def _as_vertex_ranges(target, indices):
+        """
+        Los indices, agrupados en rangos: vtx[10:450] en vez de 441 strings.
+
+        Maya traga la lista larga, pero construirla y parsearla cuesta, y
+        aqui pueden ser miles.
+        """
+        ranges = []
+        start = previous = indices[0]
+
+        for index in indices[1:]:
+            if index == previous + 1:
+                previous = index
+                continue
+            ranges.append((start, previous))
+            start = previous = index
+        ranges.append((start, previous))
+
+        return [f"{target}.vtx[{a}]" if a == b else f"{target}.vtx[{a}:{b}]"
+                for a, b in ranges]
+
+    def _wrap_region(self, target, distance):
+        """
+        Los vertices de 'target' que estan cerca de la NURBS driver.
+
+        Se filtran por la caja de la NURBS agrandada por el radio de
+        influencia. Es una aproximacion grosera a proposito: comparar contra
+        la superficie de verdad, vertice a vertice y en Python, tardaria mas
+        que lo que ahorra. La caja sobra por los lados, y eso esta bien: mas
+        vale coger de mas que cortar la deformacion por la mitad.
+
+        Devuelve la lista de componentes, o None para no limitar nada.
+        """
+        if not (self.wrap_driver and cmds.objExists(self.wrap_driver)):
+            return None
+
+        margin = distance * self.wrap_region_margin
+        box = cmds.exactWorldBoundingBox(self.wrap_driver)
+        low = [box[0] - margin, box[1] - margin, box[2] - margin]
+        high = [box[3] + margin, box[4] + margin, box[5] + margin]
+
+        try:
+            selection = om.MSelectionList()
+            selection.add(target)
+            dag = selection.getDagPath(0)
+            # extendToShape NO es opcional: 'target' es el TRANSFORM, y
+            # MFnMesh necesita la shape. Sin esto lanza excepcion, el except
+            # se la traga, se devuelve None y el deformer acaba montado sobre
+            # la malla entera. Justo lo que se queria evitar.
+            if dag.apiType() == om.MFn.kTransform:
+                dag.extendToShape()
+            points = om.MFnMesh(dag).getPoints(om.MSpace.kWorld)
+        except Exception as error:
+            cmds.warning(f"[SimpleMouth] NO HE PODIDO LIMITAR EL WRAP a la "
+                         f"zona del morro en {target} ({error}). Va a ir sobre "
+                         f"la malla ENTERA y la escena se arrastrara.")
+            return None
+
+        inside = [i for i, point in enumerate(points)
+                  if low[0] <= point.x <= high[0]
+                  and low[1] <= point.y <= high[1]
+                  and low[2] <= point.z <= high[2]]
+
+        if not inside:
+            cmds.warning(f"[SimpleMouth] Ningun vertice de {target} cerca de "
+                         f"la NURBS. Esta colocada sobre el morro? El wrap ira "
+                         f"sobre la malla entera.")
+            return None
+
+        print(f"[SimpleMouth] {target}: el wrap solo mira {len(inside)} de "
+              f"{len(points)} vertices ({100.0 * len(inside) / len(points):.1f}%).")
+
+        return self._as_vertex_ranges(target, inside)
 
     def build_proximity_wrap(self):
         """
@@ -1223,10 +1408,10 @@ class SimpleMouthModule(object):
             return []
 
         targets = [t for t in self.wrap_targets if cmds.objExists(t)]
-        missing = [t for t in self.wrap_targets if not cmds.objExists(t)]
 
-        for name in missing:
-            cmds.warning(f"[SimpleMouth] No existe la malla '{name}'.")
+        for name in self.wrap_targets:
+            if not cmds.objExists(name):
+                cmds.warning(f"[SimpleMouth] No existe la malla '{name}'.")
 
         if not targets:
             cmds.warning("[SimpleMouth] El proximity wrap no tiene ninguna "
@@ -1234,16 +1419,46 @@ class SimpleMouthModule(object):
                          "nombre de la geometria de la cara.")
             return []
 
-        driver = self._build_wrap_driver()
+        # Fuera lo que quedara del build anterior, antes de nada.
+        self._cleanup_previous_wrap()
+
+        # El wrap pasa SOLO la resta entre las dos NURBS, asi que convive con
+        # el skin de la malla sin duplicar nada. Y sin skin tambien funciona:
+        # la malla se queda quieta en el mundo y lo unico que se mueve es la
+        # deformacion del wrap, que para probar el sistema aislado va bien.
+        for target in targets:
+            skins = cmds.ls(cmds.listHistory(target) or [], type="skinCluster")
+            print(f"[SimpleMouth] {target}: "
+                  f"{'con skinCluster ' + skins[0] if skins else 'SIN skinCluster'}.")
+
+        # Las NURBS PRIMERO y el deformer despues: si algo falla montando el
+        # par, no llega a crearse ningun proximityWrap y la malla se queda
+        # como estaba en vez de con un zombi encima.
+        reference, driver = self._build_wrap_pair()
         if not driver:
+            cmds.warning("[SimpleMouth] Sin NURBS no se crea el deformer: la "
+                         "malla se queda intacta.")
             return []
 
         driver_shape = self._deformed_shape(driver)
-        base_shape = self._deformed_shape(self.wrap_base)
+        reference_shape = self._deformed_shape(reference)
+
+        if not (driver_shape and reference_shape):
+            cmds.warning("[SimpleMouth] Las NURBS no tienen shape utilizable. "
+                         "No se crea el deformer.")
+            return []
+
+        distance = self.wrap_falloff_distance or self._auto_falloff_distance()
 
         self.wrap_nodes = []
         for target in targets:
-            wrap = cmds.deformer(target, type="proximityWrap",
+            # El deformer se crea sobre los vertices del morro, no sobre la
+            # malla entera: es lo que lo hace utilizable en un personaje de
+            # produccion.
+            region = (self._wrap_region(target, distance)
+                      if self.wrap_limit_to_region else None)
+
+            wrap = cmds.deformer(region or target, type="proximityWrap",
                                  n=f"{target}_mouth_PXW")[0]
 
             cmds.setAttr(f"{wrap}.maxDrivers", self.wrap_max_drivers)
@@ -1253,20 +1468,40 @@ class SimpleMouthModule(object):
             if cmds.attributeQuery("spanSamples", node=wrap, exists=True):
                 cmds.setAttr(f"{wrap}.spanSamples", self.wrap_span_samples)
 
-            if self._add_wrap_driver(wrap, driver_shape, base_shape):
+            if self._add_wrap_driver(wrap, driver_shape, reference_shape):
                 self.wrap_nodes.append(wrap)
-                print(f"[SimpleMouth] {wrap}: {target} <- {driver}")
+                print(f"[SimpleMouth] {wrap}: {target} <- {driver} "
+                      f"(referencia {reference})")
+            else:
+                # Un wrap sin drivers deforma basura: antes que dejarlo, fuera.
+                cmds.warning(f"[SimpleMouth] {wrap} no ha podido conectar sus "
+                             f"drivers. Se borra para no dejar la malla rota.")
+                cmds.delete(wrap)
 
-        # La NURBS a sistemas, no a controles: la mueve el skin, y un padre
-        # que se mueva se la sumaria otra vez.
+        # Las NURBS a sistemas: las mueven sus deformers, y un padre que se
+        # mueva se lo sumaria otra vez.
         systems = self._face_systems_root()
-        if cmds.objExists(systems):
-            self._ensure_group(driver, systems)
-            if self.wrap_base and cmds.objExists(self.wrap_base):
-                self._ensure_group(self.wrap_base, systems)
-        cmds.setAttr(f"{driver}.visibility", 0)
+        for surface in (reference, driver):
+            if cmds.objExists(systems):
+                self._ensure_group(surface, systems)
+            cmds.setAttr(f"{surface}.visibility", 0)
 
         return self.wrap_nodes
+
+    def post_build(self):
+        """
+        Lo que tiene que esperar a que el resto del rig exista.
+
+        De momento el proximity wrap, y por una razon de ORDEN: la boca se
+        construye en el paso 50 y el skinning en el 70, asi que cuando corre
+        build() los joints de ENV todavia no existen y las NURBS se
+        skinearian a los joints del rig.
+
+        build_module llama solo a este metodo en el paso 80 (_core_post),
+        porque recorre los modulos construidos y ejecuta el post_build de
+        quien lo tenga.
+        """
+        return self.build_proximity_wrap()
 
     def build(self):
         group_name = f"C_{self.rig_name}_mouth_GRP"
@@ -1321,9 +1556,7 @@ class SimpleMouthModule(object):
         # 4. Repartir todo lo que quedo suelto en el mundo.
         self.organize(group_name)
 
-        # 5. El proximity wrap. Va al final: necesita los joints ya creados y
-        #    constrenidos, porque la NURBS driver se skinea a ellos.
-        self.build_proximity_wrap()
+        # El proximity wrap NO se monta aqui: ver post_build().
 
         # Si el jaw ya existe, se engancha ahora. Si no, lo hara build_module
         # cuando construya la mandibula.

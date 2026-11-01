@@ -62,30 +62,60 @@ class SoftIkModule(object):
             if cmds.objExists(node):
                 cmds.delete(node)
 
+    #: Constraints que mueven un ikHandle y que el soft tiene que sustituir.
+    POSITION_CONSTRAINTS = ("pointConstraint", "parentConstraint", "orientConstraint")
+
     def _clear_handle_position_constraints(self, ik_hdl):
         """
         Quita cualquier point/parent/orientConstraint que este moviendo el
         ikHandle, para que el soft sea el unico que manda sobre su posicion.
 
-        IMPORTANTE: el poleVectorConstraint tambien cuelga del handle, pero
-        alimenta .poleVector, no .translate. Filtrando por las conexiones de
-        translate/rotate nos lo saltamos y no se rompe el pole vector.
-        """
-        victims = set()
-        for plug in ("translate", "rotate"):
-            cons = cmds.listConnections(f"{ik_hdl}.{plug}",
-                                        source=True, destination=False,
-                                        type="constraint") or []
-            for con in cons:
-                if cmds.objectType(con) in ("pointConstraint",
-                                            "parentConstraint",
-                                            "orientConstraint"):
-                    victims.add(con)
+        SE PREGUNTA POR EL NODO ENTERO, no por "ik_hdl.translate".
+        -----------------------------------------------------------
+        Aqui estaba el fallo que rompia el caballo y no el biped. Un
+        parentConstraint no se conecta al plug compuesto 'translate': se
+        conecta a translateX, translateY y translateZ por separado. Y
+        listConnections sobre un plug compuesto devuelve lo que entra en ESE
+        plug, no lo que entra en sus hijos, asi que la version anterior no
+        veia el constraint y lo dejaba vivo. Luego el pointConstraint del
+        soft se encontraba el canal ocupado y Maya cortaba con "Object is
+        already connected".
 
-        for con in victims:
+        Al biped no le pasaba porque a su handle no le llega ningun
+        constraint cuando corre el post_build; a la pata del caballo si:
+        horse_leg_module la engancha al footBall_CTRL para el reverse hoof.
+
+        El poleVectorConstraint NO se toca: alimenta .poleVector, y filtrando
+        por tipo se queda fuera.
+        """
+        incoming = cmds.listConnections(ik_hdl, source=True, destination=False,
+                                        type="constraint") or []
+
+        victims = {node for node in set(incoming)
+                   if cmds.objectType(node) in self.POSITION_CONSTRAINTS}
+
+        for node in victims:
             cmds.warning(f"[{self.prefix}] Eliminando constraint previo sobre "
-                         f"{ik_hdl}: {con}")
-            cmds.delete(con)
+                         f"{ik_hdl}: {node}")
+            cmds.delete(node)
+
+        # Por si quedara una conexion directa (sin constraint) en algun canal
+        for axis in ("X", "Y", "Z"):
+            plug = f"{ik_hdl}.translate{axis}"
+            for source in cmds.listConnections(plug, source=True, destination=False,
+                                               plugs=True) or []:
+                cmds.warning(f"[{self.prefix}] Desconectando {source} -> {plug}")
+                cmds.disconnectAttr(source, plug)
+
+        return victims
+
+    @staticmethod
+    def _distance_between(node_a, node_b):
+        """Distancia en el mundo entre dos nodos, en la pose actual."""
+        a = cmds.xform(node_a, q=True, ws=True, t=True)
+        b = cmds.xform(node_b, q=True, ws=True, t=True)
+
+        return math.sqrt(sum((b[i] - a[i]) ** 2 for i in range(3)))
 
     def _pick_up_vector(self, from_node, to_node):
         """
@@ -115,7 +145,8 @@ class SoftIkModule(object):
     # ------------------------------------------------------------------
 
     def apply_soft_ik(self, ik_ctrl, ik_handle, mid_jnt, root_ctrl, low_jnt, global_ctrl, ik_hdl, root_jnt,
-                      goal_ctrl=None, soft_max_distance_override=None):
+                      goal_ctrl=None, soft_max_distance_override=None,
+                      chain_joints=None, min_soft_ratio=0.0):
         """
         Crea las conexiones de nodos para el Soft IK.
 
@@ -139,6 +170,18 @@ class SoftIkModule(object):
                 pasa un valor mayor que (fullLength - initialDistance) el soft
                 empezara a actuar YA en pose de reposo, asi que se recorta y
                 se avisa.
+            chain_joints (list): LA CADENA IK ENTERA, de la raiz al efector.
+                Hace falta en cadenas de MAS DE DOS SEGMENTOS, como la pata
+                trasera del cuadrupedo (maluc > babilla > garro > menudillo).
+                Sin esto la longitud se calcula con mid_jnt y low_jnt, o sea
+                solo dos segmentos, y en una pata de tres se deja uno entero
+                fuera: la extremidad "mide" mucho menos de lo que mide y el
+                soft nunca se dispara donde toca.
+            min_soft_ratio (float): Recorrido MINIMO del soft, como fraccion
+                de la longitud total. Para extremidades casi rectas en reposo
+                (la pata de un caballo lo es, un brazo humano no), donde
+                fullLength - initialDistance sale practicamente cero y el soft
+                se queda sin margen. Ver la nota larga mas abajo.
         """
         # Por defecto el objetivo es el propio control IK (caso brazo).
         goal_ctrl = goal_ctrl or ik_ctrl
@@ -214,9 +257,42 @@ class SoftIkModule(object):
         cmds.setAttr(f"{upperLenghtMult_node}.operation", 2)  # Multiply
         cmds.setAttr(f"{lowerLenghtMult_node}.operation", 2)  # Multiply
 
-        # 2. Leer el translateX de cada joint IK y "pegarlo" como valor fijo en Float A
-        low_tx = abs(cmds.getAttr(f"{low_jnt}.translateX"))
-        mid_tx = abs(cmds.getAttr(f"{mid_jnt}.translateX"))
+        # 2. LA LONGITUD DE CADA HUESO, MEDIDA EN EL MUNDO
+        #
+        # Antes esto leia el translateX de cada joint, dando por hecho que la
+        # cadena esta orientada con la X a lo largo del hueso. En el biped lo
+        # esta, porque sus joints se orientan con orientJoint. En el caballo
+        # NO: horse_leg_module copia la orientacion de la GUIA con un
+        # matchTransform, asi que la X apunta donde apunte la guia y la
+        # longitud del hueso puede estar en la Y o en la Z.
+        #
+        # Resultado en el caballo: translateX = 0, fullLength = 0, y de ahi
+        # para abajo toda la red con divisiones por cero. El condition sacaba
+        # 0, el softTransform se quedaba clavado en la raiz y el ikHandle se
+        # iba al hombro: la pata doblada sobre si misma.
+        #
+        # Midiendo la distancia real entre joints consecutivos da igual como
+        # esten orientados. En una cadena bien orientada el numero es el
+        # mismo que el translateX, asi que el biped no nota el cambio.
+        if chain_joints and len(chain_joints) > 1:
+            joints = list(chain_joints)
+        else:
+            joints = [root_jnt, mid_jnt, low_jnt]
+
+        segments = [self._distance_between(a, b)
+                    for a, b in zip(joints[:-1], joints[1:])]
+
+        # "upper" se lleva todos los tramos menos el ultimo y "lower" el
+        # ultimo. Con dos segmentos es exactamente el reparto de siempre.
+        mid_tx = sum(segments[:-1])
+        low_tx = segments[-1]
+
+        print(f"[{self.prefix}] Huesos: {[round(v, 3) for v in segments]} "
+              f"-> longitud {sum(segments):.3f}")
+
+        if sum(segments) < 1e-4:
+            cmds.error(f"[{self.prefix}] La cadena mide 0: no puedo montar el "
+                       f"soft sin reventar la pata. Joints medidos: {joints}")
 
         cmds.setAttr(f"{upperLenghtMult_node}.floatA", mid_tx)
         cmds.setAttr(f"{lowerLenghtMult_node}.floatA", low_tx)
@@ -285,6 +361,15 @@ class SoftIkModule(object):
         # Ese es el pop.
         full_length_value = cmds.getAttr(f"{fullLenght_node}.outFloat")
         initial_distance_value = cmds.getAttr(f"{distanceToControlNormalized_node}.outFloat")
+
+        # Red de seguridad: si por lo que sea la longitud sale cero, toda la
+        # red de abajo divide por cero, el condition saca 0 y el handle se
+        # clava en la raiz de la cadena. Mejor parar aqui que dejar la pata
+        # doblada sobre si misma sin decir por que.
+        if full_length_value < 1e-4:
+            cmds.error(f"[{self.prefix}] fullLength = {full_length_value}. "
+                       f"Revisa los multiplicadores upperLengthMult y "
+                       f"lowerLengthMult de {ik_ctrl}.")
         safe_max_distance = max(0.0, full_length_value - initial_distance_value)
 
         soft_max_distance = safe_max_distance
@@ -296,14 +381,36 @@ class SoftIkModule(object):
                              "de reposo. Se recorta.")
                 soft_max_distance = safe_max_distance
 
-        # Si la extremidad se ha construido practicamente recta, el margen es
-        # cero y el soft no tiene recorrido. Eso es CORRECTO: la solucion esta
-        # en flexionar mas las guias, no en inventarse margen aqui.
-        if soft_max_distance < full_length_value * 0.01:
+        # EXTREMIDADES RECTAS EN REPOSO
+        # ------------------------------
+        # softMaxDistance es el margen entre la pose de reposo y la extension
+        # total. En un brazo o una pierna de biped, con su codo y su rodilla
+        # flexionados, ese margen es de sobra. En la pata de un caballo NO: es
+        # practicamente una columna recta, asi que el margen sale casi cero y
+        # el soft no tiene por donde actuar. Es el caso de "le doy al Soft y
+        # no pasa nada".
+        #
+        # Con min_soft_ratio se le da recorrido a la fuerza. EL PRECIO hay que
+        # saberlo: el soft empieza a suavizar ANTES de la distancia de reposo,
+        # asi que con Soft > 0 y la pata quieta, esta se recoge un pelin. Es
+        # inevitable, no es un bug: suavizar la llegada al estiramiento total
+        # significa empezar a frenar antes de llegar, y si en reposo ya estas
+        # casi en el tope, ese "antes" cae dentro de la pose de reposo.
+        #
+        # Por eso va a 0 por defecto: el biped no lo necesita y no se entera.
+        minimum = full_length_value * float(min_soft_ratio or 0.0)
+        if minimum > soft_max_distance:
+            cmds.warning(f"[{self.prefix}] La extremidad esta casi recta en reposo "
+                         f"(margen real {soft_max_distance:.4f} sobre {full_length_value:.4f}). "
+                         f"Se le fuerza un recorrido de {minimum:.4f} para que el soft haga "
+                         f"algo; a cambio, con Soft > 0 la pata se recoge un poco en reposo.")
+            soft_max_distance = minimum
+
+        elif soft_max_distance < full_length_value * 0.01:
             cmds.warning(f"[{self.prefix}] softMaxDistance = {soft_max_distance:.4f} sobre una "
                          f"longitud de {full_length_value:.4f}. La extremidad esta casi recta en "
                          "pose de reposo, asi que el soft tendra recorrido nulo o casi nulo. "
-                         "Revisa la flexion de las guias (codo / rodilla).")
+                         "Flexiona mas las guias, o pasa min_soft_ratio.")
 
         softMaxDistance_node = self._create_node("floatConstant", "softMaxDistance", "FLC")
         cmds.setAttr(f"{softMaxDistance_node}.inFloat", soft_max_distance)
@@ -441,7 +548,14 @@ class SoftIkModule(object):
         # ik_ctrl (lo monta el limbs_module). Si no, el joint final se queda
         # con la orientacion congelada del momento del build.
         self._clear_handle_position_constraints(ik_hdl)
-        cmds.pointConstraint(softTransform_node, ik_hdl, mo=False)
+
+        try:
+            cmds.pointConstraint(softTransform_node, ik_hdl, mo=False)
+        except RuntimeError as error:
+            driving = cmds.listConnections(ik_hdl, source=True, destination=False) or []
+            cmds.error(f"[{self.prefix}] No puedo constrenir {ik_hdl} al soft "
+                       f"({error}). Algo le sigue moviendo el translate: "
+                       f"{sorted(set(driving))}")
 
         # Tolerancia del solver muy baja para que el soft no tiemble
         if cmds.objExists("ikRPsolver"):
@@ -475,16 +589,25 @@ class SoftIkModule(object):
         distanceToControl. En cuanto empiece a bajar, el soft esta actuando en
         reposo y ahi tienes el pop.
         """
-        cond = f"{self.prefix}_softCondition_COND"
-        dist = f"{self.prefix}_distanceToControlNormalized_FLM"
-        soft_dist = f"{self.prefix}_softDistance_FLM"
-        full = f"{self.prefix}_FullLength_FLM"
+        # Los nombres no se escriben a mano: NodeCreator les pone su propio
+        # prefijo y no tiene por que coincidir con self.prefix. Se buscan por
+        # patron, que es lo que no se rompe si cambia la convencion.
+        def find(tag):
+            found = cmds.ls(f"*{self.prefix}*{tag}*") or []
+            return found[0] if found else None
 
-        for node in (cond, dist, soft_dist, full):
-            if not cmds.objExists(node):
-                cmds.warning(f"[{self.prefix}] No encuentro {node}. "
-                             "Revisa los nombres que genera tu NodeCreator.")
-                return
+        cond = find("softCondition")
+        dist = find("distanceToControlNormalized")
+        soft_dist = find("softDistance")
+        full = find("FullLength")
+
+        if not all((cond, dist, soft_dist, full)):
+            cmds.warning(f"[{self.prefix}] No encuentro la red del soft "
+                         f"(condition={cond}, distance={dist}, "
+                         f"softDistance={soft_dist}, fullLength={full}). "
+                         f"Comprueba que el soft se ha construido para esta "
+                         f"extremidad.")
+            return
 
         original = cmds.getAttr(f"{ik_ctrl}.Soft")
         distance = cmds.getAttr(f"{dist}.outFloat")

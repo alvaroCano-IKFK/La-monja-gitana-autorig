@@ -77,6 +77,18 @@ class BuildRig(object):
     #: Admite varias si la cara esta partida en trozos.
     MOUTH_WRAP_TARGETS = ("RetopoCavall_V019_body_GEO",)
 
+    #: INTERRUPTOR DEL SOFT IK EN LAS PATAS DEL CABALLO.
+    #:
+    #: A False no se monta y el ikHandle se queda con el constraint del
+    #: reverse hoof, que es como funcionaba la pata antes de meter el soft.
+    #: El del biped no se toca: va por su propio post_build.
+    HORSE_SOFT_IK = True
+
+    #: Recorrido minimo del soft IK en las patas del caballo, como fraccion de
+    #: la longitud de la pata. Subelo si la llegada sigue siendo seca; bajalo
+    #: si con Soft > 0 la pata se recoge demasiado estando quieta.
+    HORSE_SOFT_RATIO = 0.05
+
     # ------------------------------------------------------------------
     # PASOS FIJOS DEL RIG
     #
@@ -706,6 +718,11 @@ class BuildRig(object):
         side = entry["side"]
         prefix = f"{side}_{leg.rig_name}"
 
+        if not self.HORSE_SOFT_IK:
+            print(f"[{prefix}] Soft IK desactivado (BuildRig.HORSE_SOFT_IK). "
+                  f"El ikHandle se queda con el constraint del reverse hoof.")
+            return None
+
         ik_chain = getattr(leg, "ik_chain", None)
         if not ik_chain:
             cmds.warning(f"[{prefix}] Sin cadena IK: no se monta el soft.")
@@ -715,10 +732,11 @@ class BuildRig(object):
         # trasera, que tiene un hueso mas.
         ankle_index = getattr(leg, "i_ankle", 2)
 
-        if ankle_index > 2:
-            cmds.warning(f"[{prefix}] Pata de tres huesos: el soft mide la "
-                         f"cadena con dos segmentos, asi que la distancia "
-                         f"maxima se queda corta. Revisalo al animar.")
+        # La cadena ENTERA de la raiz al menudillo. Antes solo se le pasaban
+        # dos joints (mid y low) y en la pata trasera eso dejaba fuera el
+        # tramo babilla > garro: la pata "medi" mucho menos de lo que mide y
+        # el soft no se disparaba donde tocaba.
+        chain_joints = ik_chain[:ankle_index + 1]
 
         goal_ctrl = f"{prefix}_footBall_CTRL"
 
@@ -736,6 +754,13 @@ class BuildRig(object):
             # Quien manda sobre el ik handle es la cadena del reverse foot, no
             # el ik_ctrl: el goal es el control de la bola.
             goal_ctrl=goal_ctrl if cmds.objExists(goal_ctrl) else None,
+            chain_joints=chain_joints,
+            # La pata de un caballo es casi una columna recta, asi que el
+            # margen natural entre reposo y extension total es casi cero y el
+            # soft se queda sin recorrido. Se le fuerza un 5% de la longitud.
+            # El biped no lo necesita: su codo y su rodilla ya vienen
+            # flexionados y ahi este parametro va a 0.
+            min_soft_ratio=self.HORSE_SOFT_RATIO,
         )
 
         return leg.soft_result

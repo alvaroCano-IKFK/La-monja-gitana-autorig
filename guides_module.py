@@ -464,7 +464,8 @@ class BocaGuides(object):
     def __init__(self, lips_NRB, lip_mid, lip_end,
                  lip_in01="L_lip_in01", lip_in02="L_lip_in02",
                  make_surface=True, offset=(0, 0, 0),
-                 wrap_NRB="mouth_wrap_NRB", make_wrap_surface=True):
+                 wrap_NRB=("mouth_wrapUpper_NRB", "mouth_wrapLower_NRB"),
+                 make_wrap_surface=True):
         #Desplacament de tot el bloc (el cap del caball no es al mateix lloc
         #que el del biped). Veure CharacterGuides.FACIAL_OFFSET.
         self.offset = offset
@@ -492,7 +493,14 @@ class BocaGuides(object):
         # cubriendo todo lo que se tenga que deformar al relinchar. Cuanto
         # mejor siga la superficie de la malla, menos tendras que pelearte
         # luego con el falloff del wrap.
-        self.wrap_surface = wrap_NRB
+        # DOS superficies, una por labio: al rebufar, el labio de arriba y
+        # el de abajo hacen cosas distintas, y una sola NURBS no puede
+        # deformarse de dos maneras a la vez. Es una lista a proposito, no
+        # dos variables: si manana hacen falta las aletas, se anade un
+        # nombre y el resto del sistema no se entera.
+        if isinstance(wrap_NRB, str):
+            wrap_NRB = (wrap_NRB,)
+        self.wrap_surfaces = list(wrap_NRB)
         self.make_wrap_surface = make_wrap_surface
 
         # True: lip_in01 / lip_in02 cuelgan de lip_end, para que el mirror las
@@ -538,26 +546,28 @@ class BocaGuides(object):
     WRAP_SPANS_U = 6
     WRAP_SPANS_V = 4
 
-    def _create_wrap_surface(self):
+    def _create_wrap_surface(self, name, altura):
         """
-        La NURBS que conduce el proximityWrap de la cara.
+        Una de las NURBS que conducen el proximityWrap de la cara.
 
         Grado 3 en los dos sentidos: el driver de un proximityWrap se lee como
         superficie continua, asi que con grado 1 las aristas entre spans se
         notarian en la malla deformada.
 
         Sale como un plano vertical delante de la boca, con los laterales
-        echados hacia atras para que empiece a envolver el morro. A partir de
-        ahi se coloca a mano, como cualquier guia.
+        echados hacia atras para que empiece a envolver el morro. 'altura' la
+        separa del centro del labio: positiva para la de arriba, negativa
+        para la de abajo. A partir de ahi se colocan a mano, CV a CV, que es
+        de donde sale la calidad de la deformacion.
         """
-        surface = cmds.nurbsPlane(n=self.wrap_surface, ax=(0, 1, 0),
+        surface = cmds.nurbsPlane(n=name, ax=(0, 1, 0),
                                   w=self.WRAP_WIDTH, lr=self.WRAP_LENGTH_RATIO,
                                   d=3, u=self.WRAP_SPANS_U, v=self.WRAP_SPANS_V,
                                   ch=False)[0]
 
         position = self.moved(self.MID_POSITION)
         cmds.setAttr(f"{surface}.translateX", position[0])
-        cmds.setAttr(f"{surface}.translateY", position[1])
+        cmds.setAttr(f"{surface}.translateY", position[1] + altura)
         cmds.setAttr(f"{surface}.translateZ", position[2])
         cmds.setAttr(f"{surface}.rotateX", 90)
 
@@ -574,6 +584,18 @@ class BocaGuides(object):
         cmds.select(clear=True)
 
         return surface
+
+    def _create_wrap_surfaces(self):
+        """Una NURBS por labio, separadas en Y para no nacer encimadas."""
+        separacion = self.WRAP_WIDTH * self.WRAP_LENGTH_RATIO * 0.5
+        alturas = {0: separacion, 1: -separacion}
+
+        creadas = []
+        for indice, name in enumerate(self.wrap_surfaces):
+            altura = alturas.get(indice, 0.0)
+            creadas.append(self._create_wrap_surface(name, altura))
+
+        return creadas
 
     def create_boca(self):
         surface = None
@@ -627,10 +649,11 @@ class BocaGuides(object):
         if surface:
             members.insert(0, surface)
 
-        # La del wrap va en el mismo grupo: asi la exporta e importa
+        # Las del wrap van en el mismo grupo: asi las exporta e importa
         # guides_io_module con todo lo demas, sin tocar nada mas.
         if self.make_wrap_surface:
-            members.insert(0, self._create_wrap_surface())
+            for surface in self._create_wrap_surfaces():
+                members.insert(0, surface)
 
         self.guides_group = cmds.group(members, n="boca_guides_GRP")
 

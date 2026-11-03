@@ -11,16 +11,28 @@ este fichero.
 Se guarda por cada nodo:
     - su ruta relativa dentro de guides_GRP (para reconstruir la jerarquia)
     - el tipo (joint, transform, nurbsSurface, nurbsCurve, locator)
-    - transform completo: rotateOrder, translate, rotate, scale, rotateAxis
+    - transform completo: rotateOrder, translate, rotate, scale, rotateAxis,
+      shear, pivotes (rotatePivot / scalePivot y sus translate),
+      inheritsTransform y offsetParentMatrix
+    - la worldMatrix, que es la posicion REAL en la escena
     - lo especifico de joints: jointOrient, preferredAngle, radius, ssc, side...
     - lo especifico de shapes: CVs en espacio objeto + topologia
     - atributos custom (user defined) que hayas podido aniadir a mano
+
+Ademas se guarda la cadena de padres que hay POR ENCIMA de la raiz. Si
+guides_GRP cuelga de un grupo que lleva la traslacion, los valores locales de
+guides_GRP son cero y por si solos no dicen donde estan las guias de verdad.
+Guardando esos padres, el import puede reengancharse al que ya exista en la
+escena o reconstruirlo, y las guias caen exactamente donde estaban.
 
 Uso:
     import guides_io_module
     guides_io_module.export_guides()          # abre file dialog
     guides_io_module.export_guides("C:/x.json")
     guides_io_module.import_guides()          # abre file dialog
+
+    # sin recrear los padres, dejando la raiz en el mundo pero en su sitio:
+    guides_io_module.import_guides(parent_mode="bake")
 """
 
 import os
@@ -30,7 +42,7 @@ import datetime
 import maya.cmds as cmds
 
 
-FILE_VERSION = 1
+FILE_VERSION = 2
 GUIDES_ROOT = "guides_GRP"
 
 # Atributos de transform que se guardan para todos los nodos.
@@ -42,6 +54,33 @@ TRANSFORM_ATTRS = [
     "rotateAxisX", "rotateAxisY", "rotateAxisZ",
     "visibility",
 ]
+
+# Pivotes y shear. No salen en el channel box por defecto, pero forman parte
+# del transform igual que el resto: si no se guardan, un grupo con el pivote
+# movido se importa con el pivote en el origen.
+#
+# Se ponen con setAttr y no con xform: xform -piv compensa automaticamente
+# moviendo rotatePivotTranslate, y como aqui se guardan los dos valores por
+# separado, esa compensacion duplicaria el desplazamiento.
+PIVOT_ATTRS = [
+    "rotatePivotX", "rotatePivotY", "rotatePivotZ",
+    "scalePivotX", "scalePivotY", "scalePivotZ",
+    "rotatePivotTranslateX", "rotatePivotTranslateY", "rotatePivotTranslateZ",
+    "scalePivotTranslateX", "scalePivotTranslateY", "scalePivotTranslateZ",
+    "shearXY", "shearXZ", "shearYZ",
+]
+
+IDENTITY_MATRIX = [
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+]
+
+# Cuanto puede desviarse la worldMatrix importada de la exportada antes de
+# avisar. En unidades de Maya: 1e-4 es medio orden de magnitud por debajo de
+# lo que se ve en el viewport.
+MATRIX_TOLERANCE = 1e-4
 
 # Atributos que solo tienen sentido en joints.
 JOINT_ATTRS = [
@@ -101,6 +140,43 @@ def _first_shape(node):
     shapes = cmds.listRelatives(node, s=True, ni=True, f=True) or []
 
     return shapes[0] if shapes else None
+
+
+def _flat_matrix(values):
+    """
+    getAttr de una matriz devuelve [[16 floats]] o [16 floats] segun el caso.
+    Aqui siempre se quiere la lista plana de 16.
+    """
+    if not values:
+        return None
+
+    if isinstance(values[0], (list, tuple)):
+        values = values[0]
+
+    return [float(v) for v in values]
+
+
+def _is_identity(matrix, tolerance=1e-9):
+    if not matrix:
+        return True
+
+    return all(abs(a - b) <= tolerance
+               for a, b in zip(matrix, IDENTITY_MATRIX))
+
+
+def _matrix_delta(matrix_a, matrix_b):
+    """Maxima diferencia componente a componente entre dos matrices."""
+    if not matrix_a or not matrix_b:
+        return 0.0
+
+    return max(abs(a - b) for a, b in zip(matrix_a, matrix_b))
+
+
+def _world_matrix(node):
+    try:
+        return _flat_matrix(cmds.getAttr(node + ".worldMatrix[0]"))
+    except Exception:
+        return None
 
 
 def _safe_set(attr, value):
@@ -306,10 +382,28 @@ def _export_node(node, relative_path, relative_parent):
         "attrs": {},
     }
 
-    for attr_name in TRANSFORM_ATTRS:
+    for attr_name in TRANSFORM_ATTRS + PIVOT_ATTRS:
         full_attr = "{0}.{1}".format(node, attr_name)
         if cmds.objExists(full_attr):
             entry["attrs"][attr_name] = cmds.getAttr(full_attr)
+
+    # inheritsTransform a 0 es la forma tipica de que un grupo ignore a su
+    # padre. Si no se guarda, el nodo importado vuelve a heredar y se mueve.
+    if cmds.objExists(node + ".inheritsTransform"):
+        entry["inheritsTransform"] = cmds.getAttr(node + ".inheritsTransform")
+
+    # El offsetParentMatrix mueve el nodo sin tocar el channel box: un grupo
+    # puede estar a cero en translate y aun asi no estar en el origen. Solo se
+    # guarda si no es la identidad, para no engordar el JSON.
+    if cmds.objExists(node + ".offsetParentMatrix"):
+        offset_matrix = _flat_matrix(cmds.getAttr(node + ".offsetParentMatrix"))
+        if not _is_identity(offset_matrix):
+            entry["offsetParentMatrix"] = offset_matrix
+
+    # La posicion real en la escena. Los valores locales de arriba describen el
+    # nodo respecto de su padre; esta describe donde esta de verdad, y es la
+    # que permite comprobar despues del import que todo ha caido en su sitio.
+    entry["worldMatrix"] = _world_matrix(node)
 
     if kind == "joint":
         for attr_name in JOINT_ATTRS:
@@ -335,6 +429,40 @@ def _export_node(node, relative_path, relative_parent):
         entry["userAttrs"] = user_attrs
 
     return entry
+
+
+def _export_ancestors(root_long):
+    """
+    Los nodos que hay POR ENCIMA de la raiz, del mas exterior al mas cercano.
+
+    Esto es lo que arregla el caso de "guides_GRP no tiene valores pero las
+    guias no estan en el origen": la traslacion la lleva un grupo de encima.
+    Exportando solo la raiz, esa traslacion se pierde y al importar todo cae
+    en el origen (o, si en la escena destino queda el grupo padre, parece que
+    el grupo importado tenga un offset que no deberia).
+
+    No se guardan shapes ni atributos custom de los padres: solo lo que hace
+    falta para recolocarlos (tipo, transform, pivotes y worldMatrix).
+    """
+    ancestors = []
+
+    parents = cmds.listRelatives(root_long, p=True, f=True)
+
+    while parents:
+        node = parents[0]
+
+        entry = _export_node(node, _short_name(node), None)
+        entry.pop("shape", None)
+        entry.pop("userAttrs", None)
+        ancestors.append(entry)
+
+        parents = cmds.listRelatives(node, p=True, f=True)
+
+    # Del mas exterior al mas cercano a la raiz, que es el orden en que hay
+    # que recrearlos al importar.
+    ancestors.reverse()
+
+    return ancestors
 
 
 def _serialize_recipe(recipe):
@@ -438,12 +566,17 @@ def export_guides(filepath=None, root=GUIDES_ROOT, recipe=None):
         if not filepath:
             return None
 
+    ancestors = _export_ancestors(root_long)
+
     data = {
         "fileVersion": FILE_VERSION,
         "root": _short_name(root_long),
         "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "mayaVersion": cmds.about(q=True, version=True),
         "scene": cmds.file(q=True, sn=True),
+        "linearUnit": cmds.currentUnit(q=True, linear=True),
+        "angularUnit": cmds.currentUnit(q=True, angle=True),
+        "ancestors": ancestors,
         "nodes": nodes_data,
     }
 
@@ -464,6 +597,12 @@ def export_guides(filepath=None, root=GUIDES_ROOT, recipe=None):
     else:
         print("Guias exportadas ({0} nodos, sin receta de modulos): {1}".format(
             len(nodes_data), filepath))
+
+    if ancestors:
+        print("  '{0}' cuelga de: {1}. Se guarda la cadena entera para poder "
+              "devolverlo a su sitio.".format(
+                  data["root"],
+                  " > ".join(a["name"] for a in ancestors)))
 
     return filepath
 
@@ -683,13 +822,28 @@ def _apply_transform(node, entry):
     """
     _safe_set(node + ".rotateOrder", entry.get("rotateOrder", 0))
 
+    if "inheritsTransform" in entry:
+        _safe_set(node + ".inheritsTransform", entry["inheritsTransform"])
+
+    # Antes de las traslaciones: el offsetParentMatrix es un desplazamiento
+    # extra por debajo del channel box, y si se queda a identidad el nodo
+    # aparece movido aunque los valores locales sean los correctos.
+    offset_matrix = entry.get("offsetParentMatrix")
+    if offset_matrix and cmds.objExists(node + ".offsetParentMatrix"):
+        try:
+            cmds.setAttr(node + ".offsetParentMatrix", *offset_matrix,
+                         type="matrix")
+        except Exception as error:
+            cmds.warning("No he podido poner el offsetParentMatrix de "
+                         "{0}: {1}".format(node, error))
+
     attrs = entry.get("attrs", {})
 
     ordered_first = [
         "jointOrientX", "jointOrientY", "jointOrientZ",
         "rotateAxisX", "rotateAxisY", "rotateAxisZ",
         "segmentScaleCompensate",
-    ]
+    ] + PIVOT_ATTRS
 
     for attr_name in ordered_first:
         if attr_name in attrs:
@@ -707,8 +861,160 @@ def _apply_transform(node, entry):
             pass
 
 
+def _resolve_long_name(node, parent_long=None):
+    """
+    Ruta larga del nodo recien creado.
+
+    Hace falta porque en el DAG los nombres solo son unicos entre hermanos: si
+    la escena ya tiene otro 'L_eye_mid' en otra rama, cmds.ls devuelve los dos
+    y quedarse con el primero puede escribir los valores en el nodo que no es.
+    Sabiendo el padre, se coge el que cuelga de el.
+    """
+    found = cmds.ls(node, l=True) or []
+
+    if not found:
+        return None
+
+    if len(found) == 1:
+        return found[0]
+
+    if parent_long:
+        for candidate in found:
+            if candidate.startswith(parent_long + "|"):
+                return candidate
+
+    return found[0]
+
+
+def _rebuild_ancestors(ancestors):
+    """
+    Deja montada la cadena de padres y devuelve el nodo del que tiene que
+    colgar la raiz.
+
+    Si un padre ya existe en la escena se reutiliza TAL CUAL: la escena manda
+    sobre el JSON, porque lo normal es importar las guias en un montaje que ya
+    tiene su grupo maestro y no se quiere pisar. Solo se crean los que falten.
+    """
+    if not ancestors:
+        return None
+
+    parent_long = None
+
+    for entry in ancestors:
+        name = entry["name"]
+        existing = cmds.ls(name, l=True, type="transform") or []
+
+        if existing:
+            node = existing[0]
+
+            if len(existing) > 1:
+                cmds.warning(
+                    "Hay {0} nodos llamados '{1}'. Uso '{2}'; si no es el que "
+                    "quieres, renombra el otro antes de importar.".format(
+                        len(existing), name, node))
+
+            # Reutilizar un padre que esta en otro sitio desplaza las guias. No
+            # se toca, pero se avisa, que es peor enterarse al construir.
+            stored_matrix = entry.get("worldMatrix")
+            current_matrix = _world_matrix(node)
+
+            if stored_matrix and current_matrix:
+                delta = _matrix_delta(stored_matrix, current_matrix)
+                if delta > MATRIX_TOLERANCE:
+                    cmds.warning(
+                        "El grupo '{0}' ya existe pero no esta donde estaba al "
+                        "exportar (diferencia de {1:.4f}). Las guias saldran "
+                        "desplazadas lo mismo.".format(name, delta))
+        else:
+            node_type = "joint" if entry.get("kind") == "joint" else "transform"
+
+            if parent_long:
+                node = cmds.createNode(node_type, n=name, p=parent_long)
+            else:
+                node = cmds.createNode(node_type, n=name)
+
+            node = _resolve_long_name(node, parent_long)
+            _apply_transform(node, entry)
+
+            print("  Recreado el grupo padre '{0}'.".format(name))
+
+        parent_long = node
+
+    return parent_long
+
+
+def _bake_root_world(node, entry):
+    """
+    Coloca la raiz en el mundo tal y como estaba, metiendo en sus propios
+    valores lo que antes ponia la cadena de padres.
+
+    Es el modo para cuando no quieres que el import te cree grupos: el
+    channel box no coincidira con el original, pero la posicion en el mundo si.
+    """
+    world_matrix = entry.get("worldMatrix")
+
+    if not world_matrix:
+        return
+
+    try:
+        cmds.xform(node, ws=True, m=world_matrix)
+    except Exception as error:
+        cmds.warning("No he podido colocar '{0}' en el mundo: {1}".format(
+            node, error))
+
+
+def _verify_world_positions(created, nodes_data):
+    """
+    Compara la worldMatrix de cada nodo importado con la que tenia al exportar.
+
+    Es barato y evita el fallo silencioso: si algo no ha caido donde tocaba,
+    sale por el script editor en vez de aparecer al construir el rig.
+    """
+    worst_node = None
+    worst_delta = 0.0
+    checked = 0
+    off = 0
+
+    for entry in nodes_data:
+        stored = entry.get("worldMatrix")
+        node = created.get(entry["path"])
+
+        if not stored or not node:
+            continue
+
+        current = _world_matrix(node)
+        if not current:
+            continue
+
+        checked += 1
+        delta = _matrix_delta(stored, current)
+
+        if delta > MATRIX_TOLERANCE:
+            off += 1
+
+        if delta > worst_delta:
+            worst_delta = delta
+            worst_node = entry["name"]
+
+    if not checked:
+        return True
+
+    if off:
+        cmds.warning(
+            "{0} de {1} nodos no estan donde estaban al exportar. El que mas "
+            "se desvia es '{2}' ({3:.4f} unidades).".format(
+                off, checked, worst_node, worst_delta))
+
+        return False
+
+    print("  Posiciones verificadas: los {0} nodos cuadran con el "
+          "export.".format(checked))
+
+    return True
+
+
 def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
-                  return_data=False):
+                  return_data=False, parent_mode="rebuild"):
     """
     Reconstruye las guias desde un JSON exportado con export_guides.
 
@@ -723,6 +1029,16 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
            funcion, asi que despues no sabe de que fichero sacar la receta.
            El valor por defecto se queda como estaba para no romper a quien ya
            llamaba a import_guides() esperando un string.
+    parent_mode: que hacer con los grupos que habia por encima de la raiz.
+           "rebuild" (por defecto): se reengancha a los que ya existan en la
+                   escena y crea los que falten. La jerarquia y el channel box
+                   quedan como en el original.
+           "bake":  no crea nada; mete en la propia raiz lo que ponian esos
+                   padres. La posicion en el mundo es la correcta, los valores
+                   del channel box no coinciden con el original.
+           "local": deja la raiz en el mundo con sus valores locales tal cual.
+                   Es el comportamiento viejo: si la traslacion la llevaba un
+                   padre, las guias caen en el origen.
 
     Devuelve el nombre del grupo raiz creado (o el diccionario si
     return_data=True), o None si se cancela o falla.
@@ -743,12 +1059,29 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
     with open(filepath, "r") as f:
         data = json.load(f)
 
-    if data.get("fileVersion") != FILE_VERSION:
+    file_version = data.get("fileVersion")
+
+    if file_version == 1:
+        print("Aviso: el archivo es de la version 1, de antes de que se "
+              "guardaran los pivotes y la cadena de padres. Se importa igual, "
+              "pero si la raiz colgaba de un grupo con traslacion caera en el "
+              "origen. Vuelve a exportarlo para arreglarlo.")
+    elif file_version != FILE_VERSION:
         cmds.warning(
             "El archivo es de la version {0} y este modulo lee la {1}. "
-            "Puede que algo no cuadre.".format(
-                data.get("fileVersion"), FILE_VERSION)
+            "Puede que algo no cuadre.".format(file_version, FILE_VERSION)
         )
+
+    # Las unidades no se convierten, pero si no coinciden todo saldra escalado
+    # y es mejor saberlo antes de buscar el fallo en otro sitio.
+    stored_unit = data.get("linearUnit")
+    current_unit = cmds.currentUnit(q=True, linear=True)
+
+    if stored_unit and stored_unit != current_unit:
+        cmds.warning(
+            "El archivo se exporto en '{0}' y la escena esta en '{1}'. Las "
+            "posiciones no se convierten: cambia las unidades de la escena "
+            "antes de importar.".format(stored_unit, current_unit))
 
     file_root = data.get("root", root)
 
@@ -788,13 +1121,28 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
             "build: {0}".format(", ".join(clashes[:10]))
         )
 
+    # Los grupos que habia por encima de la raiz. Sin esto, un guides_GRP que
+    # estaba a cero porque la traslacion la llevaba su padre se importa en el
+    # origen, que es justo el caso que rompia.
+    ancestors = data.get("ancestors") or []
+
+    if parent_mode == "rebuild":
+        root_parent = _rebuild_ancestors(ancestors)
+    else:
+        root_parent = None
+
     # Mapa ruta_del_json -> nodo real creado, para poder emparentar los hijos
     created = {}
 
     for entry in data.get("nodes", []):
         kind = entry.get("kind", "transform")
         parent_path = entry.get("parent")
-        parent_node = created.get(parent_path) if parent_path else None
+
+        if parent_path:
+            parent_node = created.get(parent_path)
+        else:
+            # La raiz: cuelga de la cadena recreada, si la hay
+            parent_node = root_parent
 
         if parent_path and parent_node is None:
             cmds.warning(
@@ -832,7 +1180,9 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
             else:
                 node = cmds.createNode("transform", n=entry["name"])
 
-        node = _long_name(node)
+        # Con el padre delante, por si la escena ya tiene otro nodo con este
+        # mismo nombre corto en otra rama.
+        node = _resolve_long_name(node, parent_node)
 
         # --- transform y atributos ---
         _apply_transform(node, entry)
@@ -841,9 +1191,23 @@ def import_guides(filepath=None, force=False, root=GUIDES_ROOT,
         # Los CVs de las superficies ya van puestos en la creacion
         # (_create_nurbs_surface), asi que aqui no se tocan.
 
+        # La raiz en modo "bake": se le mete encima lo que ponian los padres
+        # que no se han recreado, para que acabe en su sitio del mundo.
+        if parent_path is None and parent_mode == "bake" and ancestors:
+            _bake_root_world(node, entry)
+
         created[entry["path"]] = node
 
     cmds.select(clear=True)
+
+    if parent_mode == "local" and ancestors:
+        cmds.warning(
+            "'{0}' colgaba de {1} y lo has importado en modo 'local': se "
+            "queda en el mundo con sus valores locales, asi que puede no "
+            "coincidir con donde estaba.".format(
+                file_root, " > ".join(a["name"] for a in ancestors)))
+
+    _verify_world_positions(created, data.get("nodes", []))
 
     recipe = _deserialize_recipe(data)
 

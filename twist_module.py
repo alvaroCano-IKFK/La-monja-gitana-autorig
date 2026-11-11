@@ -214,7 +214,25 @@ class TwistModule(object):
     def create_basic_curve(self, start_joint, mid_joint, end_joint,
                         aim_axis="x", up_axis="y",
                         front_axis_idx=None, up_axis_idx=None,
-                        source_curve=None, nonroll_ref=None):   # ← parámetros nuevos
+                        source_curve=None, nonroll_ref=None,
+                        twist_axis=None, inverse_front=False):
+        """
+        Args:
+            twist_axis (str): De que canal del joint de arranque se lee el
+                twist: "x", "y" o "z". None = se usa aim_axis, que es el eje
+                que apunta al siguiente joint, y girar SOBRE el es el twist.
+
+                En el biped el hueso va en X y esto sale "x", igual que
+                estaba escrito a mano antes. En el caballo los joints copian
+                la orientacion de las guias y el hueso va en Y: leyendo
+                rotateX se lee un balanceo lateral, no el twist, y los
+                motionPath reciben una cifra que no tiene nada que ver.
+
+            inverse_front (bool): Pone inverseFront en los motionPath. Hace
+                falta cuando el eje frontal apunta al reves del sentido en
+                que crece la curva. Medido en el caballo; el biped no lo
+                necesita.
+        """
         
         self.start_joint = start_joint
         self.mid_joint   = mid_joint
@@ -275,6 +293,16 @@ class TwistModule(object):
         if up_axis_idx is None:
             up_axis_idx = axis_map.get(up_axis.replace("neg","").lower(), 1)
 
+        # El canal del twist. Por defecto, el eje que apunta al siguiente
+        # joint: girar sobre el hueso ES el twist.
+        if twist_axis is None:
+            twist_axis = aim_axis
+        twist_axis = twist_axis.replace("neg", "").upper()
+        if twist_axis not in ("X", "Y", "Z"):
+            cmds.warning(f"[{self.side}_{self.name}] twist_axis '{twist_axis}' "
+                         f"no vale: uso X.")
+            twist_axis = "X"
+
         vector_map = {
                 "x": (1.0, 0.0, 0.0),
                 "y": (0.0, 1.0, 0.0),
@@ -304,9 +332,13 @@ class TwistModule(object):
                 target_list = self.lower_motion_paths
                 twist_start_joint = self.lower_twist_start
 
-            # upper: upper_twist_start es hijo del non roll -> su rotateX ya es el twist limpio
+            # upper: upper_twist_start es hijo del non roll, con rotate y
+            #        jointOrient a cero -> su rotacion ya es el twist limpio
             # lower: lower_twist_start es hijo del mid_joint -> igual
-            twist_source = f"{twist_start_joint}.rotateX"
+            #
+            # El CANAL depende de por donde vaya el hueso: X en el biped, Y
+            # en el caballo. Ver twist_axis en el docstring.
+            twist_source = f"{twist_start_joint}.rotate{twist_axis}"
 
             # Inversión matemática del valor de rotación frontTwist para comportamiento de espejo en R
             if self.side == "R":
@@ -353,9 +385,10 @@ class TwistModule(object):
                 # ==============================================================
                     
                                   
-                #if self.side == "R":
-                    #cmds.setAttr(f"{motion_path_node}.inverseUp", 1)
-                    #cmds.setAttr(f"{motion_path_node}.inverseFront", 1)
+                # El eje frontal al reves del sentido en que crece la
+                # curva: sin esto el segmento sale girado 180.
+                if inverse_front:
+                    cmds.setAttr(f"{motion_path_node}.inverseFront", 1)
 
                 u_value = 0.01 + ((i / 4.0) * 0.98)
                 cmds.setAttr(f"{motion_path_node}.uValue", u_value)
@@ -377,6 +410,10 @@ class TwistModule(object):
                     cmds.connectAttr(f"{md_node}.outputZ", f"{motion_path_node}.frontTwist")
 
                 
+        print(f"[TwistModule] {self.side}_{self.name}: twist en rotate"
+              f"{twist_axis}, frontAxis {front_axis_idx}, upAxis {up_axis_idx}"
+              f"{', inverseFront' if inverse_front else ''}.")
+
         self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
         self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
             

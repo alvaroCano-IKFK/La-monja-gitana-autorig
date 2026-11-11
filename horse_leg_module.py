@@ -1208,14 +1208,32 @@ class LegModule(object):
             parent=self,
             root_instance=self.root_instance
         )
+        # EIXOS DEL TWIST AL CAVALL.
+        #
+        # Al biped l os va en X i tot aixo val per defecte. Aqui NO: els
+        # joints copien l orientacio de les guies i l os va en Y. Dues
+        # consequencies, i les dues s han de dir aqui, no al twist_module,
+        # que el comparteix amb el biped:
+        #
+        #   front_axis_idx = 1   el motionPath ha d apuntar la Y al llarg de
+        #                        la corba, no la X.
+        #   twist_axis = "y"     el twist es el gir SOBRE l os. Llegint
+        #                        rotateX es llegeix un balanceig lateral:
+        #                        mesurat, amb la pota a 45 el rotateY feia
+        #                        44.97 i la X 0.61.
+        #
+        # inverse_front: l eix frontal apunta al reves del sentit en que
+        # creix la corba. Comprovat a l escena.
         leg_twist.create_basic_curve(
             segment_joints[0],
             segment_joints[1],
             segment_joints[2],
-            aim_axis      = "x",
+            aim_axis      = "y",
             up_axis       = "zneg",
-            front_axis_idx= 0,
+            front_axis_idx= 1,
             up_axis_idx   = 2,
+            twist_axis    = "y",
+            inverse_front = True,
             source_curve = leg_curvature.degree2_curve
 )
 

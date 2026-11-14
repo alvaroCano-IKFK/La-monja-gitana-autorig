@@ -97,6 +97,21 @@ class EyesModule(module_specs.FeaturesMixin):
     # distancia. Solo define hasta donde llega la rampa antes de clampear.
     LOOP_RADIUS_RANGE = 0.5
 
+    # Interruptor del remap de radio, en el control del ojo (el mismo host que
+    # los atributos de blink y fleshy).
+    #
+    #   0 = radio fijo. El AimEnd se queda a la distancia de reposo y solo gira
+    #       con el aimMatrix, asi que se mueve sobre la esfera del globo: el
+    #       parpado baja haciendo la forma del ojo (el slide).
+    #   1 = enganchado a la curva. El remap mete la distancia real al punto en
+    #       el translate y el joint cae exactamente sobre la curva.
+    #
+    # Float 0..1 y no bool: sirve igual de on/off y ademas se puede mezclar y
+    # animar. Por dentro es un blendColors por AimEnd entre el translate de
+    # reposo (color2) y la salida del remap (color1).
+    LOOP_STICK_ATTRIBUTE = ("stickToCurve", "Stick To Curve")
+    LOOP_STICK_DEFAULT = 0.0
+
     # Atenuadores de cada setup de fleshy. Van al input2 del multDoubleLinear
     # que alimenta al blender, asi que el atributo del control sigue yendo de 0 a
     # 1 pero lo que llega de verdad es solo esta fraccion. Las esquinas estan
@@ -352,6 +367,8 @@ class EyesModule(module_specs.FeaturesMixin):
         self.loop_aim_matrices = {"upper": [], "lower": []}
         self.loop_distances = {"upper": [], "lower": []}
         self.loop_remaps = {"upper": [], "lower": []}
+        self.loop_stick_blends = {"upper": [], "lower": []}
+        self.loop_stick_attribute = None
         self.loop_aim_group = None
 
         # Grupos del modulo
@@ -2331,7 +2348,7 @@ class EyesModule(module_specs.FeaturesMixin):
                 cmds.delete(group)
 
         leftovers = []
-        for tag in ("_PCI", "_AMX", "_NPC", "_DST", "_RMV"):
+        for tag in ("_PCI", "_AMX", "_NPC", "_DST", "_RMV", "_BLC"):
             leftovers.extend(cmds.ls(f"{self.prefix}_eyelid*Loop*{tag}") or [])
         if leftovers:
             cmds.delete(leftovers)
@@ -2345,6 +2362,7 @@ class EyesModule(module_specs.FeaturesMixin):
         self.loop_aim_matrices = {"upper": [], "lower": []}
         self.loop_distances = {"upper": [], "lower": []}
         self.loop_remaps = {"upper": [], "lower": []}
+        self.loop_stick_blends = {"upper": [], "lower": []}
 
         return marker_group, aim_group
 
@@ -2534,9 +2552,52 @@ class EyesModule(module_specs.FeaturesMixin):
         cmds.setAttr(f"{remap}.outputMin", rest_translate - output_margin)
         cmds.setAttr(f"{remap}.outputMax", rest_translate + output_margin)
 
-        cmds.connectAttr(f"{remap}.outValue", aim_channel)
+        # Interruptor del enganche (ver LOOP_STICK_ATTRIBUTE):
+        #
+        #     remap.outValue     -> BLC.color1R   (enganchado a la curva)
+        #     rest_translate        BLC.color2R   (radio fijo, valor estatico)
+        #     ctrl.stickToCurve  -> BLC.blender
+        #     BLC.outputR        -> aimEnd.translate<eje>
+        #
+        # A 0 es exactamente lo mismo que quitar la conexion a mano: el canal
+        # recibe el translate de reposo y el joint solo gira.
+        output_plug = f"{remap}.outValue"
+        blend = None
 
-        return distance, remap
+        if self.loop_stick_attribute:
+            blend = cmds.createNode("blendColors", n=f"{base_name}Stick_BLC")
+            cmds.connectAttr(self.loop_stick_attribute, f"{blend}.blender")
+            cmds.connectAttr(f"{remap}.outValue", f"{blend}.color1R")
+            # Los defaults de color2 no son cero: el R se escribe a mano.
+            cmds.setAttr(f"{blend}.color2R", rest_translate)
+            output_plug = f"{blend}.outputR"
+
+        cmds.connectAttr(output_plug, aim_channel)
+
+        return distance, remap, blend
+
+    def _add_loop_stick_attribute(self):
+        """
+        Anade al control del ojo el float que activa / desactiva el remap de
+        radio de los AimEnd. Idempotente: si ya existe de una build anterior no
+        se toca, asi se conserva el valor que tuviera.
+
+        Devuelve el plug del atributo, o None si no hay control.
+        """
+        ctrl = self._get_attribute_host()
+        if not ctrl or not cmds.objExists(ctrl):
+            cmds.warning("[EyesModule] No hay control donde poner el atributo "
+                         "de enganche a la curva: el remap queda siempre activo.")
+            return None
+
+        long_name, nice_name = self.LOOP_STICK_ATTRIBUTE
+
+        if not cmds.attributeQuery(long_name, node=ctrl, exists=True):
+            cmds.addAttr(ctrl, ln=long_name, nn=nice_name,
+                         at="float", min=0, max=1,
+                         dv=self.LOOP_STICK_DEFAULT, k=True)
+
+        return f"{ctrl}.{long_name}"
 
     def _build_loop_aim(self, joint, upper=True):
         """
@@ -2618,12 +2679,13 @@ class EyesModule(module_specs.FeaturesMixin):
         # Y el radio se conecta DESPUES del match, que es de donde salen los
         # valores de reposo con los que se calibra el remap.
         radius = self._connect_loop_radius(aim_joint, aim_end, point_info, base_name)
-        distance, remap = radius if radius else (None, None)
+        distance, remap, stick_blend = radius if radius else (None, None, None)
 
         if self.loop_aim_group and cmds.objExists(self.loop_aim_group):
             cmds.parent(locator, self.loop_aim_group)
 
-        return aim_joint, aim_end, locator, point_info, aim_matrix, distance, remap
+        return (aim_joint, aim_end, locator, point_info, aim_matrix,
+                distance, remap, stick_blend)
 
     def _build_loop_aims(self):
         """
@@ -2643,13 +2705,18 @@ class EyesModule(module_specs.FeaturesMixin):
 
         self.loop_aim_group = cmds.group(em=True, n=group_name)
 
+        # Una sola vez, antes del bucle: todos los AimEnd de los dos parpados
+        # cuelgan del mismo interruptor.
+        self.loop_stick_attribute = self._add_loop_stick_attribute()
+
         for key, upper in (("upper", True), ("lower", False)):
             for joint in self.loop_joints[key]:
                 built = self._build_loop_aim(joint, upper=upper)
                 if not built:
                     continue
 
-                aim_joint, aim_end, locator, point_info, aim_matrix, distance, remap = built
+                (aim_joint, aim_end, locator, point_info, aim_matrix,
+                 distance, remap, stick_blend) = built
 
                 self.loop_aim_joints[key].append(aim_joint)
                 self.loop_aim_ends[key].append(aim_end)
@@ -2658,6 +2725,7 @@ class EyesModule(module_specs.FeaturesMixin):
                 self.loop_aim_matrices[key].append(aim_matrix)
                 self.loop_distances[key].append(distance)
                 self.loop_remaps[key].append(remap)
+                self.loop_stick_blends[key].append(stick_blend)
 
         if self.rig_module_group and cmds.objExists(self.rig_module_group):
             cmds.parent(self.loop_aim_group, self.rig_module_group)

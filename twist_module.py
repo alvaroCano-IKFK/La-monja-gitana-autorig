@@ -215,18 +215,29 @@ class TwistModule(object):
                         aim_axis="x", up_axis="y",
                         front_axis_idx=None, up_axis_idx=None,
                         source_curve=None, nonroll_ref=None,
-                        twist_axis=None, inverse_front=False):
+                        twist_axis="x", inverse_front=False):
         """
         Args:
             twist_axis (str): De que canal del joint de arranque se lee el
-                twist: "x", "y" o "z". None = se usa aim_axis, que es el eje
-                que apunta al siguiente joint, y girar SOBRE el es el twist.
+                twist: "x", "y" o "z". Es el eje que apunta al siguiente
+                joint, porque girar SOBRE el hueso ES el twist.
 
-                En el biped el hueso va en X y esto sale "x", igual que
-                estaba escrito a mano antes. En el caballo los joints copian
-                la orientacion de las guias y el hueso va en Y: leyendo
-                rotateX se lee un balanceo lateral, no el twist, y los
-                motionPath reciben una cifra que no tiene nada que ver.
+                Por defecto "x", que es lo que estaba escrito a mano antes
+                de existir este parametro: quien no lo pase se comporta
+                EXACTAMENTE igual que siempre.
+
+                OJO: no se deduce de aim_axis, y es a proposito. aim_axis
+                solo se usa si no viene front_axis_idx, asi que hasta ahora
+                era un parametro MUERTO en toda llamada que si lo pasara, y
+                puede llevar cualquier valor heredado sin que importase.
+                Engancharle el canal del twist le daba efecto a un valor que
+                nadie habia revisado, y cambiaba el twist del biped sin que
+                su llamada se hubiera tocado.
+
+                En el caballo los joints copian la orientacion de las guias
+                y el hueso va en Y: leyendo rotateX se lee un balanceo
+                lateral, no el twist. Medido, con la pata a 45 grados el
+                rotateY daba 44.97 y el rotateX 0.61.
 
             inverse_front (bool): Pone inverseFront en los motionPath. Hace
                 falta cuando el eje frontal apunta al reves del sentido en
@@ -293,11 +304,8 @@ class TwistModule(object):
         if up_axis_idx is None:
             up_axis_idx = axis_map.get(up_axis.replace("neg","").lower(), 1)
 
-        # El canal del twist. Por defecto, el eje que apunta al siguiente
-        # joint: girar sobre el hueso ES el twist.
-        if twist_axis is None:
-            twist_axis = aim_axis
-        twist_axis = twist_axis.replace("neg", "").upper()
+        # El canal del twist. NO se deduce de aim_axis: ver el docstring.
+        twist_axis = (twist_axis or "x").replace("neg", "").upper()
         if twist_axis not in ("X", "Y", "Z"):
             cmds.warning(f"[{self.side}_{self.name}] twist_axis '{twist_axis}' "
                          f"no vale: uso X.")

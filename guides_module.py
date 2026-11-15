@@ -825,6 +825,55 @@ class SocketGuides(object):
 
 
 #########################################################################
+#CHEEKS
+#########################################################################
+
+class CheekGuides(object):
+    """
+    Guias de las mejillas: inner, mid y outer, por debajo del socket.
+
+    Como las del socket, son joints sueltos (select clear entre medias) para
+    que MIRROR las trate como raices independientes, y solo se crean en +X: el
+    lado R sale de MIRROR.
+
+    Cada guia da posicion Y orientacion a su joint y a su control. Colocalas
+    SOBRE la malla: el rivet pega el control al punto de la cara mas cercano a
+    la guia, y si la guia esta separada, el control y el joint no coinciden.
+    """
+
+    # Nombre -> (X, Y, Z) relativo al centro del ojo. La Y mas baja que la del
+    # socket 'low' (-0.9) y la Z echandose hacia atras de dentro afuera, que es
+    # como gira la mejilla.
+    OFFSETS = {
+        "inner": (-0.6, -1.3, 0.6),
+        "mid":   (0.3, -1.6, 0.3),
+        "outer": (1.2, -1.3, -0.4),
+    }
+
+    def __init__(self, prefix="L_cheek", center=(2, 26, 9)):
+        self.prefix = prefix
+        self.center = center
+        self.guides_group = None
+
+    def guide_name(self, key):
+        return f"{self.prefix}_{key}"
+
+    def cheek_guides(self):
+        created = []
+
+        for key, offset in self.OFFSETS.items():
+            position = tuple(self.center[i] + offset[i] for i in range(3))
+
+            cmds.select(clear=True)
+            created.append(cmds.joint(p=position, name=self.guide_name(key)))
+
+        self.guides_group = cmds.group(created, n=f"{self.prefix}_guides_GRP")
+        cmds.select(clear=True)
+
+        return self.guides_group
+
+
+#########################################################################
 #EYEBROWS
 #########################################################################
 
@@ -1576,6 +1625,7 @@ class CharacterGuides(object):
         "jaw":     "jaw_root",
         "eye":     "L_eye_mid",
         "socket":  "L_socket_up",
+        "cheek":   "L_cheek_inner",
         "eyebrow": "L_eyebrow_root_01",
         "skull":   "eyebrow_skull_NRB",
         "nose":    "nose_root",
@@ -1624,7 +1674,8 @@ class CharacterGuides(object):
             #Nomes els del biped: les guies del caball xoquen de nom amb les
             #del coll del biped, no poden conviure a la mateixa escena.
             return ["spine", "neck", "arm", "finger", "leg", "toes",
-                    "mouth", "jaw", "eye", "socket", "eyebrow", "skull", "nose"]
+                    "mouth", "jaw", "eye", "socket", "cheek", "eyebrow", "skull",
+                    "nose"]
 
         types = {entry["type"] for entry in recipe}
 
@@ -1677,6 +1728,9 @@ class CharacterGuides(object):
         # hereda nada del modulo del ojo, solo la posicion de referencia.
         if "socket" in types:
             blocks.append("socket")
+        #Les galtes tambe es col.loquen a partir del centre de l'ull.
+        if "cheek" in types:
+            blocks.append("cheek")
         if "eyebrow" in types:
             blocks += ["eyebrow", "skull"]
         if "nose" in types:
@@ -1825,6 +1879,12 @@ class CharacterGuides(object):
                 socket_instance = SocketGuides("L_socket", center=self.moved((2, 26, 9)))
                 socket_instance.socket_guides()
                 new_groups.append(socket_instance.guides_group)
+
+            elif block == "cheek":
+                #Crea les guies de les galtes, per sota del socket
+                cheek_instance = CheekGuides("L_cheek", center=self.moved((2, 26, 9)))
+                cheek_instance.cheek_guides()
+                new_groups.append(cheek_instance.guides_group)
 
             elif block == "eyebrow":
                 #Crea les guies de les celles. Si hi ha corba de cella

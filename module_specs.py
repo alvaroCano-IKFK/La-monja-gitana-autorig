@@ -449,6 +449,29 @@ MODULE_SPECS = {
         ],
     },
 
+    # Mejillas: inner, mid y outer por lado, cada una con joint, setup local
+    # y rivet sobre la cara (cheek_module).
+    #
+    # order 59: no depende de ningun otro modulo de cara, solo tiene que ir
+    # antes del skinning (70) para que sus joints entren en el _ENV.
+    #
+    # El rivet no es una feature: si falta la malla (Tools > Cheek rivets), el
+    # modulo lo avisa y esa mejilla se construye sin el.
+    "cheek": {
+        "label": "Cheek",
+        "order": 59,
+        "sides": ["L", "R"],
+        "face": True,
+        "recommends": ["neck"],
+        # Las tres guias son joints sueltos, o sea tres raices.
+        "mirror_roots": ["L_cheek_inner", "L_cheek_mid", "L_cheek_outer"],
+        "always": [
+            Feature("local_joints", "Local Joints"),
+            Feature("rivet", "Rivet"),
+        ],
+        "optional": [],
+    },
+
     # Modulo de centro, como la boca: una instancia construye los dos lados y
     # las guias de las aletas solo existen en +X. mirror_roots vacio por eso.
     # A diferencia de "mouth", NoseModule NO construeix els dos costats des

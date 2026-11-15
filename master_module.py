@@ -29,6 +29,7 @@ import mouthModule
 import mirror_module
 import jaw_module
 import eyes_module
+import cheek_module
 import progress_module
 import guides_io_module
 import eyebrowsModule
@@ -80,6 +81,7 @@ def run():
     importlib.reload(mirror_module)
     importlib.reload(jaw_module)
     importlib.reload(eyes_module)
+    importlib.reload(cheek_module)
     importlib.reload(progress_module)
     importlib.reload(guides_io_module)
     importlib.reload(eyebrowsModule)

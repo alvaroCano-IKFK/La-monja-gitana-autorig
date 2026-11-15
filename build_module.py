@@ -28,6 +28,7 @@ import mouthModule
 import jaw_module
 import eyebrowsModule
 import eyes_module
+import cheek_module
 import nose_module
 import horse_spine
 import horse_neck
@@ -301,6 +302,7 @@ class BuildRig(object):
             "eye":     self._build_eye,
             "nose":    self._build_nose,
             "socket":  self._build_socket,
+            "cheek":   self._build_cheek,
         }
 
         builder = builders.get(entry["type"])
@@ -1034,6 +1036,27 @@ class BuildRig(object):
             return None
 
         return socket
+
+    def _build_cheek(self, side, features):
+        """
+        Mejillas. Un modulo por lado, como el socket.
+
+        Los rivets (las caras duplicadas) son un paso a mano antes del build,
+        desde Tools > Cheek rivets. Si falta alguno, esa mejilla se construye
+        igual pero sin seguir a la cara: lo avisa el propio modulo.
+        """
+        cheek = cheek_module.CheekModule(
+            rig_name=self.RIG_NAME,
+            side=side,
+            root_instance=self.root_rig,
+            features=features,
+        )
+
+        # build() comprueba sus guias y avisa si falta alguna.
+        if cheek.build() is None:
+            return None
+
+        return cheek
 
     def _core_skinning(self):
         skn = skinning_module.SkinningModule(

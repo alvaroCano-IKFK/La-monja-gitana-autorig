@@ -9,6 +9,7 @@ import guides_io_module
 import mirror_module
 import build_module
 import eyes_module
+import cheek_module
 import controlTools_module
 import faceBlendshape_module
 
@@ -621,6 +622,28 @@ class Window(QtWidgets.QDialog):
             "Torna a fer les guies de la cella a partir de la corba, sense "
             "passar per GUIDES. Esborra les que hi havia.")
 
+        #---- Tools > Cheek rivets ----
+        #Mateixa mecanica que les corbes de l ull: es seleccionen les cares de
+        #la galta sobre la malla i es dupliquen en una malla a part (el rivet).
+        #Es fa ABANS del build: el modul de galtes hi enganxa els controls.
+        self.cheek_title = self.collapsible("Cheek rivets")
+
+        self.cheek_rig_name_field = QtWidgets.QLineEdit("Character")
+        self.field_style(self.cheek_rig_name_field)
+
+        self.cheek_side_combo = QtWidgets.QComboBox()
+        self.cheek_side_combo.addItems(["L", "R"])
+        self.field_style(self.cheek_side_combo)
+
+        self.cheek_rivet_buttons = []
+        for key in cheek_module.CheekModule.KEYS:
+            btn = QtWidgets.QPushButton("{} CHEEK RIVET".format(key.upper()))
+            self.general_style(btn)
+            btn.setToolTip("Duplica les cares seleccionades com a {}."
+                           .format(cheek_module.CheekModule.rivet_name(
+                               "<side>", "<rig>", key)))
+            self.cheek_rivet_buttons.append((btn, key))
+
         #---- Tools > Control color ----
         self.color_title = self.collapsible("Control color")
 
@@ -830,6 +853,7 @@ class Window(QtWidgets.QDialog):
         tools_layout.addWidget(self.tools_title)
         tools_layout.addWidget(self.eyes_title[0])
         tools_layout.addWidget(self.brow_title[0])
+        tools_layout.addWidget(self.cheek_title[0])
         tools_layout.addWidget(self.color_title[0])
         tools_layout.addWidget(self.lock_title[0])
         tools_layout.addWidget(self.face_bls_title[0])
@@ -874,6 +898,19 @@ class Window(QtWidgets.QDialog):
             self.hint_label("Selecciona l edge de la cella i crea la corba:"))
         self.brow_title[1].addWidget(self.brow_curve_btn)
         self.brow_title[1].addWidget(self.brow_guides_btn)
+
+        # ---- Tools > Cheek rivets ----
+        cheek_naming_layout = QtWidgets.QHBoxLayout()
+        cheek_naming_layout.addWidget(self.hint_label("Rig name"))
+        cheek_naming_layout.addWidget(self.cheek_rig_name_field)
+        cheek_naming_layout.addWidget(self.hint_label("Side"))
+        cheek_naming_layout.addWidget(self.cheek_side_combo)
+        self.cheek_title[1].addLayout(cheek_naming_layout)
+
+        self.cheek_title[1].addWidget(
+            self.hint_label("Selecciona les cares de la galta i crea el rivet:"))
+        for btn, _key in self.cheek_rivet_buttons:
+            self.cheek_title[1].addWidget(btn)
 
         # ---- Tools > Control color ----
         self.color_title[1].addWidget(self.color_hierarchy_check)
@@ -1637,6 +1674,26 @@ class Window(QtWidgets.QDialog):
 
         return instance.guides_group
 
+    # ------------------------------------------------------------------
+    # RIVETS DE LES GALTES
+    # ------------------------------------------------------------------
+    def _get_cheek_naming(self):
+        """Costat i nom de rig per construir el nom del rivet."""
+        rig_name = (self.cheek_rig_name_field.text() or "Character").strip()
+        side = self.cheek_side_combo.currentText() or "L"
+
+        return side, rig_name
+
+    def build_cheek_rivet(self, key):
+        """
+        Duplica les cares seleccionades en el rivet d aquesta galta, amb el nom
+        de convencio perque el modul el trobi sol al build.
+        """
+        side, rig_name = self._get_cheek_naming()
+
+        return cheek_module.CheekModule.build_rivet_from_selection(
+            side, rig_name, key)
+
     def create_guides(self):
         """
         Crea les guies NOMES dels moduls que hi ha a l arbre.
@@ -1735,6 +1792,10 @@ class Window(QtWidgets.QDialog):
 
         self.brow_curve_btn.clicked.connect(self.build_eyebrow_curve)
         self.brow_guides_btn.clicked.connect(self.rebuild_eyebrow_guides)
+
+        for btn, key in self.cheek_rivet_buttons:
+            btn.clicked.connect(
+                lambda checked=False, k=key: self.build_cheek_rivet(k))
         # ---- DESACTIVAT DE MOMENT ------------------------------------
         # self.eye_inner_ref_btn.clicked.connect(self.set_inner_reference_from_selection)
         # self.eye_check_btn.clicked.connect(self.report_loop_curves)

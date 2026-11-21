@@ -138,6 +138,36 @@ class EyebrowsModule(object):
     SLIDE_PRIMARY_MODE = 2      # 2 = align
     SLIDE_SECONDARY_MODE = 2    # 2 = align
 
+    # ------------------------------------------------------------------
+    # EL FLIP AL SEPARAR LA CEJA DE LA NURBS
+    #
+    # Apuntar las dos cadenas al MISMO up_TRN no les da la misma orientacion,
+    # porque salen de posiciones distintas: el conducido esta sobre la
+    # bezierCurve y el proyectado sobre la NURBS. Y como las dos curvas (la de
+    # la ceja y la upCurve) estan skinneadas a los mismos joints de control,
+    # al mover un control se mueven las dos a la vez:
+    #
+    #   - conducido : P y T se mueven igual -> el vector P->T no cambia.
+    #   - proyectado: T se mueve con el control, pero P se queda clavado en la
+    #                 NURBS -> el vector P->T se tuerce.
+    #
+    # El brazo de palanca es up_curve_offset, 0.5 unidades. Separar la ceja
+    # 0.5 de la superficie ya tuerce el eje 45 grados y 2 unidades lo tuercen
+    # 76, mientras el conducido no se ha movido nada. Da igual hacia que lado
+    # se separe: fuera tuerce para un lado y dentro para el otro.
+    #
+    # A True el proyectado coge la ROTACION de su joint conducido y de la
+    # NURBS solo la POSICION, que es lo que dice que quiere el bloque de
+    # arriba: "lo unico que las diferencia es la posicion, que es de lo que va
+    # el slide". Asi las dos cadenas comparten orientacion siempre.
+    SLIDE_ORIENT_FROM_DRIVEN = True
+
+    # interpType del parentConstraint que mezcla las dos cadenas en el _ENV.
+    # Maya lo deja en 1 (Average), que promedia angulos de Euler: en cuanto
+    # los dos targets se separan mas de 180 grados pega el salto. 2 (Shortest)
+    # interpola por quaternion y es continuo.
+    SLIDE_INTERP_TYPE = 2       # 2 = Shortest
+
     # Fila extra de joints por encima de la ceja, deslizando por la misma NURBS
     # con un desplazamiento en V. Por defecto DESACTIVADO: existe en el grafo de
     # referencia pero no sabemos que comportamiento busca, y esta reconstruido
@@ -1064,7 +1094,39 @@ class EyebrowsModule(object):
             up_trn = (self.up_transforms[index]
                       if index < len(self.up_transforms) else None)
 
-            if self.SLIDE_ORIENT_FROM_UP_CURVE and up_trn:
+            if self.SLIDE_ORIENT_FROM_DRIVEN:
+                # Posicion de la NURBS, rotacion del joint conducido.
+                #
+                # pickMatrix se queda SOLO con la rotacion del conducido y el
+                # composeMatrix lleva solo la posicion proyectada. El
+                # multMatrix las junta en ese orden: en convencion de Maya el
+                # matrixIn[0] se aplica primero, asi que rota y luego traslada.
+                #
+                # No hay ciclo: el conducido ya alimentaba el CPS de esta
+                # misma rama por el decomposeMatrix, y el proyectado no vuelve
+                # a entrar en el conducido en ningun sitio.
+                pkm = self._ensure_node("pickMatrix", f"{base}SlideRot_PKM")
+                cmds.connectAttr(f"{driven_joint}.worldMatrix[0]",
+                                 f"{pkm}.inputMatrix", f=True)
+                cmds.setAttr(f"{pkm}.useTranslate", 0)
+                cmds.setAttr(f"{pkm}.useRotate", 1)
+                cmds.setAttr(f"{pkm}.useScale", 0)
+                cmds.setAttr(f"{pkm}.useShear", 0)
+
+                pos_cmm = self._ensure_node("composeMatrix",
+                                            f"{base}SlideDrivenPos_CMM")
+                cmds.connectAttr(f"{posi}.position",
+                                 f"{pos_cmm}.inputTranslate", f=True)
+
+                mmx = self._ensure_node("multMatrix", f"{base}SlideDriven_MMX")
+                cmds.connectAttr(f"{pkm}.outputMatrix",
+                                 f"{mmx}.matrixIn[0]", f=True)
+                cmds.connectAttr(f"{pos_cmm}.outputMatrix",
+                                 f"{mmx}.matrixIn[1]", f=True)
+
+                out_plug = f"{mmx}.matrixSum"
+
+            elif self.SLIDE_ORIENT_FROM_UP_CURVE and up_trn:
                 # La POSICION sigue saliendo de la NURBS (el joint se queda
                 # pegado al craneo) pero la ORIENTACION sale del up_TRN, igual
                 # que en la cadena de bind. Asi los dos giran con la upCurve y
@@ -1072,6 +1134,8 @@ class EyebrowsModule(object):
                 amx = self._aim_matrix_to_up(
                     f"{base}Slide", f"{posi}.position", up_trn
                 )
+
+                out_plug = f"{amx}.outputMatrix"
 
                 if self.SLIDE_SECONDARY_FROM_NORMAL:
                     cmds.connectAttr(f"{posi}.normalizedNormal",
@@ -1101,13 +1165,15 @@ class EyebrowsModule(object):
                 cmds.setAttr(f"{amx}.primaryMode", self.SLIDE_PRIMARY_MODE)
                 cmds.setAttr(f"{amx}.secondaryMode", self.SLIDE_SECONDARY_MODE)
 
+                out_plug = f"{amx}.outputMatrix"
+
             projected = f"{base}Projected_JNT"
             if not cmds.objExists(projected):
                 cmds.select(clear=True)
                 projected = cmds.joint(name=projected)
                 cmds.setAttr(f"{projected}.inheritsTransform", 0)
-            cmds.connectAttr(f"{amx}.outputMatrix",
-                             f"{projected}.offsetParentMatrix", f=True)
+            cmds.connectAttr(out_plug, f"{projected}.offsetParentMatrix",
+                             f=True)
 
             if projected not in self.slide_projected_joints:
                 self.slide_projected_joints.append(projected)
@@ -1168,6 +1234,11 @@ class EyebrowsModule(object):
             constraint = cmds.parentConstraint(
                 driven_joint, projected, env_joint, mo=True
             )[0]
+
+            # Sin esto Maya deja interpType en 1 (Average), que promedia
+            # angulos de Euler entre los dos targets y pega saltos de 180 en
+            # cuanto las dos cadenas dejan de coincidir.
+            cmds.setAttr(f"{constraint}.interpType", self.SLIDE_INTERP_TYPE)
 
             if reverse_node:
                 weights = cmds.parentConstraint(constraint, q=True, wal=True)

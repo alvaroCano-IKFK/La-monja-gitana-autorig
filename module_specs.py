@@ -77,7 +77,12 @@ MODULE_SPECS = {
         "optional": [
             Feature("twist", "Twist"),
             #Feature("ribbon", "Ribbon", implemented=False),
-            #Feature("stretch", "Stretch", implemented=False),
+            # Stretch de la espina (sin el offset de la cadena invertida).
+            Feature("stretch", "Stretch"),
+            # El volumen mide la longitud de la cadena de joints: sin stretch
+            # esa longitud no cambia nunca y el volumen no haria nada.
+            Feature("volume_preservation", "Volume Preservation",
+                    requires=("stretch",)),
         ],
     },
 
@@ -118,6 +123,10 @@ MODULE_SPECS = {
             # crea su propia curva degree-2 si no le pasas source_curve.
             # Si curvature esta, se la pasamos y sale mejor.
             Feature("twist", "Twist", default=True),
+            # Las bendies salen de los motionPath del twist (root/mid/tip), asi
+            # que lo arrastran. Con ellas, el twist ya no crea sus joints de
+            # skin: los pone bendy_module.
+            Feature("bendies", "Bendies", requires=("twist",)),
             # default=True porque el autorig viejo montaba el soft IK en los
             # brazos siempre. Si lo dejas en False, el comportamiento por
             # defecto del rig cambia sin que nadie se entere.
@@ -174,6 +183,7 @@ MODULE_SPECS = {
         "optional": [
             Feature("curvature", "Curvature", default=True),
             Feature("twist", "Twist", default=True),
+            Feature("bendies", "Bendies", requires=("twist",)),
             Feature("soft_ik", "Soft IK", default=True),
             Feature("pv_pin", "Pole Vector Pin", default=True)
             #Feature("stretch", "Stretch", implemented=False),

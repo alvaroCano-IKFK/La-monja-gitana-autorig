@@ -215,9 +215,16 @@ class TwistModule(object):
                         aim_axis="x", up_axis="y",
                         front_axis_idx=None, up_axis_idx=None,
                         source_curve=None, nonroll_ref=None,
-                        twist_axis="x", inverse_front=False):
+                        twist_axis="x", inverse_front=False,
+                        create_joints=True):
         """
         Args:
+            create_joints (bool): False cuando la extremidad lleva bendies. Los
+                motionPath se crean igual (bendy_module usa el 0, el 2 y el 4
+                como root/mid/tip), pero sin sus cinco joints: los de skin
+                pasan a ser los de las bendies, y si no habria dos juegos de
+                joints de skin sobre el mismo hueso.
+
             twist_axis (str): De que canal del joint de arranque se lee el
                 twist: "x", "y" o "z". Es el eje que apunta al siguiente
                 joint, porque girar SOBRE el hueso ES el twist.
@@ -422,8 +429,12 @@ class TwistModule(object):
               f"{twist_axis}, frontAxis {front_axis_idx}, upAxis {up_axis_idx}"
               f"{', inverseFront' if inverse_front else ''}.")
 
-        self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
-        self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
+        if create_joints:
+            self.upper_twist_joints = self.create_twist_joints(self.upper_motion_paths, "upper")
+            self.lower_twist_joints = self.create_twist_joints(self.lower_motion_paths, "lower")
+        else:
+            print(f"[TwistModule] {self.side}_{self.name}: sin joints de twist "
+                  f"(los pone bendy_module).")
             
         #cmds.parent(self.upper_twist_joints,start_joint )
 

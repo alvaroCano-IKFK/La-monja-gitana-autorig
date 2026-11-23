@@ -87,6 +87,7 @@ class LegModule(module_specs.FeaturesMixin):
         # Resultados de las features opcionales
         self.curvature   = None
         self.twist       = None
+        self.bendies     = None
         self.toes        = None
         self.soft_result = None
 
@@ -565,9 +566,29 @@ class LegModule(module_specs.FeaturesMixin):
                 # esta en el muslo y su grupo va parentConstraint al control de
                 # cadera, asi que si gira con el personaje.
                 nonroll_ref    = self.ik_root_ctrl,
+                # Con bendies, los joints de skin los pone bendy_module.
+                create_joints  = not self.has("bendies"),
             )
         else:
             print(f"[{self.prefix}] Twist desactivado en la receta.")
+
+        # =========================================================
+        # BENDIES  (opcional, necesita twist)
+        # =========================================================
+        if self.has("bendies"):
+            if self.twist is None:
+                cmds.warning(f"[{self.prefix}] Bendies sin twist. Se saltan.")
+            else:
+                import bendy_module
+
+                self.bendies = bendy_module.BendyModule(
+                    name="leg",
+                    side=self.side,
+                    twist=self.twist,
+                    root_instance=self.root_instance,
+                    settings_ctrl=self.switch_ctrl,
+                )
+                self.bendies.build()
 
         print(f"Build {self.prefix} leg completo. Features: "
               f"{', '.join(sorted(self.features))}")

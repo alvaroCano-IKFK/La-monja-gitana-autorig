@@ -45,6 +45,7 @@ import horse_neck
 import horse_chest_module
 import horse_leg_module
 import back_legs_module
+import bendy_module
 
 window_instance = None
 
@@ -97,6 +98,7 @@ def run():
     importlib.reload(horse_spine)
     importlib.reload(back_legs_module)
     importlib.reload(horse_leg_module)
+    importlib.reload(bendy_module)
     
     global window_instance
 

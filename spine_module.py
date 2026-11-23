@@ -5,15 +5,31 @@ import hip_module
 import chest_module
 import body_module
 import controlsLibrary
-from groups_module import ControlsGroups 
+import module_specs
+from groups_module import ControlsGroups
+from nodeCreator_module import NodeCreator
 
-class SpineModule(object):
+class SpineModule(module_specs.FeaturesMixin):
+
+    MODULE_TYPE = "spine"
+
+    #: Forma del control de ajustes (el "gear" del PDF). Es la misma que el
+    #: switch de la pierna.
+    SETTINGS_STYLE = "switchControl"
+
+    #: Cuanto se separa el control de ajustes por detras de la punta de la
+    #: espina, como fraccion de la longitud de la espina.
+    SETTINGS_OFFSET = 0.6
 
     def __init__(self,
                  root_guide="root",
                  chest_guide="chest",
                  rig_name="Character",
-                 root_instance = None):
+                 root_instance = None,
+                 features=None):
+
+        # features=None => las de por defecto, como siempre.
+        self._init_features(self.MODULE_TYPE, features)
 
         self.root_guide = root_guide
         self.chest_guide = chest_guide
@@ -30,7 +46,13 @@ class SpineModule(object):
         self.clusters = []
         self.ik_handle = None
         self.root_instance = root_instance
-        
+
+        # Features opcionales
+        self.curve = None
+        self.settings_ctrl = None
+        self.stretch_output = None
+        self.volume = None
+
     # ------------------------------------------------------------------
     # TWIST DEL IK SPLINE
     # ------------------------------------------------------------------
@@ -247,5 +269,175 @@ class SpineModule(object):
                 cmds.parent(self.ctrl_grp, global_controls_grp)
      
 
-        print(f"Spine para {self.rig_name} creada con éxito.")
+        # --- FEATURES OPCIONALES ---
+        # Van al final, con la espina ya colocada en el outliner: el control
+        # de ajustes cuelga del ultimo control de la espina.
+        self.curve = spine_curve
+
+        if self.has("stretch") or self.has("volume_preservation"):
+            self.settings_ctrl = self._build_settings_control()
+
+        if self.has("stretch"):
+            self._build_stretch(spine_curve)
+
+        if self.has("volume_preservation"):
+            import volumePreservation_module
+
+            self.volume = volumePreservation_module.VolumePreservationModule(
+                name="spine",
+                joints=self.joints,
+                settings_ctrl=self.settings_ctrl,
+                rig_name=self.rig_name,
+                side="C",
+                parent=self.spine_grp,
+                scale_axes=self._cross_section_axes(),
+                global_scale=self._global_scale_plug(),
+            )
+            self.volume.build()
+
+        print(f"Spine para {self.rig_name} creada con éxito. Features: "
+              f"{', '.join(sorted(self.features))}")
         return self
+
+    # ------------------------------------------------------------------
+    # HELPERS DE LAS FEATURES
+    # ------------------------------------------------------------------
+    def _node(self, node_type, name, tag, suffix=None):
+        return NodeCreator(side="C", node_type=node_type, base_name="spine",
+                           name=name, tag=tag, parent=None,
+                           custom_suffix=suffix).create()
+
+    def _global_scale_plug(self):
+        rig_name = self.root_instance.rig_name if self.root_instance else self.rig_name
+        node = f"{rig_name}_global_CTL"
+        if cmds.objExists(node) and cmds.attributeQuery("Global_Scale", node=node, exists=True):
+            return f"{node}.Global_Scale"
+        cmds.warning(f"[Spine] No encuentro {node}.Global_Scale: el stretch y el "
+                     f"volumen no compensaran la escala global.")
+        return None
+
+    def _cross_section_axes(self):
+        """
+        Los dos ejes que NO van por el hueso. Salen del dForwardAxis del
+        ikSpline (0/1 = X, 2/3 = Y, 4/5 = Z): ahora es Y, asi que X y Z.
+        """
+        forward = "XXYYZZ"[cmds.getAttr(f"{self.ik_handle}.dForwardAxis")]
+        return tuple(axis for axis in "XYZ" if axis != forward)
+
+    def _build_settings_control(self):
+        """
+        El control de ajustes de la espina (el "gear control" del PDF).
+
+        Va por detras de la punta de la espina y emparentado al ultimo
+        control (spine_4): asi la sigue sin ningun constraint. NO se
+        constrine al joint de la punta: sus atributos mueven esos mismos
+        joints (stretch), y el Evaluation Manager lo veria como un ciclo
+        entre nodos.
+        """
+        ctrl = controlsLibrary.create_control_from_lib(
+            lib_name=self.SETTINGS_STYLE,
+            final_name=f"{self.rig_name}_spineSettings_CTL")
+
+        top = self.group_maker.create_rig_hierarchy(ctrl, self.joints[-1],
+                                                    match_rotation=False)
+
+        start = cmds.xform(self.joints[0], q=True, ws=True, t=True)
+        end = cmds.xform(self.joints[-1], q=True, ws=True, t=True)
+        length = sum((end[i] - start[i]) ** 2 for i in range(3)) ** 0.5
+        cmds.xform(top, r=True, ws=True, t=(0, 0, -length * self.SETTINGS_OFFSET))
+
+        cmds.parent(top, self.controls[-1])
+
+        # Solo lleva atributos: los canales de transformacion fuera.
+        for attr in ("translate", "rotate", "scale"):
+            for axis in "XYZ":
+                cmds.setAttr(f"{ctrl}.{attr}{axis}", lock=True, keyable=False,
+                             channelBox=False)
+        cmds.setAttr(f"{ctrl}.visibility", keyable=False, channelBox=False)
+
+        return ctrl
+
+    # ------------------------------------------------------------------
+    # STRETCH
+    # ------------------------------------------------------------------
+    def _build_stretch(self, curve):
+        """
+        Stretch de la espina, la primera mitad de SPINE STRETCH del PDF.
+
+            stretchFactor = arcLength / (longitud inicial * Global_Scale)
+            clamp(stretchFactor, StretchMin, StretchMax)
+            blendTwoAttr(1, clamp) por el atributo Stretch
+            translate de cada joint (menos el primero) = inicial * blend
+
+        Diferencia con el PDF: alli se multiplica la longitud inicial y se
+        conecta al translateY. Aqui los joints de la espina NO estan
+        orientados (se crean con la orientacion del mundo), asi que su
+        translate local es el vector entero hasta el padre: si la espina no
+        es perfectamente vertical, conectando solo el Y se perderia el resto. Se
+        multiplica el vector entero con un multiplyDivide por joint, que en
+        una cadena orientada da exactamente lo mismo.
+
+        No incluye el offset del PDF (la cadena invertida con su segundo
+        ikSpline).
+        """
+        ctrl = self.settings_ctrl
+
+        if not cmds.attributeQuery("stretchSep", node=ctrl, exists=True):
+            cmds.addAttr(ctrl, ln="stretchSep", nn="STRETCH", at="enum", en="------", k=False)
+            cmds.setAttr(f"{ctrl}.stretchSep", channelBox=True)
+            cmds.setAttr(f"{ctrl}.stretchSep", lock=True)
+
+        for name, kwargs in (("Stretch", {"min": 0, "max": 1, "dv": 0}),
+                             ("StretchMin", {"min": 0.001, "max": 1, "dv": 0.8}),
+                             ("StretchMax", {"min": 1, "dv": 1.5})):
+            if not cmds.attributeQuery(name, node=ctrl, exists=True):
+                cmds.addAttr(ctrl, ln=name, at="double", k=True, **kwargs)
+
+        shape = cmds.listRelatives(curve, shapes=True, noIntermediate=True)[0]
+        info = self._node("curveInfo", "stretch", "length", "CINF")
+        cmds.connectAttr(f"{shape}.worldSpace[0]", f"{info}.inputCurve")
+        initial = cmds.getAttr(f"{info}.arcLength")
+
+        if initial < 1e-4:
+            cmds.warning("[Spine] La curva de la espina mide 0. Sin stretch.")
+            return None
+
+        scaled = self._node("floatMath", "stretchInitial", "scaled")
+        cmds.setAttr(f"{scaled}.operation", 2)   # multiply
+        cmds.setAttr(f"{scaled}.floatA", initial)
+        global_scale = self._global_scale_plug()
+        if global_scale:
+            cmds.connectAttr(global_scale, f"{scaled}.floatB")
+        else:
+            cmds.setAttr(f"{scaled}.floatB", 1.0)
+
+        factor = self._node("floatMath", "stretch", "factor")
+        cmds.setAttr(f"{factor}.operation", 3)   # divide
+        cmds.connectAttr(f"{info}.arcLength", f"{factor}.floatA")
+        cmds.connectAttr(f"{scaled}.outFloat", f"{factor}.floatB")
+
+        clamp = self._node("clamp", "stretch", "limits")
+        cmds.connectAttr(f"{factor}.outFloat", f"{clamp}.inputR")
+        cmds.connectAttr(f"{ctrl}.StretchMin", f"{clamp}.minR")
+        cmds.connectAttr(f"{ctrl}.StretchMax", f"{clamp}.maxR")
+
+        one = self._node("floatConstant", "stretch", "one", "FLC")
+        cmds.setAttr(f"{one}.inFloat", 1.0)
+
+        blend = self._node("blendTwoAttr", "stretch", "blend", "BTA")
+        cmds.connectAttr(f"{one}.outFloat", f"{blend}.input[0]")
+        cmds.connectAttr(f"{clamp}.outputR", f"{blend}.input[1]")
+        cmds.connectAttr(f"{ctrl}.Stretch", f"{blend}.attributesBlender")
+
+        for jnt in self.joints[1:]:
+            initial_translate = cmds.getAttr(f"{jnt}.translate")[0]
+            mdv = self._node("multiplyDivide", "stretchValue", jnt.split("_")[-2])
+            cmds.setAttr(f"{mdv}.input1", *initial_translate)
+            for axis in "XYZ":
+                cmds.connectAttr(f"{blend}.output", f"{mdv}.input2{axis}")
+            cmds.connectAttr(f"{mdv}.output", f"{jnt}.translate", force=True)
+
+        self.stretch_output = f"{blend}.output"
+        print(f"[Spine] Stretch: longitud inicial {initial:.3f}.")
+
+        return self.stretch_output

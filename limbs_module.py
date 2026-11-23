@@ -88,6 +88,7 @@ class LimbModule(module_specs.FeaturesMixin):
         # Resultados de las features opcionales
         self.curvature   = None
         self.twist       = None
+        self.bendies     = None
         self.soft_result = None
 
 
@@ -438,10 +439,33 @@ class LimbModule(module_specs.FeaturesMixin):
                 up_axis        = "z",
                 front_axis_idx = 0,
                 up_axis_idx    = 2,
-                source_curve   = source_curve
+                source_curve   = source_curve,
+                # Con bendies, los joints de skin los pone bendy_module.
+                create_joints  = not self.has("bendies"),
             )
         else:
             print(f"[{self.prefix}] Twist desactivado en la receta.")
+
+        # =========================================================
+        # BENDIES  (opcional, necesita twist)
+        #
+        # module_specs ya obliga a que 'bendies' arrastre 'twist'; el
+        # chequeo de self.twist es solo el cinturon de seguridad.
+        # =========================================================
+        if self.has("bendies"):
+            if self.twist is None:
+                cmds.warning(f"[{self.prefix}] Bendies sin twist. Se saltan.")
+            else:
+                import bendy_module
+
+                self.bendies = bendy_module.BendyModule(
+                    name="arm",
+                    side=self.side,
+                    twist=self.twist,
+                    root_instance=self.root_instance,
+                    settings_ctrl=self.switch_ctrl,
+                )
+                self.bendies.build()
 
         # 8. ORGANIZACIÓN FINAL
         rig_grp = f"{self.root_instance.rig_name}_rig_GRP" if self.root_instance else None

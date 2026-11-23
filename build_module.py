@@ -325,6 +325,9 @@ class BuildRig(object):
             chest_guide="chest",
             rig_name=self.RIG_NAME,
             root_instance=self.root_rig,
+            # Stretch y volume preservation son features de la espina: las
+            # lee SpineModule igual que el brazo lee las suyas.
+            features=features,
         )
         self.spine_rig.build()
         return self.spine_rig

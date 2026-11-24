@@ -7,7 +7,51 @@ from nodeCreator_module import NodeCreator
 import rigRoot_module
 
 class JawModule(object):
-    
+
+    # ------------------------------------------------------------------
+    # EL SDK TIENE QUE LLEGAR AL JOINT
+    #
+    # El collision escribe en jawUpper_SDK.rotateX, que esta POR ENCIMA del
+    # control en la jerarquia (GRP > SPC > OFF > SDK > ANIM > CTRL).
+    #
+    # El joint lo conduce jawUpperLocal_TRN, y ese TRN copiaba 'ctrl.matrix',
+    # que es la matriz local del control RESPECTO DE SU ANIM. El SDK esta por
+    # encima, asi que no entraba: el collision nunca llegaba al joint.
+    #
+    # El labio de arriba SI se movia porque _link_lip_to_jaw no usa el TRN:
+    # usa GRP.worldInverse * ctrl.worldMatrix, que recoge todo lo que hay
+    # entre el GRP y el control, SDK incluido. De ahi el sintoma: el labio se
+    # mueve y el joint no rota.
+    #
+    # A True el TRN lee ese mismo delta y el collision llega al joint.
+    SDK_REACHES_JOINT = True
+
+    # Operaciones del nodo floatMath (lookdevKit):
+    #   0 Add · 1 Subtract · 2 Multiply · 3 Divide · 4 Min · 5 Max · 6 Power
+    FLOATMATH_SUBTRACT = 1
+    FLOATMATH_MULTIPLY = 2
+
+    # El atributo collision es un INTERRUPTOR, no un offset. La infografia
+    # (pagina 30) dice "blend the outputR of the clamp with the collision
+    # attribute as a blender": multiplicar, no restar. Restando, collision=1
+    # le quitaba un grado al empuje y collision=0 lo dejaba entero, que es
+    # justo del reves.
+    COLLISION_DEFAULT = 1
+
+    # Cuelga C_<rig>_jaw_GRP del joint de la cabeza en vez de dejarlo en
+    # C_<rig>_face_GRP.
+    #
+    # Es ORGANIZATIVO y nada mas: para que sea seguro, TODOS los subgrupos que
+    # hay dentro llevan inheritsTransform = 0, asi que no heredan nada del
+    # joint y las matrices mundiales no cambian.
+    #
+    # Ese flag no es opcional. jawSetup_GRP lleva los *Local_OFF, y dentro de
+    # cada uno hay un *Local_TRN cuyos canales vienen por connectAttr desde un
+    # decomposeMatrix. Una conexion DIRECTA no compensa al padre, al reves que
+    # un constraint: sin el flag, esos valores (que son de mundo) se componen
+    # encima de la matriz del joint de la cabeza y el jaw sale disparado.
+    PARENT_UNDER_HEAD_JOINT = True
+
     def __init__(self, 
                  jaw_root="jaw_root", 
                  jaw_end="jaw_end", 
@@ -160,8 +204,50 @@ class JawModule(object):
             name="LocalTrn", tag="CTRL", parent=None, custom_suffix=None
         ).create()
 
+        # mult_node se queda leyendo 'ctrl.matrix' porque es el que busca
+        # _get_local_mult_matrix() y el que alimenta las entradas del
+        # collision. Esas tienen que seguir siendo LOCALES: si leyesen
+        # worldMatrix entrarian en el mismo bucle que el SDK que escriben.
         cmds.connectAttr(f"{source_ctrl}.matrix", f"{mult_node}.matrixIn[0]")
         cmds.connectAttr(f"{mult_node}.matrixSum", f"{decompose_node}.inputMatrix")
+
+        if self.SDK_REACHES_JOINT:
+            # El TRN pasa a leer el delta completo del GRP al control, que
+            # recoge SPC, OFF, SDK y ANIM. Es la misma formula que usa
+            # _build_jaw_delta_matrix para los labios, asi que el joint y el
+            # labio ven por fin lo mismo.
+            #
+            # No hay ciclo: el SDK lo escribe una red que solo lee matrices
+            # LOCALES (ctrl.matrix y anim.matrix), que no dependen de
+            # worldMatrix.
+            delta_node = NodeCreator(
+                side=prefix, node_type="multMatrix", base_name=base_name,
+                name="LocalDelta", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+            delta_decompose = NodeCreator(
+                side=prefix, node_type="decomposeMatrix", base_name=base_name,
+                name="LocalDelta", tag="CTRL", parent=None, custom_suffix=None
+            ).create()
+
+            # ctrl.world = L x GRP.world  (vectores fila: A x B = A primero)
+            # asi que  L = ctrl.worldMatrix x GRP.worldInverseMatrix.
+            #
+            # Al reves sale la conjugada: misma rotacion, otra base, y con el
+            # GRP a la altura de la cabeza eso son decenas de unidades de
+            # traslacion parasita.
+            #
+            # OJO: _build_jaw_delta_matrix usa el orden CONTRARIO a proposito.
+            # Aquel delta se aplica a locators que ya estan en mundo; este
+            # busca una matriz local. No son lo mismo aunque se parezcan.
+            cmds.connectAttr(f"{source_ctrl}.worldMatrix[0]",
+                             f"{delta_node}.matrixIn[0]")
+            cmds.connectAttr(f"{source_ctrl_grp}.worldInverseMatrix[0]",
+                             f"{delta_node}.matrixIn[1]")
+            cmds.connectAttr(f"{delta_node}.matrixSum",
+                             f"{delta_decompose}.inputMatrix")
+
+            decompose_node = delta_decompose
+
         cmds.connectAttr(f"{decompose_node}.outputTranslate", f"{local_trn}.translate")
         cmds.connectAttr(f"{decompose_node}.outputRotate", f"{local_trn}.rotate")
         cmds.connectAttr(f"{decompose_node}.outputScale", f"{local_trn}.scale")
@@ -865,6 +951,40 @@ class JawModule(object):
 
         return cmds.parentConstraint(head_ctrl, controls_root, mo=True)[0]
 
+    def _head_joint(self):
+        """
+        El joint de la cabeza, si existe. Lo crea neck_module.
+
+        Devuelve None si no hay cuello en el rig: entonces el grupo del jaw se
+        queda donde estaba y se avisa, en vez de tumbar el build.
+        """
+        head_joint = f"{self.rig_name}_head_JNT"
+
+        return head_joint if cmds.objExists(head_joint) else None
+
+    def _jaw_root_parent(self):
+        """
+        De quien cuelga C_<rig>_jaw_GRP.
+
+        Con PARENT_UNDER_HEAD_JOINT, del joint de la cabeza. Es un cambio
+        ORGANIZATIVO: nada de lo que hay dentro cambia de sitio, porque o va
+        por parentConstraint (que compensa al padre) o tiene inheritsTransform
+        a 0. Lo que si hace es que el grupo viaje con la cabeza en el outliner
+        en vez de quedarse suelto bajo el rig.
+        """
+        if not self.PARENT_UNDER_HEAD_JOINT:
+            return self._face_systems_root()
+
+        head_joint = self._head_joint()
+        if head_joint:
+            return head_joint
+
+        cmds.warning(f"[Jaw] No existe '{self.rig_name}_head_JNT'. El grupo "
+                     f"del jaw se queda en C_{self.rig_name}_face_GRP. "
+                     f"Construye el NeckModule antes que el jaw.")
+
+        return self._face_systems_root()
+
     def _face_systems_root(self):
         """C_<rig>_face_GRP, bajo el rig_GRP."""
         rig_grp = f"{self.rig_name}_rig_GRP"
@@ -929,21 +1049,37 @@ class JawModule(object):
 
         # --- 1. Esqueleto de grupos ---
         # El sistema va al rig_GRP y los controles al local_CTL.
-        root_grp = self._ensure_group(f"{center}_jaw_GRP", self._face_systems_root())
+        root_grp = self._ensure_group(f"{center}_jaw_GRP", self._jaw_root_parent())
         self.jaw_root_grp = root_grp
 
         controls_grp = self._ensure_group(f"{center}_jawControls_GRP",
                                           self._face_controls_root())
-        joints_grp = self._ensure_group(f"{center}_jawJoints_GRP", root_grp)
-        bind_joints_grp = self._ensure_group(f"{center}_jawBindJoints_GRP", joints_grp)
-        curves_grp = self._ensure_group(f"{center}_jawCurves_GRP", root_grp)
-        locators_grp = self._ensure_group(f"{center}_jawLocators_GRP", root_grp)
+        # inheritsTransform = 0 en TODOS los subgrupos. Dentro no hay nada que
+        # deba heredar del padre: o recibe matriz de mundo (offsetParentMatrix,
+        # motionPath, decomposeMatrix) o va por constraint, que ya compensa.
+        # Sin esto, colgar el jaw del joint de la cabeza lo transforma dos
+        # veces. Ver PARENT_UNDER_HEAD_JOINT.
+        joints_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_jawJoints_GRP", root_grp))
+        bind_joints_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_jawBindJoints_GRP", joints_grp))
+        # Las JawPinchLine reciben su forma por worldSpace -> .create, que ya
+        # viene en coordenadas de mundo. Si ademas heredasen la transformacion
+        # del padre se aplicaria dos veces, y colgando del joint de la cabeza
+        # eso si se nota.
+        curves_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_jawCurves_GRP", root_grp))
+        locators_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_jawLocators_GRP", root_grp))
         # Reciben matriz de mundo: no heredan la escala del rig_GRP.
         projected_grp = self._make_world_driven(
             self._ensure_group(f"{center}_jawProjected_GRP", locators_grp))
         trackers_grp = self._make_world_driven(
             self._ensure_group(f"{center}_jawTrackers_GRP", locators_grp))
-        setup_grp = self._ensure_group(f"{center}_jawSetup_GRP", root_grp)
+        # El que rompia: aqui viven los *Local_OFF con sus *Local_TRN, que
+        # reciben translate/rotate/scale por conexion directa.
+        setup_grp = self._make_world_driven(
+            self._ensure_group(f"{center}_jawSetup_GRP", root_grp))
 
         # --- 2. Controles ---
         # Los _GRP raiz me los pasa build(): create_rig_hierarchy los devuelve
@@ -1067,7 +1203,9 @@ class JawModule(object):
         cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", cb=True)  
         cmds.setAttr(f"{jaw_lower_ctrl}.extraAttrSep", l=True)
         
-        cmds.addAttr(jaw_lower_ctrl, ln = "collision",nn = "Collision",at = "float",k=True, min=0, max=1, dv=0)
+        cmds.addAttr(jaw_lower_ctrl, ln = "collision", nn = "Collision",
+                     at = "float", k=True, min=0, max=1,
+                     dv=self.COLLISION_DEFAULT)
         cmds.addAttr(jaw_lower_ctrl, ln = "LUpperLower",nn = "L Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=1)
         cmds.addAttr(jaw_lower_ctrl, ln = "RUpperLower",nn = "R Jaw Upper <---> Lower",at = "float",k=True, min=0, max=1, dv=0)
         #LOWER CONTROL OFFSET
@@ -1117,14 +1255,27 @@ class JawModule(object):
         ).create()
         
         cmds.connectAttr(f"{floatMath_node}.outFloat", f"{clamp_node}.inputR")
+
+        # La infografia pide clamp(diff, minR = upperJaw.rot, maxR = 360):
+        # se queda con la parte POSITIVA de (lower - upper). Aqui el jaw cierra
+        # con rotateX negativo, asi que es el espejo: la parte NEGATIVA, con
+        # minR fijo en -360 y maxR siguiendo al upper.
+        #
+        # maxR estaba sin tocar, o sea en 0 por defecto. Con el upper en
+        # reposo da lo mismo, pero en cuanto el animador mueve el upperJaw el
+        # umbral no le seguia y el empuje salia descolocado. Se conecta abajo,
+        # cuando ya existe upper_decompose_node.
         cmds.setAttr(f"{clamp_node}.minR", -360)
         
         floatMath02_node = NodeCreator(
             side=self.prefix, node_type="floatMath", base_name=base_name,
             name="Local02", tag="CTRL", parent=None, custom_suffix=None
         ).create()
-        cmds.setAttr(f"{floatMath02_node}.operation", 1) #Subtract
-        
+        # MULTIPLY, no subtract: collision es un interruptor de 0 a 1, no un
+        # offset en grados. Con subtract, collision=1 le restaba un grado al
+        # empuje y collision=0 lo dejaba entero.
+        cmds.setAttr(f"{floatMath02_node}.operation", self.FLOATMATH_MULTIPLY)
+
         cmds.connectAttr(f"{clamp_node}.outputR", f"{floatMath02_node}.floatA")
         cmds.connectAttr(f"{jaw_lower_ctrl}.collision", f"{floatMath02_node}.floatB")
 
@@ -1179,6 +1330,12 @@ class JawModule(object):
         
         cmds.connectAttr(f"{multMatrix_node}.matrixSum", f"{upper_decompose_node}.inputMatrix")
         cmds.connectAttr(f"{upper_decompose_node}.outputRotateX", f"{floatMath_node}.floatB")
+
+        # El umbral del clamp sigue al upperJaw, como pide la infografia.
+        # Misma fuente que floatB: una matriz LOCAL, que no depende de
+        # worldMatrix y por tanto no cierra ningun ciclo con el SDK.
+        cmds.connectAttr(f"{upper_decompose_node}.outputRotateX",
+                         f"{clamp_node}.maxR", force=True)
 
         # 4. COMISURAS DE LA BOCA
         # El orden importa: los joints tienen que existir antes de que nadie
